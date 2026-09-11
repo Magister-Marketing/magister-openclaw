@@ -184,6 +184,11 @@ export type ToolRuntimeResilienceConfig = {
   browserLaunchLimit?: number;
 };
 
+export type DraftVerificationConfig = {
+  /** Request-grounded draft checks. Repair is one tool-free attempt; default: off. */
+  mode?: "off" | "shadow" | "repair";
+};
+
 export type ToolLoopDetectionConfig = {
   /** Enable tool-loop protection (default: false). */
   enabled?: boolean;
@@ -349,6 +354,7 @@ export type AgentToolsConfig = {
   fs?: FsToolsConfig;
   /** Runtime loop detection for repetitive/ stuck tool-call patterns. */
   loopDetection?: ToolLoopDetectionConfig;
+  draftVerification?: DraftVerificationConfig;
   sandbox?: {
     tools?: {
       allow?: string[];
@@ -671,6 +677,7 @@ export type ToolsConfig = {
   fs?: FsToolsConfig;
   /** Runtime loop detection for repetitive/ stuck tool-call patterns. */
   loopDetection?: ToolLoopDetectionConfig;
+  draftVerification?: DraftVerificationConfig;
   /** Sub-agent tool policy defaults (deny wins). */
   subagents?: {
     /** Default model selection for spawned sub-agents (string or {primary,fallbacks}). */

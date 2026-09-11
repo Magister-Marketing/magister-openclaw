@@ -722,14 +722,29 @@ function buildOpenAISdkClientOptions(model: Model<Api>): { timeout?: number } {
 function buildOpenAISdkRequestOptions(
   model: Model<Api>,
   signal?: AbortSignal,
-): { signal?: AbortSignal; timeout?: number } | undefined {
-  const timeout = resolveOpenAISdkTimeoutMs(model);
-  if (timeout === undefined && !signal) {
+  limits?: { timeoutMs?: number; maxRetries?: number },
+): { signal?: AbortSignal; timeout?: number; maxRetries?: number } | undefined {
+  const modelTimeout = resolveOpenAISdkTimeoutMs(model);
+  const requestedTimeout = limits?.timeoutMs;
+  const timeout =
+    typeof requestedTimeout === "number" &&
+    Number.isFinite(requestedTimeout) &&
+    requestedTimeout > 0
+      ? Math.min(Math.floor(requestedTimeout), modelTimeout ?? Infinity)
+      : modelTimeout;
+  const maxRetries =
+    typeof limits?.maxRetries === "number" &&
+    Number.isInteger(limits.maxRetries) &&
+    limits.maxRetries >= 0
+      ? limits.maxRetries
+      : undefined;
+  if (timeout === undefined && !signal && maxRetries === undefined) {
     return undefined;
   }
   return {
     ...(signal ? { signal } : {}),
     ...(timeout !== undefined ? { timeout } : {}),
+    ...(maxRetries !== undefined ? { maxRetries } : {}),
   };
 }
 
@@ -806,7 +821,7 @@ export function createOpenAIResponsesTransportStreamFn(): StreamFn {
         ) as typeof params;
         const responseStream = (await client.responses.create(
           params as never,
-          buildOpenAISdkRequestOptions(model, options?.signal),
+          buildOpenAISdkRequestOptions(model, options?.signal, options),
         )) as unknown as AsyncIterable<unknown>;
         stream.push({ type: "start", partial: output as never });
         await processResponsesStream(responseStream, output, stream, model, {
@@ -1135,7 +1150,7 @@ export function createAzureOpenAIResponsesTransportStreamFn(): StreamFn {
         ) as typeof params;
         const responseStream = (await client.responses.create(
           params as never,
-          buildOpenAISdkRequestOptions(model, options?.signal),
+          buildOpenAISdkRequestOptions(model, options?.signal, options),
         )) as unknown as AsyncIterable<unknown>;
         stream.push({ type: "start", partial: output as never });
         await processResponsesStream(responseStream, output, stream, model);
@@ -1324,7 +1339,7 @@ export function createOpenAICompletionsTransportStreamFn(): StreamFn {
         }
         const responseStream = (await client.chat.completions.create(
           params as never,
-          buildOpenAISdkRequestOptions(model, options?.signal),
+          buildOpenAISdkRequestOptions(model, options?.signal, options),
         )) as unknown as AsyncIterable<ChatCompletionChunk>;
         stream.push({ type: "start", partial: output as never });
         await processOpenAICompletionsStream(responseStream, output, model, stream);

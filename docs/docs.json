@@ -1270,6 +1270,7 @@
                   "tools/reactions",
                   "tools/thinking",
                   "tools/tokenjuice",
+                  "tools/draft-verification",
                   "tools/loop-detection",
                   "tools/trajectory",
                   "tools/tts",

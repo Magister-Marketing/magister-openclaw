@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ImageContent } from "../agents/command/types.js";
+import { parseDraftVerificationReceipt } from "../agents/draft-verification-receipt.js";
 import {
   hasNonzeroUsage,
   normalizeUsage,
@@ -713,6 +714,14 @@ export async function handleOpenAiHttpRequest(
       return;
     }
 
+    if (evt.stream === "draft_verification") {
+      const receipt = parseDraftVerificationReceipt(evt.data);
+      if (receipt) {
+        writeCustomSseEvent(res, "draft_verification", receipt);
+      }
+      return;
+    }
+
     if (evt.stream === "assistant") {
       const mediaUrls = resolveAssistantMediaUrls(evt).filter((url) => {
         if (forwardedMediaUrls.has(url)) {
@@ -801,6 +810,12 @@ export async function handleOpenAiHttpRequest(
 
     if (evt.stream === "lifecycle") {
       const phase = evt.data?.phase;
+      if (phase === "end" || phase === "error") {
+        const receipt = parseDraftVerificationReceipt(evt.data?.draftVerification);
+        if (receipt) {
+          writeCustomSseEvent(res, "draft_verification", receipt);
+        }
+      }
       if (phase === "error") {
         // Magister fork: surface the terminal error as a custom SSE event
         // before finalizing. Without it a run that died mid-turn is

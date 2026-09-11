@@ -9,6 +9,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ImageContent } from "../agents/command/types.js";
+import { parseDraftVerificationReceipt } from "../agents/draft-verification-receipt.js";
 import type { ClientToolDefinition } from "../agents/pi-embedded-runner/run/params.js";
 import { isClientToolNameConflictError } from "../agents/pi-tool-definition-adapter.js";
 import { createDefaultDeps } from "../cli/deps.js";
@@ -974,6 +975,14 @@ export async function handleOpenResponsesHttpRequest(
       return;
     }
 
+    if (evt.stream === "draft_verification") {
+      const receipt = parseDraftVerificationReceipt(evt.data);
+      if (receipt) {
+        res.write(`event: draft_verification\ndata: ${JSON.stringify(receipt)}\n\n`);
+      }
+      return;
+    }
+
     if (evt.stream === "assistant") {
       const mediaUrls = resolveAssistantMediaUrls(evt).filter((url) => {
         if (forwardedMediaUrls.has(url)) {
@@ -1053,6 +1062,10 @@ export async function handleOpenResponsesHttpRequest(
     if (evt.stream === "lifecycle") {
       const phase = evt.data?.phase;
       if (phase === "end" || phase === "error") {
+        const receipt = parseDraftVerificationReceipt(evt.data?.draftVerification);
+        if (receipt) {
+          res.write(`event: draft_verification\ndata: ${JSON.stringify(receipt)}\n\n`);
+        }
         const finalText = accumulatedText || "No response from OpenClaw.";
         const finalStatus = phase === "error" ? "failed" : "completed";
         requestFinalize(finalStatus, finalText);

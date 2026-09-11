@@ -798,6 +798,52 @@ describe("OpenResponses HTTP API (e2e)", () => {
     });
   });
 
+  it("exports receipt metadata before the existing failed terminal without changing text", async () => {
+    const receipt = {
+      version: 1,
+      mode: "shadow",
+      outcome: "unchecked",
+      checks: [],
+      repair_attempts: 0,
+      stop_reason: "aborted",
+      ceiling_retried: null,
+      skill_reads: null,
+    };
+    agentCommand.mockImplementationOnce((async (opts: unknown) => {
+      const runId = (opts as { runId: string }).runId;
+      emitAgentEvent({ runId, stream: "assistant", data: { delta: "partial answer" } });
+      emitAgentEvent({
+        runId,
+        stream: "draft_verification",
+        data: { ...receipt, secret: "private" },
+      });
+      emitAgentEvent({
+        runId,
+        stream: "lifecycle",
+        data: { phase: "error", draftVerification: receipt },
+      });
+      return { payloads: [{ text: "partial answer" }], meta: {} };
+    }) as never);
+    const res = await postResponses(enabledPort, { stream: true, model: "openclaw", input: "hi" });
+    const events = parseSseEvents(await res.text());
+    const receipts = events.filter((event) => event.event === "draft_verification");
+    expect(receipts).toHaveLength(1);
+    expect(JSON.parse(receipts[0].data)).toEqual(receipt);
+    // This adapter's existing lifecycle finalizer emits response.completed
+    // with status=failed; adding evidence must not reclassify that terminal.
+    const terminalIndex = events.findIndex((event) => event.event === "response.completed");
+    expect(JSON.parse(events[terminalIndex].data).response.status).toBe("failed");
+    expect(events.findIndex((event) => event.event === "draft_verification")).toBeLessThan(
+      terminalIndex,
+    );
+    expect(JSON.stringify(events)).not.toContain("private");
+    expect(
+      events
+        .filter((event) => event.event === "response.output_text.delta")
+        .map((event) => JSON.parse(event.data).delta),
+    ).toEqual(["partial answer"]);
+  });
+
   it("forwards thinking and tool events like the chat completions handler (Magister fork)", async () => {
     // 2026-08-22: a 79-call attachment turn streamed nothing but its final
     // text, so the gateway's watchdog saw 1807s of silence and killed it.

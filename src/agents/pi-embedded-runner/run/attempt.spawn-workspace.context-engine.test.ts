@@ -8,6 +8,7 @@ import {
   clearMemoryPluginState,
   registerMemoryPromptSection,
 } from "../../../plugins/memory-state.js";
+import { DraftVerificationStream } from "../../draft-verification-stream.js";
 import {
   type AttemptContextEngine,
   buildLoopPromptCacheInfo,
@@ -430,6 +431,62 @@ describe("runEmbeddedAttempt context engine sessionKey forwarding", () => {
     expect(systemPrompt).toContain("BOOTSTRAP.md is included below in Project Context");
     expect(systemPrompt).toContain("## /tmp/openclaw-override-workspace/BOOTSTRAP.md");
     expect(systemPrompt).toContain("Ask who I am.");
+  });
+
+  it("disableTools removes client tools as well as custom registrations", async () => {
+    await createContextEngineAttemptRunner({
+      contextEngine: createContextEngineBootstrapAndAssemble(),
+      sessionKey,
+      tempPaths,
+      attemptOverrides: {
+        disableTools: true,
+        clientTools: [
+          {
+            type: "function",
+            function: {
+              name: "external_write",
+              description: "write",
+              parameters: { type: "object", properties: {} },
+            },
+          },
+        ],
+      },
+      sessionPrompt: async (session) => {
+        session.messages = [
+          ...session.messages,
+          { role: "assistant", content: "done", timestamp: 2 },
+        ];
+      },
+    });
+    expect(hoisted.createAgentSessionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ tools: [], customTools: [] }),
+    );
+  });
+
+  it("wraps the configured stream before prompt and forwards its receipt to the terminal owner", async () => {
+    const draftVerification = new DraftVerificationStream({
+      mode: "shadow",
+      prompt: "Return only JSON.",
+      deadline: Date.now() + 60_000,
+      repairAllowed: false,
+    });
+    const wrap = vi.spyOn(draftVerification, "wrap");
+    await createContextEngineAttemptRunner({
+      contextEngine: createContextEngineBootstrapAndAssemble(),
+      sessionKey,
+      tempPaths,
+      attemptOverrides: { draftVerification },
+      sessionPrompt: async (session) => {
+        expect(wrap).toHaveBeenCalledTimes(1);
+        expect(session.agent.streamFn).toBe(wrap.mock.results[0].value);
+        const subscription = hoisted.subscribeEmbeddedPiSessionMock.mock.calls.at(-1)?.[0];
+        expect(subscription?.getDraftVerificationReceipt?.()).toBe(draftVerification.receipt);
+        session.messages = [
+          ...session.messages,
+          { role: "assistant", content: "done", timestamp: 2 },
+        ];
+      },
+    });
   });
 
   it("includes hook-adjusted bootstrap files preloaded before routing", async () => {

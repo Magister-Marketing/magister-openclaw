@@ -1237,6 +1237,45 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
     });
   });
 
+  it("exports only allowlisted draft receipts before terminal without changing answer text", async () => {
+    const receipt = {
+      version: 1,
+      mode: "shadow",
+      outcome: "failed",
+      checks: [{ kind: "json_only", status: "fail" }],
+      repair_attempts: 0,
+      stop_reason: "max_tokens",
+      ceiling_retried: null,
+      skill_reads: null,
+    };
+    agentCommand.mockImplementationOnce((async (opts: unknown) => {
+      const runId = (opts as { runId: string }).runId;
+      emitAgentEvent({ runId, stream: "assistant", data: { delta: "unchanged answer" } });
+      emitAgentEvent({
+        runId,
+        stream: "draft_verification",
+        data: { ...receipt, prompt: "secret" },
+      });
+      emitAgentEvent({
+        runId,
+        stream: "lifecycle",
+        data: { phase: "end", draftVerification: receipt },
+      });
+      return { payloads: [{ text: "unchanged answer" }], meta: {} };
+    }) as never);
+    const res = await postChatCompletions(enabledPort, {
+      stream: true,
+      model: "openclaw",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    const text = await res.text();
+    expect(text.match(/event: draft_verification/g)).toHaveLength(1);
+    expect(text).toContain('"stop_reason":"max_tokens"');
+    expect(text).not.toContain("secret");
+    expect(text.indexOf("event: draft_verification")).toBeLessThan(text.indexOf("[DONE]"));
+    expect(text.match(/unchanged answer/g)).toHaveLength(1);
+  });
+
   it("forwards compaction events as custom SSE events (Magister fork)", async () => {
     const port = enabledPort;
     agentCommand.mockClear();

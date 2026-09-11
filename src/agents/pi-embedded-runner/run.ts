@@ -5,7 +5,10 @@ import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import { SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
 import { ensureContextEnginesInitialized } from "../../context-engine/init.js";
 import { resolveContextEngine } from "../../context-engine/registry.js";
-import { emitAgentEvent, emitAgentPlanEvent } from "../../infra/agent-events.js";
+import {
+  emitAgentEvent as emitRawAgentEvent,
+  emitAgentPlanEvent,
+} from "../../infra/agent-events.js";
 import { sleepWithAbort } from "../../infra/backoff.js";
 import { freezeDiagnosticTraceContext } from "../../infra/diagnostic-trace-context.js";
 import { formatErrorMessage } from "../../infra/errors.js";
@@ -22,6 +25,7 @@ import { resolveOpenClawAgentDir } from "../agent-paths.js";
 import {
   hasConfiguredModelFallbacks,
   resolveAgentExecutionContract,
+  resolveAgentConfig,
   resolveSessionAgentIds,
   resolveAgentWorkspaceDir,
 } from "../agent-scope.js";
@@ -38,6 +42,8 @@ import {
   resolveStoredSessionKeyForSessionId,
 } from "../command/session.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../defaults.js";
+import { DraftVerificationStream } from "../draft-verification-stream.js";
+import { draftStopReason } from "../draft-verification.js";
 import { isStrictAgenticExecutionContractActive } from "../execution-contract.js";
 import {
   coerceToFailoverError,
@@ -335,6 +341,21 @@ function buildHandledReplyPayloads(reply?: ReplyPayload) {
 export async function runEmbeddedPiAgent(
   params: RunEmbeddedPiAgentParams,
 ): Promise<EmbeddedPiRunResult> {
+  let draftVerification: DraftVerificationStream | undefined;
+  // Preserve the existing lifecycle owner, including retry/error paths. Attach
+  // evidence only; HTTP adapters export it before closing on that same terminal.
+  const emitAgentEvent: typeof emitRawAgentEvent = (event) => {
+    const terminal =
+      event.stream === "lifecycle" && ["end", "error"].includes(String(event.data.phase));
+    emitRawAgentEvent(
+      terminal && draftVerification
+        ? {
+            ...event,
+            data: { ...event.data, draftVerification: { ...draftVerification.receipt } },
+          }
+        : event,
+    );
+  };
   // Resolve sessionKey early so all downstream consumers (hooks, LCM, compaction)
   // receive a non-null key even when callers omit it. See #60552.
   const effectiveSessionKey = backfillSessionKey({
@@ -502,6 +523,34 @@ export async function runEmbeddedPiAgent(
         agentHarnessId: params.agentHarnessId,
       });
       const pluginHarnessOwnsTransport = agentHarness.id !== "pi";
+      const draftMode =
+        (params.config
+          ? resolveAgentConfig(params.config, workspaceResolution.agentId)?.tools?.draftVerification
+              ?.mode
+          : undefined) ??
+        params.config?.tools?.draftVerification?.mode ??
+        "off";
+      if (
+        draftMode !== "off" &&
+        !pluginHarnessOwnsTransport &&
+        !params.modelRun &&
+        params.promptMode !== "none" &&
+        !params.silentExpected &&
+        params.trigger !== "memory" &&
+        params.trigger !== "heartbeat"
+      ) {
+        draftVerification = new DraftVerificationStream({
+          mode: draftMode,
+          prompt: params.prompt,
+          deadline: started + params.timeoutMs,
+          abortSignal: params.abortSignal,
+          repairAllowed:
+            !params.clientTools?.length &&
+            !params.images?.length &&
+            !params.forceMessageTool &&
+            !params.forceHeartbeatTool,
+        });
+      }
       const dynamicModelResolution = await resolveModelAsync(
         provider,
         modelId,
@@ -827,6 +876,9 @@ export async function runEmbeddedPiAgent(
       const observePostCompactionToolOutcome = (
         observation: PostCompactionGuardObservation,
       ): void => {
+        if (draftVerification) {
+          draftVerification.hadToolActivity = true;
+        }
         const verdict = postCompactionGuard.observe(observation);
         if (verdict.shouldAbort) {
           postCompactionAbortError ??= PostCompactionLoopPersistedError.fromVerdict(verdict);
@@ -1225,6 +1277,7 @@ export async function runEmbeddedPiAgent(
             }
           }
           const isRetryLimitFinalizationAttempt = retryLimitFinalizationPending;
+          draftVerification?.beginAttempt(isRetryLimitFinalizationAttempt);
           retryLimitFinalizationPending = false;
           runLoopIterations += 1;
           // Magister fork: a retry attempt is starting — any suppressed or
@@ -1343,6 +1396,7 @@ export async function runEmbeddedPiAgent(
               disableTools: params.disableTools || isRetryLimitFinalizationAttempt,
               suppressAssistantDelivery: isRetryLimitFinalizationAttempt,
               suppressLifecycleTerminal: isRetryLimitFinalizationAttempt,
+              draftVerification: isRetryLimitFinalizationAttempt ? undefined : draftVerification,
               provider,
               modelId,
               // Use the harness selected before model/auth setup for the actual
@@ -1451,6 +1505,16 @@ export async function runEmbeddedPiAgent(
             throw postCompactionAbortError;
           }
           const attempt = normalizeEmbeddedRunAttemptResult(rawAttempt);
+          if (
+            draftVerification &&
+            (attempt.toolMetas.length ||
+              attempt.clientToolCalls?.length ||
+              attempt.didSendViaMessagingTool ||
+              attempt.toolMediaUrls?.length ||
+              attempt.yieldDetected)
+          ) {
+            draftVerification.hadToolActivity = true;
+          }
           // From here on the run is past its first attempt: any retry can
           // carry persisted in-turn state, so proactive compaction stays off.
           proactiveCompactionAttempted = true;
@@ -1469,6 +1533,13 @@ export async function runEmbeddedPiAgent(
             lastAssistant: sessionLastAssistant,
             currentAttemptAssistant,
           } = attempt;
+          if (isRetryLimitFinalizationAttempt && draftVerification) {
+            // The existing finalizer is not a verified draft. Observe only its
+            // actual provider termination; never inherit earlier checks/usage.
+            draftVerification.receipt.stop_reason = draftStopReason(
+              sessionLastAssistant?.stopReason,
+            );
+          }
           const timedOutDuringToolExecution = attempt.timedOutDuringToolExecution ?? false;
           if (sessionIdUsed && sessionIdUsed !== activeSessionId) {
             activeSessionId = sessionIdUsed;
@@ -1486,9 +1557,15 @@ export async function runEmbeddedPiAgent(
                   ]),
                 )
               : bootstrapPromptWarningSignaturesSeen);
-          const lastAssistantUsage = normalizeUsage(sessionLastAssistant?.usage as UsageLike);
-          const attemptUsage = attempt.attemptUsage ?? lastAssistantUsage;
+          const selectedUsage = normalizeUsage(sessionLastAssistant?.usage as UsageLike);
+          const lastAssistantUsage =
+            normalizeUsage(draftVerification?.lastProviderUsage) ?? selectedUsage;
+          const attemptUsage = attempt.attemptUsage ?? selectedUsage;
           mergeUsageIntoAccumulator(usageAccumulator, attemptUsage);
+          mergeUsageIntoAccumulator(
+            usageAccumulator,
+            normalizeUsage(draftVerification?.takeAdditionalUsage()),
+          );
           // Keep prompt size from the latest model call so session totalTokens
           // reflects current context usage, not accumulated tool-loop usage.
           lastRunPromptUsage = lastAssistantUsage ?? attemptUsage;
@@ -2491,7 +2568,9 @@ export async function runEmbeddedPiAgent(
           }
           const usageMeta = buildUsageAgentMetaFields({
             usageAccumulator,
-            lastAssistantUsage: sessionLastAssistant?.usage as UsageLike | undefined,
+            lastAssistantUsage:
+              draftVerification?.lastProviderUsage ??
+              (sessionLastAssistant?.usage as UsageLike | undefined),
             lastRunPromptUsage,
             lastTurnTotal,
           });
@@ -3049,6 +3128,7 @@ export async function runEmbeddedPiAgent(
               replayInvalid,
               livenessState,
               agentHarnessResultClassification: attempt.agentHarnessResultClassification,
+              ...(draftVerification ? { draftVerification: { ...draftVerification.receipt } } : {}),
               ...(attempt.yieldDetected ? { yielded: true } : {}),
               ...(emptyAssistantReplyIsSilent
                 ? { terminalReplyKind: "silent-empty" as const }

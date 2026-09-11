@@ -8405,6 +8405,19 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                       },
                       additionalProperties: false,
                     },
+                    draftVerification: {
+                      type: "object",
+                      properties: {
+                        mode: {
+                          type: "string",
+                          enum: ["off", "shadow", "repair"],
+                          description:
+                            "Per-agent off, shadow, or repair override of tools.draftVerification.mode.",
+                        },
+                      },
+                      additionalProperties: false,
+                      description: "Per-agent draft verification override.",
+                    },
                     sandbox: {
                       type: "object",
                       properties: {
@@ -18386,6 +18399,20 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
               },
             },
             additionalProperties: false,
+          },
+          draftVerification: {
+            type: "object",
+            properties: {
+              mode: {
+                type: "string",
+                enum: ["off", "shadow", "repair"],
+                description:
+                  "off preserves delivery; shadow records deterministic checks without a model call; repair buffers text and allows one tool-free correction only when the turn used no tools.",
+              },
+            },
+            additionalProperties: false,
+            description:
+              "Bounded request-grounded draft checks for Pi; disabled by default. Unsupported requirements remain unknown.",
           },
           message: {
             type: "object",
@@ -29305,6 +29332,22 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     "plugins.entries.*.config": {
       label: "Plugin Config",
       help: "Plugin-defined configuration payload interpreted by that plugin's own schema and validation rules. Use only documented fields from the plugin to prevent ignored or invalid settings.",
+      tags: ["advanced"],
+    },
+    "tools.draftVerification": {
+      help: "Bounded request-grounded draft checks for Pi; disabled by default. Unsupported requirements remain unknown.",
+      tags: ["tools"],
+    },
+    "tools.draftVerification.mode": {
+      help: "off preserves delivery; shadow records deterministic checks without a model call; repair buffers text and allows one tool-free correction only when the turn used no tools.",
+      tags: ["tools"],
+    },
+    "agents.list.*.tools.draftVerification": {
+      help: "Per-agent draft verification override.",
+      tags: ["advanced"],
+    },
+    "agents.list.*.tools.draftVerification.mode": {
+      help: "Per-agent off, shadow, or repair override of tools.draftVerification.mode.",
       tags: ["advanced"],
     },
     "models.providers.*.headers.*": {
