@@ -2744,6 +2744,28 @@
       "transport_modes": ["native_json"]
     },
     {
+      "capability_id": "formspree",
+      "connection_slug": "formspree",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:formspree"],
+      "minimum_native_action_registry_revision": "30791bc944d1ccf5f4cca926f93c52a3e59ca3f3d95b53f210bb2ca03abc5d76",
+      "proxy_services": ["formspree"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-formspree",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
       "capability_id": "gemini",
       "connection_slug": null,
       "delegation_safe_tools": [],
@@ -3897,6 +3919,6 @@
     }
   ],
   "native_action_registry_revision": "30791bc944d1ccf5f4cca926f93c52a3e59ca3f3d95b53f210bb2ca03abc5d76",
-  "registry_revision": "70f42c5315547629831bd2f040962ca4475cf3ece10a0b43a7e05212cea7ad6d",
+  "registry_revision": "fbd36154132d3a179295ba317ec7f2295e52103ad07c19d56fd5997b2ac09e48",
   "schema_version": 1
 }
