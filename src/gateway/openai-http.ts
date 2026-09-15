@@ -687,8 +687,8 @@ export async function handleOpenAiHttpRequest(
     }
     // A run's lifecycle can end before agentCommand returns its final payload
     // (including a recovery answer or terminal error). Closing here used to
-    // discard that payload whenever no assistant delta had been streamed.
-    if (!commandSettled && !terminalError && !sawAssistantDelta) {
+    // discard that payload, or treat pre-tool narration as a completed answer.
+    if (!commandSettled && !terminalError) {
       return;
     }
     if (streamIncludeUsage && !finalUsage) {
