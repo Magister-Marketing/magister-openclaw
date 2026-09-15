@@ -1193,6 +1193,59 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
     });
   });
 
+  it.each([false, true])(
+    "keeps a final non-streamed answer after lifecycle end (usage=%s)",
+    async (usage) => {
+      agentCommand.mockClear();
+      agentCommand.mockImplementationOnce((async (opts: unknown) => {
+        const runId = (opts as { runId: string }).runId;
+        emitAgentEvent({ runId, stream: "lifecycle", data: { phase: "end" } });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return { payloads: [{ text: "Recovered final answer" }], meta: {} };
+      }) as never);
+      const response = await postChatCompletions(enabledPort, {
+        stream: true,
+        ...(usage ? { stream_options: { include_usage: true } } : {}),
+        model: "openclaw",
+        messages: [{ role: "user", content: "hi" }],
+      });
+      const text = await response.text();
+      expect(text).toContain("Recovered final answer");
+      expect(parseSseDataLines(text).at(-1)).toBe("[DONE]");
+      expect(agentCommand).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("surfaces an error-only final result without leaking provider text or replaying tools", async () => {
+    agentCommand.mockClear();
+    agentCommand.mockImplementationOnce((async (opts: unknown) => {
+      const runId = (opts as { runId: string }).runId;
+      emitAgentEvent({
+        runId,
+        stream: "tool",
+        data: { phase: "result", name: "write", toolCallId: "write-1" },
+      });
+      emitAgentEvent({ runId, stream: "lifecycle", data: { phase: "end" } });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return {
+        payloads: [{ text: "private provider failure token=secret", isError: true }],
+        meta: {},
+      };
+    }) as never);
+    const response = await postChatCompletions(enabledPort, {
+      stream: true,
+      model: "openclaw",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    const text = await response.text();
+    expect(text).toContain("event: error");
+    expect(text).toContain("Agent couldn't generate a response. Please try again.");
+    expect(text).not.toContain("private provider failure");
+    expect(text).not.toContain("secret");
+    expect(parseSseDataLines(text).at(-1)).toBe("[DONE]");
+    expect(agentCommand).toHaveBeenCalledTimes(1);
+  });
+
   it("finalizes stream when lifecycle end arrives before usage is available", async () => {
     const port = enabledPort;
     agentCommand.mockClear();

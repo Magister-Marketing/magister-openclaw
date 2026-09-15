@@ -675,12 +675,20 @@ export async function handleOpenAiHttpRequest(
       }
     | undefined;
   let finalizeRequested = false;
+  let commandSettled = false;
+  let terminalError = false;
   let closed = false;
   let stopWatchingDisconnect = () => {};
   const forwardedMediaUrls = new Set<string>();
 
   const maybeFinalize = () => {
     if (closed || !finalizeRequested) {
+      return;
+    }
+    // A run's lifecycle can end before agentCommand returns its final payload
+    // (including a recovery answer or terminal error). Closing here used to
+    // discard that payload whenever no assistant delta had been streamed.
+    if (!commandSettled && !terminalError && !sawAssistantDelta) {
       return;
     }
     if (streamIncludeUsage && !finalUsage) {
@@ -802,6 +810,7 @@ export async function handleOpenAiHttpRequest(
     if (evt.stream === "lifecycle") {
       const phase = evt.data?.phase;
       if (phase === "error") {
+        terminalError = true;
         // Magister fork: surface the terminal error as a custom SSE event
         // before finalizing. Without it a run that died mid-turn is
         // indistinguishable from one that finished, and the gateway records
@@ -836,6 +845,21 @@ export async function handleOpenAiHttpRequest(
       }
 
       finalUsage = resolveChatCompletionUsage(result);
+      commandSettled = true;
+
+      const resultPayloads = (result as { payloads?: Array<{ isError?: boolean }> } | null)
+        ?.payloads;
+      if (resultPayloads?.length && resultPayloads.every((payload) => payload.isError)) {
+        // Error-only terminal payloads are not successful assistant answers.
+        // Keep provider text out of this public error, and never replay tools
+        // here: the runner already owns the bounded continuation policy.
+        terminalError = true;
+        writeCustomSseEvent(res, "error", {
+          message: "Agent couldn't generate a response. Please try again.",
+        });
+        requestFinalize();
+        return;
+      }
 
       if (!sawAssistantDelta) {
         if (!wroteRole) {
@@ -859,6 +883,7 @@ export async function handleOpenAiHttpRequest(
         return;
       }
       logWarn(`openai-compat: streaming chat completion failed: ${String(err)}`);
+      commandSettled = true;
       writeAssistantContentChunk(res, {
         runId,
         model,
