@@ -3328,6 +3328,7 @@
     "magister_list_aeo_audits",
     "magister_list_ai_visibility_sets",
     "magister_list_analytics_properties",
+    "magister_list_assets",
     "magister_list_firehose_matches",
     "magister_list_integrations",
     "magister_list_marketing_events",
@@ -3340,6 +3341,7 @@
     "magister_list_workflows",
     "magister_read_analytics_breakdown",
     "magister_read_analytics_snapshots",
+    "magister_read_asset",
     "web_search"
   ],
   "hosted_agent_tools": [
@@ -3933,6 +3935,6 @@
     }
   ],
   "native_action_registry_revision": "1330c7667b351d3c5196c28922c0d63312c2de33fdb3924de9dfe4871e1b872c",
-  "registry_revision": "e0cf35a48651646025cd3c45b8457c1945743bf859126de77a7fb1bc46a32f94",
+  "registry_revision": "6992186480d4abcc086774fe43f3f85fa511567a666abba7f146ab366bfa4455",
   "schema_version": 1
 }
