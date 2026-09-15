@@ -51,6 +51,25 @@ export function validateBatchTargetIds(
   return null;
 }
 
+/** Bind only the selector already resolved by the route to its canonical tab. */
+export function bindActRequestTarget(
+  action: BrowserActRequest,
+  requestTargetId: string | undefined,
+  resolvedTargetId: string,
+): void {
+  // A tabId, label or unambiguous prefix is a selector, not a different tab.
+  // Never resolve nested overrides independently: every action must remain
+  // bound to the one selected tab, and the mismatch checks still run below.
+  if (requestTargetId && action.targetId === requestTargetId) {
+    action.targetId = resolvedTargetId;
+  }
+  if (action.kind === "batch") {
+    for (const nested of action.actions) {
+      bindActRequestTarget(nested, requestTargetId, resolvedTargetId);
+    }
+  }
+}
+
 function normalizeFields(rawFields: unknown): BrowserFormField[] {
   const entries = Array.isArray(rawFields) ? rawFields : [];
   return entries

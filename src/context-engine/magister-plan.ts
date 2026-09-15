@@ -49,6 +49,8 @@ type PlanSummaryPayload = {
   summary?: string | null;
 };
 
+type PlanContext = { summary: string; live: boolean };
+
 let inFlightSummary: Promise<string | null> | null = null;
 let warnedThisProcess = false;
 
@@ -106,26 +108,28 @@ export class MagisterPlanContextEngine implements ContextEngine {
     messages: AgentMessage[];
     tokenBudget?: number;
   }): Promise<AssembleResult> {
-    const [innerResult, planSummary] = await Promise.all([
+    const [innerResult, planContext] = await Promise.all([
       this.inner.assemble(params),
       this.readPlanSummary(),
     ]);
 
-    if (!planSummary) {
+    if (!planContext) {
       return innerResult;
     }
 
-    const hash = createHash("sha256").update(planSummary).digest("hex");
+    const { summary: planSummary, live } = planContext;
+    const hash = createHash("sha256").update(`${live}:${planSummary}`).digest("hex");
     const previousHash = this.lastSeenHash.get(params.sessionId);
     const changed = previousHash !== undefined && previousHash !== hash;
     this.rememberHash(params.sessionId, hash);
 
-    const note = changed
-      ? "Note: the live marketing plan changed since your last reply. Use the current plan below as the operating source of truth.\n\n"
-      : "";
+    const note =
+      changed && live
+        ? "Note: the live marketing plan changed since your last reply. Use the current plan below as the operating source of truth.\n\n"
+        : "";
     const block = renderMagisterContextBlock({
       provenance: "trusted_project_state",
-      source: "live_marketing_plan",
+      source: live ? "live_marketing_plan" : "cached_marketing_plan",
       content: `${note}${planSummary.trimEnd()}`,
     });
 
@@ -171,12 +175,13 @@ export class MagisterPlanContextEngine implements ContextEngine {
     this.lastSeenHash.clear();
   }
 
-  private async readPlanSummary(): Promise<string | null> {
+  private async readPlanSummary(): Promise<PlanContext | null> {
     const gatewaySummary = await this.fetchGatewaySummary();
     if (gatewaySummary) {
-      return gatewaySummary;
+      return { summary: gatewaySummary, live: true };
     }
-    return this.readFallbackPlanMd();
+    const summary = await this.readFallbackPlanMd();
+    return summary ? { summary, live: false } : null;
   }
 
   private async fetchGatewaySummary(): Promise<string | null> {
@@ -224,7 +229,13 @@ export class MagisterPlanContextEngine implements ContextEngine {
       if (!content) {
         return null;
       }
-      return `## Current Marketing Plan\n\n${content.slice(0, MAX_PLAN_CHARS)}`;
+      return [
+        "## Cached Marketing Plan — current state unavailable",
+        "",
+        "The live plan could not be fetched. This snapshot may be outdated: refresh current item state before asking the user to approve, complete or reopen anything. Do not treat a cached approval requirement as a current blocker. If refresh fails, explain that the current state is unverified.",
+        "",
+        content.slice(0, MAX_PLAN_CHARS),
+      ].join("\n");
     } catch {
       return null;
     }
