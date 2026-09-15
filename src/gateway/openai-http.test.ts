@@ -1282,6 +1282,65 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
     },
   );
 
+  it.each([{ stopReason: "error" }, { error: { kind: "retry_limit" } }])(
+    "retains non-error partial payloads without completing explicit terminal failures (%j)",
+    async (meta) => {
+      agentCommand.mockClear();
+      agentCommand.mockImplementationOnce((async (opts: unknown) => {
+        const runId = (opts as { runId: string }).runId;
+        emitAgentEvent({ runId, stream: "lifecycle", data: { phase: "end" } });
+        return {
+          payloads: [
+            { text: "private provider details", isError: true },
+            { text: "Verified partial work." },
+          ],
+          meta,
+        };
+      }) as never);
+      const response = await postChatCompletions(enabledPort, {
+        stream: true,
+        model: "openclaw",
+        messages: [{ role: "user", content: "hi" }],
+      });
+      const text = await response.text();
+      expect(text).toContain("Verified partial work.");
+      expect(text.indexOf("Verified partial work.")).toBeLessThan(text.indexOf("event: error"));
+      expect(text).not.toContain("private provider details");
+      expect(text.match(/event: error/g)).toHaveLength(1);
+      expect(text).toContain('"code":"terminal_result_error"');
+      expect(agentCommand).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("delivers a lifecycle error once when usage arrives with error-only payloads", async () => {
+    agentCommand.mockClear();
+    agentCommand.mockImplementationOnce((async (opts: unknown) => {
+      const runId = (opts as { runId: string }).runId;
+      emitAgentEvent({
+        runId,
+        stream: "lifecycle",
+        data: { phase: "error", error: "Safe terminal failure" },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return {
+        payloads: [{ text: "private provider details", isError: true }],
+        meta: { agentMeta: { usage: { input: 7, output: 3, total: 10 } } },
+      };
+    }) as never);
+    const response = await postChatCompletions(enabledPort, {
+      stream: true,
+      stream_options: { include_usage: true },
+      model: "openclaw",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    const text = await response.text();
+    expect(text.match(/event: error/g)).toHaveLength(1);
+    expect(text).toContain("Safe terminal failure");
+    expect(text).not.toContain("private provider details");
+    expect(text).toContain('"total_tokens":10');
+    expect(parseSseDataLines(text).at(-1)).toBe("[DONE]");
+  });
+
   it("finalizes stream when lifecycle end arrives before usage is available", async () => {
     const port = enabledPort;
     agentCommand.mockClear();

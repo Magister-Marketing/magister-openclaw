@@ -848,17 +848,43 @@ export async function handleOpenAiHttpRequest(
       finalUsage = resolveChatCompletionUsage(result);
       commandSettled = true;
 
-      const resultPayloads = (result as { payloads?: Array<{ isError?: boolean }> } | null)
-        ?.payloads;
-      if (resultPayloads?.length && resultPayloads.every((payload) => payload.isError)) {
-        // Error-only terminal payloads are not successful assistant answers.
-        // Keep provider text out of this public error, and never replay tools
-        // here: the runner already owns the bounded continuation policy.
-        terminalError = true;
-        writeCustomSseEvent(res, "error", {
-          message: "Agent couldn't generate a response. Please try again.",
-          code: "terminal_result_error",
-        });
+      const finalResult = result as {
+        payloads?: Array<{ text?: string; isError?: boolean; isReasoning?: boolean }>;
+        meta?: { error?: unknown; stopReason?: string };
+      } | null;
+      const resultPayloads = finalResult?.payloads;
+      const resultFailed =
+        Boolean(finalResult?.meta?.error) ||
+        finalResult?.meta?.stopReason === "error" ||
+        finalResult?.meta?.stopReason === "retry_limit" ||
+        (resultPayloads?.length && resultPayloads.every((payload) => payload.isError));
+      if (terminalError || resultFailed) {
+        // Explicit terminal metadata can accompany partial narration. Keep
+        // non-error partial text, but never deliver the turn as a success or
+        // expose raw provider error payloads. The runner owns all retries.
+        if (!terminalError) {
+          const partialText = resultPayloads
+            ?.filter((payload) => !payload.isError && !payload.isReasoning)
+            .map((payload) => (typeof payload.text === "string" ? payload.text : ""))
+            .filter(Boolean)
+            .join("\n\n");
+          if (!sawAssistantDelta && partialText) {
+            sawAssistantDelta = true;
+            writeAssistantContentChunk(res, {
+              runId,
+              model,
+              content: partialText,
+              finishReason: null,
+            });
+          }
+          terminalError = true;
+          writeCustomSseEvent(res, "error", {
+            message: "Agent couldn't generate a response. Please try again.",
+            code: "terminal_result_error",
+          });
+        }
+        // include_usage keeps a lifecycle-error stream open until this point.
+        // Finalize its usage without duplicating the error already delivered.
         requestFinalize();
         return;
       }
