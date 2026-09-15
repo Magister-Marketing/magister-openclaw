@@ -1019,9 +1019,10 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
         const stopChoice = errorChunks
           .flatMap((c) => (c.choices as Array<Record<string, unknown>> | undefined) ?? [])
           .find((choice) => choice.finish_reason === "stop");
-        expect((stopChoice?.delta as Record<string, unknown> | undefined)?.content).toBe(
-          "Error: internal error",
-        );
+        expect(stopChoice).toBeDefined();
+        expect(errorText).toContain("event: error");
+        expect(errorText).toContain('"code":"terminal_result_error"');
+        expect(errorText).not.toContain("Error: internal error");
       }
     } finally {
       // shared server
@@ -1248,6 +1249,34 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
       expect(text).toContain('"code":"terminal_result_error"');
       expect(text).not.toContain("private provider failure");
       expect(text).not.toContain("secret");
+      expect(parseSseDataLines(text).at(-1)).toBe("[DONE]");
+      expect(agentCommand).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([false, true])(
+    "keeps a thrown final failure after lifecycle end (narration=%s)",
+    async (narration) => {
+      agentCommand.mockClear();
+      agentCommand.mockImplementationOnce((async (opts: unknown) => {
+        const runId = (opts as { runId: string }).runId;
+        if (narration) {
+          emitAgentEvent({ runId, stream: "assistant", data: { delta: "Working on this." } });
+        }
+        emitAgentEvent({ runId, stream: "lifecycle", data: { phase: "end" } });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        throw new Error("private exhausted provider failure");
+      }) as never);
+      const response = await postChatCompletions(enabledPort, {
+        stream: true,
+        model: "openclaw",
+        messages: [{ role: "user", content: "hi" }],
+      });
+      const text = await response.text();
+      expect(text.match(/event: error/g)).toHaveLength(1);
+      expect(text).toContain('"code":"terminal_result_error"');
+      expect(text).not.toContain("private exhausted provider failure");
+      expect(text).not.toContain("Error: internal error");
       expect(parseSseDataLines(text).at(-1)).toBe("[DONE]");
       expect(agentCommand).toHaveBeenCalledTimes(1);
     },

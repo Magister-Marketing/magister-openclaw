@@ -820,6 +820,7 @@ export async function handleOpenAiHttpRequest(
             typeof evt.data?.error === "string" && evt.data.error
               ? evt.data.error
               : "Agent run failed",
+          ...(commandSettled ? { code: "terminal_result_error" } : {}),
         });
       }
       if (phase === "end" || phase === "error") {
@@ -885,13 +886,6 @@ export async function handleOpenAiHttpRequest(
       }
       logWarn(`openai-compat: streaming chat completion failed: ${String(err)}`);
       commandSettled = true;
-      writeAssistantContentChunk(res, {
-        runId,
-        model,
-        content: "Error: internal error",
-        finishReason: "stop",
-      });
-      wroteStopChunk = true;
       finalUsage = {
         prompt_tokens: 0,
         completion_tokens: 0,
@@ -900,7 +894,10 @@ export async function handleOpenAiHttpRequest(
       emitAgentEvent({
         runId,
         stream: "lifecycle",
-        data: { phase: "error" },
+        data: {
+          phase: "error",
+          error: "Agent couldn't generate a response. Please try again.",
+        },
       });
       requestFinalize();
     } finally {
