@@ -856,6 +856,7 @@ export async function handleOpenAiHttpRequest(
         terminalError = true;
         writeCustomSseEvent(res, "error", {
           message: "Agent couldn't generate a response. Please try again.",
+          code: "terminal_result_error",
         });
         requestFinalize();
         return;

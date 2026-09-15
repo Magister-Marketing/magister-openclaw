@@ -1245,6 +1245,7 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
       const text = await response.text();
       expect(text).toContain("event: error");
       expect(text).toContain("Agent couldn't generate a response. Please try again.");
+      expect(text).toContain('"code":"terminal_result_error"');
       expect(text).not.toContain("private provider failure");
       expect(text).not.toContain("secret");
       expect(parseSseDataLines(text).at(-1)).toBe("[DONE]");
