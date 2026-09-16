@@ -9,6 +9,8 @@
   "contracts": {
     "tools": [
       "search_project_corpus",
+      "magister_list_assets",
+      "magister_read_asset",
       "magister_get_brand",
       "magister_list_integrations",
       "magister_refresh_integration",

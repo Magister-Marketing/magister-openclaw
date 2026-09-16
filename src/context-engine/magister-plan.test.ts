@@ -97,6 +97,43 @@ describe("MagisterPlanContextEngine", () => {
 
     expect(res.systemPromptAddition).toContain("Current Marketing Plan");
     expect(res.systemPromptAddition).toContain("Draft page");
+    expect(res.systemPromptAddition).toContain("source=cached_marketing_plan");
+    expect(res.systemPromptAddition).toContain("snapshot may be outdated");
+    expect(res.systemPromptAddition).not.toContain("source=live_marketing_plan");
+  });
+
+  it("does not present a stale fallback as a live change after a successful read", async () => {
+    await writeFile(fallbackPath, "- [waiting_approval] Draft page");
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          summary: "- [impact_pending] Draft page",
+        }),
+      })
+      .mockRejectedValueOnce(new Error("timed out"))
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          summary: "- [impact_pending] Draft page",
+        }),
+      });
+    const engine = new MagisterPlanContextEngine({
+      gatewayToken: "machine-token",
+      fallbackPath,
+      fetchImpl,
+      inner: new LegacyContextEngine(),
+    });
+    await engine.assemble({ sessionId: "s1", messages: [] });
+    const fallback = await engine.assemble({ sessionId: "s1", messages: [] });
+    expect(fallback.systemPromptAddition).toContain("source=cached_marketing_plan");
+    expect(fallback.systemPromptAddition).not.toContain("operating source of truth");
+    const recovered = await engine.assemble({ sessionId: "s1", messages: [] });
+    expect(recovered.systemPromptAddition).toContain("source=live_marketing_plan");
+    expect(recovered.systemPromptAddition).toContain("[impact_pending]");
   });
 
   it("returns inner result unchanged when no gateway token or PLAN.md exists", async () => {

@@ -676,12 +676,20 @@ export async function handleOpenAiHttpRequest(
       }
     | undefined;
   let finalizeRequested = false;
+  let commandSettled = false;
+  let terminalError = false;
   let closed = false;
   let stopWatchingDisconnect = () => {};
   const forwardedMediaUrls = new Set<string>();
 
   const maybeFinalize = () => {
     if (closed || !finalizeRequested) {
+      return;
+    }
+    // A run's lifecycle can end before agentCommand returns its final payload
+    // (including a recovery answer or terminal error). Closing here used to
+    // discard that payload, or treat pre-tool narration as a completed answer.
+    if (!commandSettled && !terminalError) {
       return;
     }
     if (streamIncludeUsage && !finalUsage) {
@@ -817,6 +825,7 @@ export async function handleOpenAiHttpRequest(
         }
       }
       if (phase === "error") {
+        terminalError = true;
         // Magister fork: surface the terminal error as a custom SSE event
         // before finalizing. Without it a run that died mid-turn is
         // indistinguishable from one that finished, and the gateway records
@@ -826,6 +835,7 @@ export async function handleOpenAiHttpRequest(
             typeof evt.data?.error === "string" && evt.data.error
               ? evt.data.error
               : "Agent run failed",
+          ...(commandSettled ? { code: "terminal_result_error" } : {}),
         });
       }
       if (phase === "end" || phase === "error") {
@@ -851,6 +861,48 @@ export async function handleOpenAiHttpRequest(
       }
 
       finalUsage = resolveChatCompletionUsage(result);
+      commandSettled = true;
+
+      const finalResult = result as {
+        payloads?: Array<{ text?: string; isError?: boolean; isReasoning?: boolean }>;
+        meta?: { error?: unknown; stopReason?: string };
+      } | null;
+      const resultPayloads = finalResult?.payloads;
+      const resultFailed =
+        Boolean(finalResult?.meta?.error) ||
+        finalResult?.meta?.stopReason === "error" ||
+        finalResult?.meta?.stopReason === "retry_limit" ||
+        (resultPayloads?.length && resultPayloads.every((payload) => payload.isError));
+      if (terminalError || resultFailed) {
+        // Explicit terminal metadata can accompany partial narration. Keep
+        // non-error partial text, but never deliver the turn as a success or
+        // expose raw provider error payloads. The runner owns all retries.
+        if (!terminalError) {
+          const partialText = resultPayloads
+            ?.filter((payload) => !payload.isError && !payload.isReasoning)
+            .map((payload) => (typeof payload.text === "string" ? payload.text : ""))
+            .filter(Boolean)
+            .join("\n\n");
+          if (!sawAssistantDelta && partialText) {
+            sawAssistantDelta = true;
+            writeAssistantContentChunk(res, {
+              runId,
+              model,
+              content: partialText,
+              finishReason: null,
+            });
+          }
+          terminalError = true;
+          writeCustomSseEvent(res, "error", {
+            message: "Agent couldn't generate a response. Please try again.",
+            code: "terminal_result_error",
+          });
+        }
+        // include_usage keeps a lifecycle-error stream open until this point.
+        // Finalize its usage without duplicating the error already delivered.
+        requestFinalize();
+        return;
+      }
 
       if (!sawAssistantDelta) {
         if (!wroteRole) {
@@ -874,13 +926,7 @@ export async function handleOpenAiHttpRequest(
         return;
       }
       logWarn(`openai-compat: streaming chat completion failed: ${String(err)}`);
-      writeAssistantContentChunk(res, {
-        runId,
-        model,
-        content: "Error: internal error",
-        finishReason: "stop",
-      });
-      wroteStopChunk = true;
+      commandSettled = true;
       finalUsage = {
         prompt_tokens: 0,
         completion_tokens: 0,
@@ -889,7 +935,10 @@ export async function handleOpenAiHttpRequest(
       emitAgentEvent({
         runId,
         stream: "lifecycle",
-        data: { phase: "error" },
+        data: {
+          phase: "error",
+          error: "Agent couldn't generate a response. Please try again.",
+        },
       });
       requestFinalize();
     } finally {

@@ -28,7 +28,11 @@ import {
   jsonActError,
 } from "./agent.act.errors.js";
 import { registerBrowserAgentActHookRoutes } from "./agent.act.hooks.js";
-import { normalizeActRequest, validateBatchTargetIds } from "./agent.act.normalize.js";
+import {
+  bindActRequestTarget,
+  normalizeActRequest,
+  validateBatchTargetIds,
+} from "./agent.act.normalize.js";
 import { type ActKind, isActKind } from "./agent.act.shared.js";
 import {
   readBody,
@@ -423,6 +427,7 @@ export function registerBrowserAgentActRoutes(
               ...extra,
             });
           };
+          bindActRequestTarget(action, targetId, tab.targetId);
           if (action.targetId && action.targetId !== tab.targetId) {
             return jsonActError(
               res,
