@@ -1019,9 +1019,10 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
         const stopChoice = errorChunks
           .flatMap((c) => (c.choices as Array<Record<string, unknown>> | undefined) ?? [])
           .find((choice) => choice.finish_reason === "stop");
-        expect((stopChoice?.delta as Record<string, unknown> | undefined)?.content).toBe(
-          "Error: internal error",
-        );
+        expect(stopChoice).toBeDefined();
+        expect(errorText).toContain("event: error");
+        expect(errorText).toContain('"code":"terminal_result_error"');
+        expect(errorText).not.toContain("Error: internal error");
       }
     } finally {
       // shared server
@@ -1191,6 +1192,153 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
       completion_tokens: 0,
       total_tokens: 123,
     });
+  });
+
+  it.each([false, true])(
+    "keeps a final non-streamed answer after lifecycle end (usage=%s)",
+    async (usage) => {
+      agentCommand.mockClear();
+      agentCommand.mockImplementationOnce((async (opts: unknown) => {
+        const runId = (opts as { runId: string }).runId;
+        emitAgentEvent({ runId, stream: "lifecycle", data: { phase: "end" } });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return { payloads: [{ text: "Recovered final answer" }], meta: {} };
+      }) as never);
+      const response = await postChatCompletions(enabledPort, {
+        stream: true,
+        ...(usage ? { stream_options: { include_usage: true } } : {}),
+        model: "openclaw",
+        messages: [{ role: "user", content: "hi" }],
+      });
+      const text = await response.text();
+      expect(text).toContain("Recovered final answer");
+      expect(parseSseDataLines(text).at(-1)).toBe("[DONE]");
+      expect(agentCommand).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([false, true])(
+    "surfaces terminal errors after optional narration (narration=%s)",
+    async (narration) => {
+      agentCommand.mockClear();
+      agentCommand.mockImplementationOnce((async (opts: unknown) => {
+        const runId = (opts as { runId: string }).runId;
+        if (narration) {
+          emitAgentEvent({ runId, stream: "assistant", data: { delta: "Working on this." } });
+        }
+        emitAgentEvent({
+          runId,
+          stream: "tool",
+          data: { phase: "result", name: "write", toolCallId: "write-1" },
+        });
+        emitAgentEvent({ runId, stream: "lifecycle", data: { phase: "end" } });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return {
+          payloads: [{ text: "private provider failure token=secret", isError: true }],
+          meta: {},
+        };
+      }) as never);
+      const response = await postChatCompletions(enabledPort, {
+        stream: true,
+        model: "openclaw",
+        messages: [{ role: "user", content: "hi" }],
+      });
+      const text = await response.text();
+      expect(text).toContain("event: error");
+      expect(text).toContain("Agent couldn't generate a response. Please try again.");
+      expect(text).toContain('"code":"terminal_result_error"');
+      expect(text).not.toContain("private provider failure");
+      expect(text).not.toContain("secret");
+      expect(parseSseDataLines(text).at(-1)).toBe("[DONE]");
+      expect(agentCommand).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([false, true])(
+    "keeps a thrown final failure after lifecycle end (narration=%s)",
+    async (narration) => {
+      agentCommand.mockClear();
+      agentCommand.mockImplementationOnce((async (opts: unknown) => {
+        const runId = (opts as { runId: string }).runId;
+        if (narration) {
+          emitAgentEvent({ runId, stream: "assistant", data: { delta: "Working on this." } });
+        }
+        emitAgentEvent({ runId, stream: "lifecycle", data: { phase: "end" } });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        throw new Error("private exhausted provider failure");
+      }) as never);
+      const response = await postChatCompletions(enabledPort, {
+        stream: true,
+        model: "openclaw",
+        messages: [{ role: "user", content: "hi" }],
+      });
+      const text = await response.text();
+      expect(text.match(/event: error/g)).toHaveLength(1);
+      expect(text).toContain('"code":"terminal_result_error"');
+      expect(text).not.toContain("private exhausted provider failure");
+      expect(text).not.toContain("Error: internal error");
+      expect(parseSseDataLines(text).at(-1)).toBe("[DONE]");
+      expect(agentCommand).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([{ stopReason: "error" }, { error: { kind: "retry_limit" } }])(
+    "retains non-error partial payloads without completing explicit terminal failures (%j)",
+    async (meta) => {
+      agentCommand.mockClear();
+      agentCommand.mockImplementationOnce((async (opts: unknown) => {
+        const runId = (opts as { runId: string }).runId;
+        emitAgentEvent({ runId, stream: "lifecycle", data: { phase: "end" } });
+        return {
+          payloads: [
+            { text: "private provider details", isError: true },
+            { text: "Verified partial work." },
+          ],
+          meta,
+        };
+      }) as never);
+      const response = await postChatCompletions(enabledPort, {
+        stream: true,
+        model: "openclaw",
+        messages: [{ role: "user", content: "hi" }],
+      });
+      const text = await response.text();
+      expect(text).toContain("Verified partial work.");
+      expect(text.indexOf("Verified partial work.")).toBeLessThan(text.indexOf("event: error"));
+      expect(text).not.toContain("private provider details");
+      expect(text.match(/event: error/g)).toHaveLength(1);
+      expect(text).toContain('"code":"terminal_result_error"');
+      expect(agentCommand).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("delivers a lifecycle error once when usage arrives with error-only payloads", async () => {
+    agentCommand.mockClear();
+    agentCommand.mockImplementationOnce((async (opts: unknown) => {
+      const runId = (opts as { runId: string }).runId;
+      emitAgentEvent({
+        runId,
+        stream: "lifecycle",
+        data: { phase: "error", error: "Safe terminal failure" },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return {
+        payloads: [{ text: "private provider details", isError: true }],
+        meta: { agentMeta: { usage: { input: 7, output: 3, total: 10 } } },
+      };
+    }) as never);
+    const response = await postChatCompletions(enabledPort, {
+      stream: true,
+      stream_options: { include_usage: true },
+      model: "openclaw",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    const text = await response.text();
+    expect(text.match(/event: error/g)).toHaveLength(1);
+    expect(text).toContain("Safe terminal failure");
+    expect(text).not.toContain("private provider details");
+    expect(text).toContain('"total_tokens":10');
+    expect(parseSseDataLines(text).at(-1)).toBe("[DONE]");
   });
 
   it("finalizes stream when lifecycle end arrives before usage is available", async () => {
@@ -1464,15 +1612,16 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
     },
   );
 
-  it("does not block stream finalization on usage when include_usage is not requested", async () => {
+  it("finalizes after command settlement without requiring usage when not requested", async () => {
     const port = enabledPort;
     agentCommand.mockClear();
     agentCommand.mockImplementationOnce(
       ((opts: unknown) =>
-        new Promise(() => {
+        new Promise((resolve) => {
           const runId = (opts as { runId?: string } | undefined)?.runId ?? "";
           emitAgentEvent({ runId, stream: "assistant", data: { delta: "hello" } });
           emitAgentEvent({ runId, stream: "lifecycle", data: { phase: "end" } });
+          setTimeout(() => resolve({ payloads: [{ text: "hello" }], meta: {} }), 20);
         })) as never,
     );
 

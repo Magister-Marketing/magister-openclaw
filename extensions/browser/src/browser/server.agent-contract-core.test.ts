@@ -157,6 +157,57 @@ describe("browser control server", () => {
     slowTimeoutMs,
   );
 
+  it.each(["t1", "checkout", "abcd"])(
+    "binds the selected alias %s to the canonical tab before acting",
+    async (targetId) => {
+      const base = await startServerAndBase();
+      await postJson(`${base}/tabs/action`, {
+        action: "label",
+        targetId: "abcd1234",
+        label: "checkout",
+      });
+      const response = await postActAndReadError(base, {
+        kind: "click",
+        ref: "5",
+        targetId,
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({ ok: true, targetId: "abcd1234" });
+      expect(pwMocks.clickViaPlaywright).toHaveBeenCalledWith(
+        expect.objectContaining({ targetId: "abcd1234", ref: "5" }),
+      );
+    },
+    slowTimeoutMs,
+  );
+
+  it(
+    "keeps nested actions bound to the selected tab when using aliases",
+    async () => {
+      const base = await startServerAndBase();
+      const accepted = await postActAndReadError(base, {
+        kind: "batch",
+        targetId: "t1",
+        actions: [{ kind: "click", ref: "5", targetId: "t1" }],
+      });
+      expect(accepted.status).toBe(200);
+      pwMocks.clickViaPlaywright.mockClear();
+
+      const rejected = await postActAndReadError(base, {
+        kind: "batch",
+        targetId: "t1",
+        actions: [
+          { kind: "click", ref: "5", targetId: "t1" },
+          { kind: "batch", actions: [{ kind: "click", ref: "5", targetId: "t2" }] },
+        ],
+      });
+      expect(rejected.status).toBe(403);
+      expect(rejected.body.code).toBe("ACT_TARGET_ID_MISMATCH");
+      expect(pwMocks.clickViaPlaywright).not.toHaveBeenCalled();
+    },
+    slowTimeoutMs,
+  );
+
   it(
     "returns the replacement targetId after an action-triggered target swap",
     async () => {
