@@ -1088,7 +1088,8 @@ export async function runEmbeddedAttempt(
       modelApi: params.model.api,
       model: params.model,
     });
-    const clientTools = toolsEnabled && !isRawModelRun ? params.clientTools : undefined;
+    const clientTools =
+      toolsEnabled && !isRawModelRun && !params.disableTools ? params.clientTools : undefined;
     const bundleMcpEnabled = shouldCreateBundleMcpRuntimeForAttempt({
       toolsEnabled,
       disableTools: params.disableTools || isRawModelRun,
@@ -1670,7 +1671,7 @@ export async function runEmbeddedAttempt(
           )
         : [];
 
-      const allCustomTools = [...customTools, ...clientToolDefs];
+      const allCustomTools = params.disableTools ? [] : [...customTools, ...clientToolDefs];
       // Pi treats `tools` as a name allowlist during session creation. Pass the
       // exact OpenClaw-managed registrations so custom tools survive startup and
       // client-provided names do not broaden the prompt/runtime boundary.
@@ -2430,6 +2431,9 @@ export async function runEmbeddedAttempt(
           silentExpected: params.silentExpected,
           suppressAssistantDelivery: params.suppressAssistantDelivery,
           suppressLifecycleTerminal: params.suppressLifecycleTerminal,
+          getDraftVerificationReceipt: params.draftVerification
+            ? () => params.draftVerification!.receipt
+            : undefined,
           config: params.config,
           sessionKey: sandboxSessionKey,
           sessionId: params.sessionId,
@@ -2763,6 +2767,20 @@ export async function runEmbeddedAttempt(
         });
         if (googlePromptCacheStreamFn) {
           activeSession.agent.streamFn = googlePromptCacheStreamFn;
+        }
+        if (params.draftVerification && !isRawModelRun) {
+          activeSession.agent.streamFn = params.draftVerification.wrap(
+            activeSession.agent.streamFn,
+            {
+              // Cached transports can retain a rejected response outside Pi's
+              // transcript. Initial correction only supports stateless HTTP.
+              repairAllowed:
+                !shouldUseWebSocketTransport &&
+                !googlePromptCacheStreamFn &&
+                !effectiveAgentTransport.startsWith("websocket"),
+              maxRepairMs: idleTimeoutMs > 0 ? Math.min(30_000, idleTimeoutMs - 1_000) : 30_000,
+            },
+          );
         }
 
         const routingSummary = describeProviderRequestRoutingSummary({

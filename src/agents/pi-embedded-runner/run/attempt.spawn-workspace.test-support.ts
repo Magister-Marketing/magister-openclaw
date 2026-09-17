@@ -880,6 +880,8 @@ export function createDefaultEmbeddedSession(params?: {
     isCompacting: false,
     isStreaming: false,
     agent: {
+      // Match pi-agent-core's default so transport guards see a real session shape.
+      transport: "auto",
       reset: () => {
         session.messages = [];
       },

@@ -8,6 +8,7 @@ import type { ContextEngine, ContextEnginePromptCacheInfo } from "../../../conte
 import type { DiagnosticTraceContext } from "../../../infra/diagnostic-trace-context.js";
 import type { PluginHookBeforeAgentStartResult } from "../../../plugins/hook-before-agent-start.types.js";
 import type { AuthProfileStore } from "../../auth-profiles/types.js";
+import type { DraftVerificationStream } from "../../draft-verification-stream.js";
 import type { MessagingToolSend } from "../../pi-embedded-messaging.types.js";
 import type { ToolOutcomeObserver } from "../../pi-tools.before-tool-call.js";
 import type { AgentRuntimePlan } from "../../runtime-plan/types.js";
@@ -24,6 +25,8 @@ type EmbeddedRunAttemptBase = Omit<
 >;
 
 export type EmbeddedRunAttemptParams = EmbeddedRunAttemptBase & {
+  /** Run-scoped verifier applied before the SDK persists an assistant result. */
+  draftVerification?: DraftVerificationStream;
   /** Collect final text for an internal attempt without streaming it to the user. */
   suppressAssistantDelivery?: boolean;
   /** Let the outer run publish this internal attempt's result before closing subscribers. */

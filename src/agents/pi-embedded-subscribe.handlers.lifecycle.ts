@@ -74,7 +74,9 @@ export function handleAgentEnd(
 ): void | Promise<void> {
   const lastAssistant = ctx.state.lastAssistant;
   const isError = isAssistantMessage(lastAssistant) && lastAssistant.stopReason === "error";
-  const swallowedFailure = isError ? null : resolveSwallowedRunFailure(evt, lastAssistant);
+  const isAborted = isAssistantMessage(lastAssistant) && lastAssistant.stopReason === "aborted";
+  const swallowedFailure =
+    isError || isAborted ? null : resolveSwallowedRunFailure(evt, lastAssistant);
   let lifecycleErrorText: string | undefined;
   const hasAssistantVisibleText =
     Array.isArray(ctx.state.assistantTexts) &&
@@ -93,13 +95,14 @@ export function handleAgentEnd(
   // tool-call stop reason, the turn is incomplete even when pre-tool text
   // exists — mark as abandoned so lifecycle consumers do not see a working
   // end state for an interrupted tool chain. (#76477)
-  const derivedWorkingTerminalState = isError
-    ? "blocked"
-    : replayInvalid &&
-        !hadDeterministicSideEffect &&
-        (!hasAssistantVisibleText || incompleteTerminalAssistant)
-      ? "abandoned"
-      : ctx.state.livenessState;
+  const derivedWorkingTerminalState =
+    isError || isAborted
+      ? "blocked"
+      : replayInvalid &&
+          !hadDeterministicSideEffect &&
+          (!hasAssistantVisibleText || incompleteTerminalAssistant)
+        ? "abandoned"
+        : ctx.state.livenessState;
   const livenessState =
     ctx.state.livenessState === "working" ? derivedWorkingTerminalState : ctx.state.livenessState;
 
@@ -160,7 +163,11 @@ export function handleAgentEnd(
       return;
     }
     const terminalMeta = {
+      ...(ctx.params.getDraftVerificationReceipt
+        ? { draftVerification: { ...ctx.params.getDraftVerificationReceipt() } }
+        : {}),
       ...(ctx.state.terminalStopReason ? { stopReason: ctx.state.terminalStopReason } : {}),
+      ...(isAborted ? { stopReason: "aborted", aborted: true } : {}),
       ...(ctx.state.yielded === true ? { yielded: true } : {}),
     };
     // Magister fork: a context-overflow attempt error the run loop will
@@ -181,13 +188,18 @@ export function handleAgentEnd(
         return;
       }
     }
-    if (isError) {
+    if (isError || isAborted) {
+      // Cancellation is terminal, not successful completion. Keep it out of
+      // provider-error warnings and retry/empty-answer recovery above/below.
+      const terminalError = isAborted
+        ? "Request aborted."
+        : (lifecycleErrorText ?? "LLM request failed.");
       emitAgentEvent({
         runId: ctx.params.runId,
         stream: "lifecycle",
         data: {
           phase: "error",
-          error: lifecycleErrorText ?? "LLM request failed.",
+          error: terminalError,
           ...terminalMeta,
           ...(livenessState ? { livenessState } : {}),
           ...(replayInvalid ? { replayInvalid } : {}),
@@ -198,7 +210,7 @@ export function handleAgentEnd(
         stream: "lifecycle",
         data: {
           phase: "error",
-          error: lifecycleErrorText ?? "LLM request failed.",
+          error: terminalError,
           ...terminalMeta,
           ...(livenessState ? { livenessState } : {}),
           ...(replayInvalid ? { replayInvalid } : {}),

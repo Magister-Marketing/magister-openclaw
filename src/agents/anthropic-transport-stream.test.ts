@@ -131,6 +131,51 @@ describe("anthropic transport stream", () => {
     guardedFetchMock.mockResolvedValue(createSseResponse());
   });
 
+  it("honors a caller's zero-retry limit", async () => {
+    guardedFetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: { type: "api_error", message: "test failure" } }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const result = await runTransportStream(
+      makeAnthropicTransportModel(),
+      { messages: [{ role: "user", content: "hello", timestamp: 1 }] },
+      { apiKey: "test", maxRetries: 0, timeoutMs: 30_000 },
+    );
+
+    expect(result.stopReason).toBe("error");
+    expect(guardedFetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("honors caller cancellation without retrying the raw HTTP request", async () => {
+    let requestSignal: AbortSignal | undefined;
+    guardedFetchMock.mockImplementation((_url, init: RequestInit) => {
+      requestSignal = init.signal ?? undefined;
+      return new Promise((_resolve, reject) => {
+        requestSignal?.addEventListener("abort", () => reject(new Error("aborted")), {
+          once: true,
+        });
+      });
+    });
+    // This transport uses raw fetch (no SDK retries). Its deadline owner must
+    // cancel the signal; timeoutMs is not a raw-fetch option.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20);
+    try {
+      const result = await runTransportStream(
+        makeAnthropicTransportModel(),
+        { messages: [{ role: "user", content: "hello", timestamp: 1 }] },
+        { apiKey: "test", maxRetries: 0, signal: controller.signal },
+      );
+      expect(result.stopReason).toBe("aborted");
+      expect(requestSignal?.aborted).toBe(true);
+      expect(guardedFetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+
   it("uses the guarded fetch transport for api-key Anthropic requests", async () => {
     const model = makeAnthropicTransportModel({
       headers: { "X-Provider": "anthropic" },

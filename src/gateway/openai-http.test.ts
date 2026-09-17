@@ -1385,6 +1385,116 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
     });
   });
 
+  it("exports only allowlisted draft receipts before terminal without changing answer text", async () => {
+    const receipt = {
+      version: 1,
+      mode: "shadow",
+      outcome: "failed",
+      checks: [{ kind: "json_only", status: "fail" }],
+      repair_attempts: 0,
+      stop_reason: "max_tokens",
+      ceiling_retried: null,
+      skill_reads: null,
+    };
+    agentCommand.mockImplementationOnce((async (opts: unknown) => {
+      const runId = (opts as { runId: string }).runId;
+      emitAgentEvent({ runId, stream: "assistant", data: { delta: "unchanged answer" } });
+      emitAgentEvent({
+        runId,
+        stream: "draft_verification",
+        data: { ...receipt, prompt: "secret" },
+      });
+      emitAgentEvent({
+        runId,
+        stream: "lifecycle",
+        data: { phase: "end", draftVerification: receipt },
+      });
+      return { payloads: [{ text: "unchanged answer" }], meta: {} };
+    }) as never);
+    const res = await postChatCompletions(enabledPort, {
+      stream: true,
+      model: "openclaw",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    const text = await res.text();
+    expect(text.match(/event: draft_verification/g)).toHaveLength(1);
+    expect(text).toContain('"stop_reason":"max_tokens"');
+    expect(text).not.toContain("secret");
+    expect(text.indexOf("event: draft_verification")).toBeLessThan(text.indexOf("[DONE]"));
+    expect(text.match(/unchanged answer/g)).toHaveLength(1);
+  });
+
+  it.each([
+    { aborted: false, usage: false },
+    { aborted: false, usage: true },
+    { aborted: true, usage: false },
+    { aborted: true, usage: true },
+  ])("keeps draft evidence separate from failed delivery (%j)", async ({ aborted, usage }) => {
+    const receipt = {
+      version: 1,
+      mode: "shadow",
+      outcome: "unchecked",
+      checks: [],
+      repair_attempts: 0,
+      stop_reason: aborted ? "aborted" : "stop",
+      ceiling_retried: null,
+      skill_reads: null,
+    };
+    const partial = "Verified partial work.";
+    agentCommand.mockImplementationOnce((async (opts: unknown) => {
+      const runId = (opts as { runId: string }).runId;
+      if (aborted) {
+        emitAgentEvent({ runId, stream: "assistant", data: { delta: partial } });
+      }
+      emitAgentEvent({
+        runId,
+        stream: "lifecycle",
+        data: {
+          phase: aborted ? "error" : "end",
+          ...(aborted ? { error: "Request aborted" } : {}),
+          draftVerification: receipt,
+        },
+      });
+      // Final result classification occurs after the lifecycle event.
+      await Promise.resolve();
+      return {
+        payloads: [{ text: "private provider details", isError: true }, { text: partial }],
+        meta: {
+          error: { kind: aborted ? "aborted" : "retry_limit" },
+          agentMeta: { usage: { input: 7, output: 3, total: 10 } },
+        },
+      };
+    }) as never);
+    const response = await postChatCompletions(enabledPort, {
+      stream: true,
+      ...(usage ? { stream_options: { include_usage: true } } : {}),
+      model: "openclaw",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    const text = await response.text();
+    expect(text.match(/event: draft_verification/g)).toHaveLength(1);
+    expect(text.match(/event: error/g)).toHaveLength(1);
+    expect(text.indexOf("event: draft_verification")).toBeLessThan(text.indexOf("event: error"));
+    expect(text.indexOf(partial)).toBeLessThan(text.indexOf("event: error"));
+    expect(text.match(/Verified partial work\./g)).toHaveLength(1);
+    expect(text).not.toContain("private provider details");
+    const data = parseSseDataLines(text);
+    expect(data.at(-1)).toBe("[DONE]");
+    const chunks = data
+      .filter((entry) => entry !== "[DONE]")
+      .map((entry) => JSON.parse(entry) as Record<string, unknown>);
+    expect(chunks.find((chunk) => chunk.version === 1)).toEqual(receipt);
+    expect(chunks.filter((chunk) => "usage" in chunk)).toEqual(
+      usage
+        ? [
+            expect.objectContaining({
+              usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 },
+            }),
+          ]
+        : [],
+    );
+  });
+
   it("forwards compaction events as custom SSE events (Magister fork)", async () => {
     const port = enabledPort;
     agentCommand.mockClear();

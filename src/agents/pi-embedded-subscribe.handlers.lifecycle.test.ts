@@ -456,6 +456,58 @@ describe("handleAgentEnd", () => {
     });
   });
 
+  it("adds verification evidence without changing an existing error terminal", async () => {
+    const onAgentEvent = vi.fn();
+    const ctx = createContext(
+      { role: "assistant", stopReason: "error", errorMessage: "Failed", content: [] },
+      { onAgentEvent },
+    );
+    const receipt = {
+      version: 1 as const,
+      mode: "shadow" as const,
+      outcome: "unchecked" as const,
+      checks: [],
+      repair_attempts: 0 as const,
+      stop_reason: "error" as const,
+      ceiling_retried: null,
+      skill_reads: null,
+    };
+    ctx.params.getDraftVerificationReceipt = () => receipt;
+    await handleAgentEnd(ctx);
+    expect(onAgentEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stream: "lifecycle",
+        data: expect.objectContaining({ phase: "error", draftVerification: receipt }),
+      }),
+    );
+    expect(onAgentEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ phase: "end" }) }),
+    );
+  });
+
+  it("terminates cancellation as aborted without success, retry withholding, or provider warnings", async () => {
+    const onAgentEvent = vi.fn();
+    const ctx = createContext(
+      { role: "assistant", stopReason: "aborted", errorMessage: "Request aborted", content: [] },
+      { onAgentEvent },
+    );
+    armAttemptRetryRecovery("run-1", {
+      hasOverflowBudget: () => true,
+      hasNoVisibleAnswerRetryBudget: () => true,
+    });
+    try {
+      await handleAgentEnd(ctx);
+      expect(consumeWithheldTerminal("run-1")).toBeNull();
+    } finally {
+      disarmAttemptRetryRecovery("run-1");
+    }
+    expect(onAgentEvent).toHaveBeenCalledExactlyOnceWith({
+      stream: "lifecycle",
+      data: expect.objectContaining({ phase: "error", stopReason: "aborted", aborted: true }),
+    });
+    expect(ctx.log.warn).not.toHaveBeenCalled();
+  });
+
   it("runs terminal cleanup but lets the outer run own final lifecycle ordering", async () => {
     const { emitAgentEvent } = await import("../infra/agent-events.js");
     vi.mocked(emitAgentEvent).mockClear();

@@ -642,6 +642,13 @@ export const FIELD_HELP: Record<string, string> = {
     "Restrict apply_patch paths to the workspace directory (default: true). Set false to allow writing outside the workspace (dangerous).",
   "tools.exec.applyPatch.allowModels":
     'Optional allowlist of model ids (e.g. "gpt-5.4" or "openai/gpt-5.4").',
+  "tools.draftVerification":
+    "Bounded request-grounded draft checks for Pi; disabled by default. Unsupported requirements remain unknown.",
+  "tools.draftVerification.mode":
+    "off preserves delivery; shadow records deterministic checks without a model call; repair buffers text and allows one tool-free correction only when the turn used no tools.",
+  "agents.list.*.tools.draftVerification": "Per-agent draft verification override.",
+  "agents.list.*.tools.draftVerification.mode":
+    "Per-agent off, shadow, or repair override of tools.draftVerification.mode.",
   "tools.loopDetection.enabled":
     "Enable repetitive tool-call loop detection and backoff safety checks (default: false).",
   "tools.loopDetection.historySize": "Tool history window size for loop detection (default: 30).",

@@ -631,6 +631,11 @@ const CommonToolPolicyFields = {
   byProvider: z.record(z.string(), ToolPolicyWithProfileSchema).optional(),
 };
 
+const DraftVerificationSchema = z
+  .object({ mode: z.enum(["off", "shadow", "repair"]).optional() })
+  .strict()
+  .optional();
+
 const AgentToolsSchema = z
   .object({
     ...CommonToolPolicyFields,
@@ -644,6 +649,7 @@ const AgentToolsSchema = z
     exec: AgentToolExecSchema,
     fs: ToolFsSchema,
     loopDetection: ToolLoopDetectionSchema,
+    draftVerification: DraftVerificationSchema,
     sandbox: z
       .object({
         tools: ToolPolicySchema,
@@ -933,6 +939,7 @@ export const ToolsSchema = z
       .strict()
       .optional(),
     loopDetection: ToolLoopDetectionSchema,
+    draftVerification: DraftVerificationSchema,
     message: z
       .object({
         allowCrossContextSend: z.boolean().optional(),
