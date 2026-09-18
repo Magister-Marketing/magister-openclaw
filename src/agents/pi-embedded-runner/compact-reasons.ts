@@ -1,3 +1,4 @@
+import { extractPrefixedHttpStatus } from "../../shared/assistant-error-format.js";
 import { normalizeLowercaseStringOrEmpty } from "../../shared/string-coerce.js";
 import { sanitizeForLog } from "../../terminal/ansi.js";
 
@@ -44,20 +45,14 @@ export function classifyCompactionReason(reason?: string): string {
   if (text.includes("timed out") || text.includes("timeout")) {
     return "timeout";
   }
-  if (
-    text.includes("400") ||
-    text.includes("401") ||
-    text.includes("403") ||
-    text.includes("429")
-  ) {
+  // A status is only a status when it leads the message (after an optional
+  // "error:"/"http" prefix). A byte count, request id, or timestamp that
+  // happens to contain "502" is not a provider failure.
+  const status = extractPrefixedHttpStatus(text);
+  if (status !== undefined && status >= 400 && status < 500) {
     return "provider_error_4xx";
   }
-  if (
-    text.includes("500") ||
-    text.includes("502") ||
-    text.includes("503") ||
-    text.includes("504")
-  ) {
+  if (status !== undefined && status >= 500 && status < 600) {
     return "provider_error_5xx";
   }
   return "unknown";

@@ -45,6 +45,15 @@ describe("classifyCompactionReason", () => {
   it("keeps unclassified provider errors in the stable unknown bucket", () => {
     expect(classifyCompactionReason("No API provider registered for api: ollama")).toBe("unknown");
   });
+
+  it("reads a provider status only when it leads the message", () => {
+    expect(classifyCompactionReason("502 Bad Gateway")).toBe("provider_error_5xx");
+    expect(classifyCompactionReason("Error: 429 rate limited")).toBe("provider_error_4xx");
+    expect(classifyCompactionReason("HTTP 503: overloaded")).toBe("provider_error_5xx");
+    // A number inside the message is a number, not a status.
+    expect(classifyCompactionReason("summary exceeded 5020 tokens")).toBe("summary_failed");
+    expect(classifyCompactionReason("request req_4290 failed")).toBe("unknown");
+  });
 });
 
 describe("formatUnknownCompactionReasonDetail", () => {

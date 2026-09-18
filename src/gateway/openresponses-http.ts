@@ -60,6 +60,8 @@ import {
   type StreamingEvent,
   type Usage,
 } from "./open-responses.schema.js";
+import { classifyFailedResult, classifyLifecycleError } from "./openai-http.js";
+import type { TerminalErrorFrame } from "./openai-http.js";
 import { wrapUntrustedFileContent } from "./openresponses-file-content.js";
 import { buildAgentPrompt } from "./openresponses-prompt.js";
 import { createAssistantOutputItem, createFunctionCallOutputItem } from "./openresponses-shape.js";
@@ -419,7 +421,7 @@ function createResponseResource(params: {
   status: ResponseResource["status"];
   output: OutputItem[];
   usage?: Usage;
-  error?: { code: string; message: string };
+  error?: { code: string; message: string; status?: number };
 }): ResponseResource {
   return {
     id: params.id,
@@ -802,12 +804,28 @@ export async function handleOpenResponsesHttpRequest(
               .map((p) => (typeof p.text === "string" ? p.text : ""))
               .filter(Boolean)
               .join("\n\n")
-          : "No response from OpenClaw.";
+          : "";
+      // Magister fork: a run with no answer is a failed response with a
+      // classified error, not a completed one carrying a placeholder.
+      const failure: TerminalErrorFrame | null =
+        classifyFailedResult(result) ??
+        (content
+          ? null
+          : { message: "Agent run ended without a result.", code: "run_ended_without_result" });
 
       const response = createResponseResource({
         id: responseId,
         model,
-        status: "completed",
+        status: failure ? "failed" : "completed",
+        ...(failure
+          ? {
+              error: {
+                code: failure.code,
+                message: failure.message,
+                ...(failure.status !== undefined ? { status: failure.status } : {}),
+              },
+            }
+          : {}),
         output: [
           createAssistantOutputItem({
             id: outputItemId,
@@ -864,7 +882,15 @@ export async function handleOpenResponsesHttpRequest(
   let unsubscribe = () => {};
   let stopWatchingDisconnect = () => {};
   let finalUsage: Usage | undefined;
-  let finalizeRequested: { status: ResponseResource["status"]; text: string } | null = null;
+  // `text` is resolved when the stream actually closes (after the command
+  // settled and usage arrived), so a lifecycle end that races the final
+  // payload cannot freeze an empty answer; `error` is the classified frame
+  // for a run that closes without one.
+  let finalizeRequested: {
+    status: ResponseResource["status"];
+    text?: string;
+    error?: TerminalErrorFrame;
+  } | null = null;
   const forwardedMediaUrls = new Set<string>();
 
   const maybeFinalize = () => {
@@ -878,6 +904,18 @@ export async function handleOpenResponsesHttpRequest(
       return;
     }
     const usage = finalUsage;
+    const finalText = finalizeRequested.text ?? accumulatedText;
+    let finalStatus = finalizeRequested.status;
+    let terminalFrame = finalizeRequested.error;
+    if (finalStatus === "completed" && !finalText) {
+      // Magister fork: nothing streamed and nothing settled. Close as a
+      // failure the Gateway can classify instead of an empty success.
+      finalStatus = "failed";
+      terminalFrame = {
+        message: "Agent run ended without a result.",
+        code: "run_ended_without_result",
+      };
+    }
 
     closed = true;
     stopWatchingDisconnect();
@@ -888,7 +926,7 @@ export async function handleOpenResponsesHttpRequest(
       item_id: outputItemId,
       output_index: 0,
       content_index: 0,
-      text: finalizeRequested.text,
+      text: finalText,
     });
 
     writeSseEvent(res, {
@@ -896,13 +934,13 @@ export async function handleOpenResponsesHttpRequest(
       item_id: outputItemId,
       output_index: 0,
       content_index: 0,
-      part: { type: "output_text", text: finalizeRequested.text },
+      part: { type: "output_text", text: finalText },
     });
 
     const completedItem = createAssistantOutputItem({
       id: outputItemId,
-      text: finalizeRequested.text,
-      phase: finalizeRequested.status === "completed" ? "final_answer" : "commentary",
+      text: finalText,
+      phase: finalStatus === "completed" ? "final_answer" : "commentary",
       status: "completed",
     });
 
@@ -915,9 +953,18 @@ export async function handleOpenResponsesHttpRequest(
     const finalResponse = createResponseResource({
       id: responseId,
       model,
-      status: finalizeRequested.status,
+      status: finalStatus,
       output: [completedItem],
       usage,
+      ...(terminalFrame
+        ? {
+            error: {
+              code: terminalFrame.code,
+              message: terminalFrame.message,
+              ...(terminalFrame.status !== undefined ? { status: terminalFrame.status } : {}),
+            },
+          }
+        : {}),
     });
 
     rememberResponseSession();
@@ -926,11 +973,15 @@ export async function handleOpenResponsesHttpRequest(
     res.end();
   };
 
-  const requestFinalize = (status: ResponseResource["status"], text: string) => {
+  const requestFinalize = (
+    status: ResponseResource["status"],
+    text?: string,
+    error?: TerminalErrorFrame,
+  ) => {
     if (finalizeRequested) {
       return;
     }
-    finalizeRequested = { status, text };
+    finalizeRequested = { status, text, error };
     maybeFinalize();
   };
 
@@ -1066,9 +1117,17 @@ export async function handleOpenResponsesHttpRequest(
         if (receipt) {
           res.write(`event: draft_verification\ndata: ${JSON.stringify(receipt)}\n\n`);
         }
-        const finalText = accumulatedText || "No response from OpenClaw.";
-        const finalStatus = phase === "error" ? "failed" : "completed";
-        requestFinalize(finalStatus, finalText);
+        if (phase === "error") {
+          requestFinalize(
+            "failed",
+            undefined,
+            classifyLifecycleError(evt.data as Record<string, unknown> | undefined, {
+              commandSettled: Boolean(finalUsage),
+            }),
+          );
+        } else {
+          requestFinalize("completed");
+        }
       }
     }
   });
@@ -1216,18 +1275,26 @@ export async function handleOpenResponsesHttpRequest(
                 .map((p) => (typeof p.text === "string" ? p.text : ""))
                 .filter(Boolean)
                 .join("\n\n")
-            : "No response from OpenClaw.";
+            : "";
 
-        accumulatedText = content;
-        sawAssistantDelta = true;
+        if (content) {
+          accumulatedText = content;
+          sawAssistantDelta = true;
 
-        writeSseEvent(res, {
-          type: "response.output_text.delta",
-          item_id: outputItemId,
-          output_index: 0,
-          content_index: 0,
-          delta: content,
-        });
+          writeSseEvent(res, {
+            type: "response.output_text.delta",
+            item_id: outputItemId,
+            output_index: 0,
+            content_index: 0,
+            delta: content,
+          });
+        }
+      }
+      const failedResult = classifyFailedResult(result);
+      if (failedResult && !closed) {
+        // The command settled an error result; the lifecycle `end` that
+        // follows must not close this as a completed response.
+        requestFinalize("failed", undefined, failedResult);
       }
     } catch (err) {
       if (closed || abortController.signal.aborted) {
