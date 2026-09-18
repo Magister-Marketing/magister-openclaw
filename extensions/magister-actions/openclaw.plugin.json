@@ -73,6 +73,7 @@
       "magister_integration_spend",
       "magister_integration_delete",
       "magister_send_email",
+      "magister_request_network_access",
       "magister_send_agent_email",
       "magister_create_social_draft",
       "magister_schedule_social_post",

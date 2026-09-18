@@ -2840,6 +2840,44 @@
       "tool_name": "magister_send_email"
     },
     {
+      "action": "request_network_access",
+      "approval_policy": "exact_payload",
+      "async_status_adapter": "synchronous",
+      "description": "Ask the user to let the sandbox shell reach one more host through the egress proxy. Use it only after the proxy denied that host with a 403; the package registries and the project's own domains are already reachable, and any service with a hosted action is reached through that action, not the shell. On approval the host is reachable on your next command.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "idempotency_key",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "description": "The hostname the sandbox shell was denied (from the proxy's 403), e.g. api.example.com. Its subdomains are admitted with it. A URL is accepted and reduced to its host.",
+            "maxLength": 253,
+            "minLength": 3,
+            "type": "string"
+          },
+          "idempotency_key": {
+            "description": "Use one fresh key for each new logical operation. Reuse that key only when retrying the exact same arguments; a later user request, even with identical content, needs a new key.",
+            "maxLength": 256,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "type": "string"
+          },
+          "reason": {
+            "description": "One line the user reads on the approval card: what the shell needs from that host.",
+            "maxLength": 500,
+            "minLength": 3,
+            "type": "string"
+          }
+        },
+        "required": ["idempotency_key", "domain", "reason"],
+        "type": "object"
+      },
+      "retry_policy": "read_after_timeout",
+      "side_effect": "external_write",
+      "spend_limited": false,
+      "tool_name": "magister_request_network_access"
+    },
+    {
       "action": "send_agent_email",
       "approval_policy": "exact_payload",
       "async_status_adapter": "synchronous",
@@ -3845,6 +3883,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "1330c7667b351d3c5196c28922c0d63312c2de33fdb3924de9dfe4871e1b872c",
+  "registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
   "schema_version": 1
 }
