@@ -12,6 +12,7 @@ import { createDefaultDeps } from "../cli/deps.js";
 import { agentCommandFromIngress } from "../commands/agent.js";
 import type { GatewayHttpChatCompletionsConfig } from "../config/types.gateway.js";
 import { emitAgentEvent, onAgentEvent } from "../infra/agent-events.js";
+import { isAbortError } from "../infra/unhandled-rejections.js";
 import { logWarn } from "../logger.js";
 import { estimateBase64DecodedBytes } from "../media/base64.js";
 import {
@@ -25,6 +26,7 @@ import {
   type InputImageSource,
 } from "../media/input-files.js";
 import { defaultRuntime } from "../runtime.js";
+import { extractPrefixedHttpStatus } from "../shared/assistant-error-format.js";
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
@@ -470,13 +472,117 @@ function coerceRequest(val: unknown): OpenAiChatCompletionRequest {
 function resolveAgentResponseText(result: unknown): string {
   const payloads = (result as { payloads?: Array<{ text?: string }> } | null)?.payloads;
   if (!Array.isArray(payloads) || payloads.length === 0) {
-    return "No response from OpenClaw.";
+    return "";
   }
-  const content = payloads
+  return payloads
     .map((p) => (typeof p.text === "string" ? p.text : ""))
     .filter(Boolean)
     .join("\n\n");
-  return content || "No response from OpenClaw.";
+}
+
+// Magister fork: every stream that does not deliver an answer closes with
+// exactly one `event: error` whose `code` the Gateway maps to a policy
+// (replay, stop, paywall) instead of substring-matching the message. A run
+// used to be able to end with no settled result and still close as a
+// successful turn whose only text was "No response from OpenClaw."; the
+// Gateway showed that as the answer and the workflow orchestrator recorded
+// the step as complete.
+//
+// - `run_ended_without_result`: the run settled (or died) with no visible
+//   text and nothing streamed. Replaying the prompt is the Gateway's call.
+// - `provider_error`: the model provider failed (retry limit, or a message
+//   that leads with an HTTP status, carried in `status`). The Gateway reads
+//   402 as a budget stop, other 4xx as terminal, 5xx and 429 as retryable.
+// - `aborted`: the run's abort signal fired. Never retried.
+// - `terminal_result_error`: the agent settled an error result the same
+//   prompt would reproduce (role ordering, image size, error-only payloads).
+export type TerminalErrorCode =
+  | "run_ended_without_result"
+  | "provider_error"
+  | "aborted"
+  | "terminal_result_error";
+
+export type TerminalErrorFrame = {
+  message: string;
+  code: TerminalErrorCode;
+  status?: number;
+};
+
+const REDACTED_FAILURE_MESSAGE = "Agent couldn't generate a response. Please try again.";
+const ABORTED_RUN_MESSAGE = "Agent run was stopped.";
+const NO_RESULT_MESSAGE = "Agent run ended without a result.";
+
+// `pi-embedded-runner/run.ts` wraps an external abort as
+// `new Error("Operation aborted", { cause })`; the HTTP clients' own abort
+// shapes are what `isAbortError` recognises.
+function isAbortedRunError(err: unknown): boolean {
+  if (isAbortError(err)) {
+    return true;
+  }
+  const message =
+    err && typeof err === "object" && "message" in err && typeof err.message === "string"
+      ? err.message
+      : typeof err === "string"
+        ? err
+        : "";
+  return message === "Operation aborted" || message.startsWith("Operation aborted:");
+}
+
+export function classifyLifecycleError(
+  data: Record<string, unknown> | undefined,
+  options: { commandSettled: boolean },
+): TerminalErrorFrame {
+  const rawMessage = typeof data?.error === "string" && data.error ? data.error : "";
+  const explicit = data?.terminalCode;
+  if (explicit === "aborted" || isAbortedRunError(rawMessage)) {
+    return { message: ABORTED_RUN_MESSAGE, code: "aborted" };
+  }
+  if (explicit === "run_ended_without_result") {
+    return { message: rawMessage || NO_RESULT_MESSAGE, code: "run_ended_without_result" };
+  }
+  const message = rawMessage || "Agent run failed";
+  const status = extractPrefixedHttpStatus(rawMessage);
+  if (data?.stopReason === "retry_limit" || status !== undefined) {
+    return { message, code: "provider_error", ...(status !== undefined ? { status } : {}) };
+  }
+  if (options.commandSettled) {
+    return { message, code: "terminal_result_error" };
+  }
+  return { message, code: "run_ended_without_result" };
+}
+
+export function classifyFailedResult(result: unknown): TerminalErrorFrame | null {
+  const finalResult = result as {
+    payloads?: Array<{ text?: string; isError?: boolean; isReasoning?: boolean }>;
+    meta?: { error?: unknown; stopReason?: string };
+  } | null;
+  const errorMeta =
+    finalResult?.meta?.error && typeof finalResult.meta.error === "object"
+      ? (finalResult.meta.error as { kind?: unknown; message?: unknown })
+      : undefined;
+  const stopReason = finalResult?.meta?.stopReason;
+  const payloads = finalResult?.payloads;
+  const errorOnlyPayloads = Boolean(
+    payloads?.length && payloads.every((payload) => payload.isError),
+  );
+  if (
+    !finalResult?.meta?.error &&
+    stopReason !== "error" &&
+    stopReason !== "retry_limit" &&
+    !errorOnlyPayloads
+  ) {
+    return null;
+  }
+  const rawMessage = typeof errorMeta?.message === "string" ? errorMeta.message : "";
+  const status = extractPrefixedHttpStatus(rawMessage);
+  if (errorMeta?.kind === "retry_limit" || stopReason === "retry_limit" || status !== undefined) {
+    return {
+      message: REDACTED_FAILURE_MESSAGE,
+      code: "provider_error",
+      ...(status !== undefined ? { status } : {}),
+    };
+  }
+  return { message: REDACTED_FAILURE_MESSAGE, code: "terminal_result_error" };
 }
 
 type AgentUsageMeta = {
@@ -634,6 +740,22 @@ export async function handleOpenAiHttpRequest(
 
       const content = resolveAgentResponseText(result);
       const usage = resolveChatCompletionUsage(result);
+      const failure =
+        classifyFailedResult(result) ??
+        (content
+          ? null
+          : { message: NO_RESULT_MESSAGE, code: "run_ended_without_result" as const });
+      if (failure) {
+        sendJson(res, 502, {
+          error: {
+            message: failure.message,
+            type: "api_error",
+            code: failure.code,
+            ...(failure.status !== undefined ? { status: failure.status } : {}),
+          },
+        });
+        return true;
+      }
 
       sendJson(res, 200, {
         id: runId,
@@ -654,8 +776,13 @@ export async function handleOpenAiHttpRequest(
         return true;
       }
       logWarn(`openai-compat: chat completion failed: ${String(err)}`);
-      sendJson(res, 500, {
-        error: { message: "internal error", type: "api_error" },
+      const aborted = isAbortedRunError(err);
+      sendJson(res, aborted ? 502 : 500, {
+        error: {
+          message: aborted ? ABORTED_RUN_MESSAGE : "internal error",
+          type: "api_error",
+          code: aborted ? "aborted" : "run_ended_without_result",
+        },
       });
     } finally {
       stopWatchingDisconnect();
@@ -679,6 +806,18 @@ export async function handleOpenAiHttpRequest(
   let commandSettled = false;
   let terminalError = false;
   let closed = false;
+  let terminalFrameWritten = false;
+  // One terminal frame per stream: a lifecycle error and the command's own
+  // failed result describe the same ending, and the Gateway treats the
+  // first coded frame as authoritative.
+  const writeTerminalError = (frame: TerminalErrorFrame) => {
+    if (terminalFrameWritten) {
+      return;
+    }
+    terminalFrameWritten = true;
+    terminalError = true;
+    writeCustomSseEvent(res, "error", frame);
+  };
   let stopWatchingDisconnect = () => {};
   const forwardedMediaUrls = new Set<string>();
 
@@ -825,18 +964,15 @@ export async function handleOpenAiHttpRequest(
         }
       }
       if (phase === "error") {
-        terminalError = true;
-        // Magister fork: surface the terminal error as a custom SSE event
-        // before finalizing. Without it a run that died mid-turn is
+        // Magister fork: surface the terminal error as a classified SSE
+        // event before finalizing. Without it a run that died mid-turn is
         // indistinguishable from one that finished, and the gateway records
         // the turn as completed-with-partial-content.
-        writeCustomSseEvent(res, "error", {
-          message:
-            typeof evt.data?.error === "string" && evt.data.error
-              ? evt.data.error
-              : "Agent run failed",
-          ...(commandSettled ? { code: "terminal_result_error" } : {}),
-        });
+        writeTerminalError(
+          classifyLifecycleError(evt.data as Record<string, unknown> | undefined, {
+            commandSettled,
+          }),
+        );
       }
       if (phase === "end" || phase === "error") {
         requestFinalize();
@@ -865,15 +1001,10 @@ export async function handleOpenAiHttpRequest(
 
       const finalResult = result as {
         payloads?: Array<{ text?: string; isError?: boolean; isReasoning?: boolean }>;
-        meta?: { error?: unknown; stopReason?: string };
       } | null;
       const resultPayloads = finalResult?.payloads;
-      const resultFailed =
-        Boolean(finalResult?.meta?.error) ||
-        finalResult?.meta?.stopReason === "error" ||
-        finalResult?.meta?.stopReason === "retry_limit" ||
-        (resultPayloads?.length && resultPayloads.every((payload) => payload.isError));
-      if (terminalError || resultFailed) {
+      const failedResult = classifyFailedResult(result);
+      if (terminalError || failedResult) {
         // Explicit terminal metadata can accompany partial narration. Keep
         // non-error partial text, but never deliver the turn as a success or
         // expose raw provider error payloads. The runner owns all retries.
@@ -892,11 +1023,7 @@ export async function handleOpenAiHttpRequest(
               finishReason: null,
             });
           }
-          terminalError = true;
-          writeCustomSseEvent(res, "error", {
-            message: "Agent couldn't generate a response. Please try again.",
-            code: "terminal_result_error",
-          });
+          writeTerminalError(failedResult as TerminalErrorFrame);
         }
         // include_usage keeps a lifecycle-error stream open until this point.
         // Finalize its usage without duplicating the error already delivered.
@@ -911,6 +1038,13 @@ export async function handleOpenAiHttpRequest(
         }
 
         const content = resolveAgentResponseText(result);
+        if (!content) {
+          // Nothing streamed and nothing settled: say so, instead of a
+          // placeholder sentence the Gateway would deliver as the answer.
+          writeTerminalError({ message: NO_RESULT_MESSAGE, code: "run_ended_without_result" });
+          requestFinalize();
+          return;
+        }
 
         sawAssistantDelta = true;
         writeAssistantContentChunk(res, {
@@ -937,7 +1071,8 @@ export async function handleOpenAiHttpRequest(
         stream: "lifecycle",
         data: {
           phase: "error",
-          error: "Agent couldn't generate a response. Please try again.",
+          error: isAbortedRunError(err) ? ABORTED_RUN_MESSAGE : REDACTED_FAILURE_MESSAGE,
+          terminalCode: isAbortedRunError(err) ? "aborted" : "run_ended_without_result",
         },
       });
       requestFinalize();

@@ -848,12 +848,21 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
       }
 
       {
+        // A run with no answer is an error the caller can classify, never a
+        // 200 whose "answer" is a placeholder sentence.
         agentCommand.mockClear();
         agentCommand.mockResolvedValueOnce({ payloads: [{ text: "" }] } as never);
-        const json = await postSyncUserMessage("hi");
-        const choice0 = (json.choices as Array<Record<string, unknown>>)[0] ?? {};
-        const msg = (choice0.message as Record<string, unknown> | undefined) ?? {};
-        expect(msg.content).toBe("No response from OpenClaw.");
+        const res = await postChatCompletions(port, {
+          stream: false,
+          model: "openclaw",
+          messages: [{ role: "user", content: "hi" }],
+        });
+        expect(res.status).toBe(502);
+        const json = (await res.json()) as Record<string, unknown>;
+        const error = (json.error as Record<string, unknown> | undefined) ?? {};
+        expect(error.code).toBe("run_ended_without_result");
+        expect(error.type).toBe("api_error");
+        expect(JSON.stringify(json)).not.toContain("No response from OpenClaw.");
       }
 
       {
@@ -1021,7 +1030,7 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
           .find((choice) => choice.finish_reason === "stop");
         expect(stopChoice).toBeDefined();
         expect(errorText).toContain("event: error");
-        expect(errorText).toContain('"code":"terminal_result_error"');
+        expect(errorText).toContain('"code":"run_ended_without_result"');
         expect(errorText).not.toContain("Error: internal error");
       }
     } finally {
@@ -1274,7 +1283,7 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
       });
       const text = await response.text();
       expect(text.match(/event: error/g)).toHaveLength(1);
-      expect(text).toContain('"code":"terminal_result_error"');
+      expect(text).toContain('"code":"run_ended_without_result"');
       expect(text).not.toContain("private exhausted provider failure");
       expect(text).not.toContain("Error: internal error");
       expect(parseSseDataLines(text).at(-1)).toBe("[DONE]");
@@ -1282,9 +1291,12 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
     },
   );
 
-  it.each([{ stopReason: "error" }, { error: { kind: "retry_limit" } }])(
+  it.each([
+    { meta: { stopReason: "error" }, code: "terminal_result_error" },
+    { meta: { error: { kind: "retry_limit" } }, code: "provider_error" },
+  ])(
     "retains non-error partial payloads without completing explicit terminal failures (%j)",
-    async (meta) => {
+    async ({ meta, code }) => {
       agentCommand.mockClear();
       agentCommand.mockImplementationOnce((async (opts: unknown) => {
         const runId = (opts as { runId: string }).runId;
@@ -1307,10 +1319,100 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
       expect(text.indexOf("Verified partial work.")).toBeLessThan(text.indexOf("event: error"));
       expect(text).not.toContain("private provider details");
       expect(text.match(/event: error/g)).toHaveLength(1);
-      expect(text).toContain('"code":"terminal_result_error"');
+      expect(text).toContain(`"code":"${code}"`);
       expect(agentCommand).toHaveBeenCalledTimes(1);
     },
   );
+
+  it("closes a run that settles with no answer as run_ended_without_result, not as text", async () => {
+    agentCommand.mockClear();
+    agentCommand.mockImplementationOnce((async (opts: unknown) => {
+      const runId = (opts as { runId: string }).runId;
+      emitAgentEvent({ runId, stream: "lifecycle", data: { phase: "end" } });
+      return { payloads: [] };
+    }) as never);
+    const response = await postChatCompletions(enabledPort, {
+      stream: true,
+      model: "openclaw",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    const text = await response.text();
+    expect(text).not.toContain("No response from OpenClaw.");
+    expect(text.match(/event: error/g)).toHaveLength(1);
+    expect(text).toContain('"code":"run_ended_without_result"');
+    expect(parseSseDataLines(text).at(-1)).toBe("[DONE]");
+  });
+
+  it("carries the provider's leading HTTP status on a provider_error frame", async () => {
+    agentCommand.mockClear();
+    agentCommand.mockImplementationOnce((async (opts: unknown) => {
+      const runId = (opts as { runId: string }).runId;
+      emitAgentEvent({
+        runId,
+        stream: "lifecycle",
+        data: { phase: "error", error: "402 Payment Required: monthly budget exceeded" },
+      });
+      return { payloads: [] };
+    }) as never);
+    const response = await postChatCompletions(enabledPort, {
+      stream: true,
+      model: "openclaw",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    const text = await response.text();
+    const errorLine = text
+      .split("\n")
+      .find(
+        (line, index, lines) => lines[index - 1] === "event: error" && line.startsWith("data:"),
+      );
+    const frame = JSON.parse(errorLine?.slice(5) ?? "{}") as Record<string, unknown>;
+    expect(frame.code).toBe("provider_error");
+    expect(frame.status).toBe(402);
+    expect(frame.message).toContain("monthly budget exceeded");
+    expect(text.match(/event: error/g)).toHaveLength(1);
+    expect(parseSseDataLines(text).at(-1)).toBe("[DONE]");
+  });
+
+  it("names an externally aborted run as aborted instead of a retryable failure", async () => {
+    agentCommand.mockClear();
+    agentCommand.mockImplementationOnce((async (opts: unknown) => {
+      const runId = (opts as { runId: string }).runId;
+      emitAgentEvent({ runId, stream: "lifecycle", data: { phase: "end" } });
+      throw new Error("Operation aborted");
+    }) as never);
+    const response = await postChatCompletions(enabledPort, {
+      stream: true,
+      model: "openclaw",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    const text = await response.text();
+    expect(text.match(/event: error/g)).toHaveLength(1);
+    expect(text).toContain('"code":"aborted"');
+    expect(parseSseDataLines(text).at(-1)).toBe("[DONE]");
+  });
+
+  it("writes exactly one terminal frame when a lifecycle error precedes a failed result", async () => {
+    agentCommand.mockClear();
+    agentCommand.mockImplementationOnce((async (opts: unknown) => {
+      const runId = (opts as { runId: string }).runId;
+      emitAgentEvent({
+        runId,
+        stream: "lifecycle",
+        data: { phase: "error", error: "503 Service Unavailable" },
+      });
+      return { payloads: [{ text: "boom", isError: true }], meta: { stopReason: "error" } };
+    }) as never);
+    const response = await postChatCompletions(enabledPort, {
+      stream: true,
+      model: "openclaw",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    const text = await response.text();
+    expect(text.match(/event: error/g)).toHaveLength(1);
+    expect(text).toContain('"code":"provider_error"');
+    expect(text).toContain('"status":503');
+    expect(text).not.toContain("terminal_result_error");
+  });
 
   it("delivers a lifecycle error once when usage arrives with error-only payloads", async () => {
     agentCommand.mockClear();

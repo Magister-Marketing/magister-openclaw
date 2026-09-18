@@ -973,6 +973,68 @@ describe("OpenResponses HTTP API (e2e)", () => {
     );
   });
 
+  it("closes a run that settles with no answer as failed with run_ended_without_result", async () => {
+    const port = enabledPort;
+    agentCommand.mockClear();
+    agentCommand.mockImplementationOnce(
+      ((opts: unknown) =>
+        new Promise((resolve) => {
+          const runId = (opts as { runId?: string } | undefined)?.runId ?? "";
+          emitAgentEvent({ runId, stream: "lifecycle", data: { phase: "end" } });
+          setTimeout(() => resolve({ payloads: [], meta: {} }), 20);
+        })) as never,
+    );
+
+    const res = await postResponses(port, {
+      stream: true,
+      model: "openclaw",
+      input: "finish the task",
+    });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toContain("No response from OpenClaw.");
+    const events = parseSseEvents(text);
+    expect(events.some((event) => event.event === "response.output_text.delta")).toBe(false);
+    const completedEvent = events.find((event) => event.event === "response.completed");
+    const completed = JSON.parse(completedEvent?.data ?? "{}") as {
+      response?: { status?: string; error?: { code?: string; message?: string } };
+    };
+    expect(completed.response?.status).toBe("failed");
+    expect(completed.response?.error?.code).toBe("run_ended_without_result");
+    expect(events.some((event) => event.data === "[DONE]")).toBe(true);
+  });
+
+  it("carries the provider status on a failed response's error", async () => {
+    const port = enabledPort;
+    agentCommand.mockClear();
+    agentCommand.mockImplementationOnce(
+      ((opts: unknown) =>
+        new Promise((resolve) => {
+          const runId = (opts as { runId?: string } | undefined)?.runId ?? "";
+          emitAgentEvent({
+            runId,
+            stream: "lifecycle",
+            data: { phase: "error", error: "402 Payment Required: monthly budget exceeded" },
+          });
+          setTimeout(() => resolve({ payloads: [], meta: {} }), 20);
+        })) as never,
+    );
+
+    const res = await postResponses(port, {
+      stream: true,
+      model: "openclaw",
+      input: "finish the task",
+    });
+    const events = parseSseEvents(await res.text());
+    const completedEvent = events.find((event) => event.event === "response.completed");
+    const completed = JSON.parse(completedEvent?.data ?? "{}") as {
+      response?: { status?: string; error?: { code?: string; status?: number } };
+    };
+    expect(completed.response?.status).toBe("failed");
+    expect(completed.response?.error?.code).toBe("provider_error");
+    expect(completed.response?.error?.status).toBe(402);
+  });
+
   it("treats write-scoped HTTP callers as non-owner and admin-scoped callers as owner", async () => {
     const port = enabledPort;
 
