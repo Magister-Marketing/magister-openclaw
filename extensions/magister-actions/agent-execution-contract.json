@@ -2802,6 +2802,35 @@
       "transport_modes": ["json_v1"]
     },
     {
+      "capability_id": "framer",
+      "connection_slug": "framer",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:framer"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["framer"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-framer",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
       "capability_id": "gemini",
       "connection_slug": null,
       "delegation_safe_tools": [],
@@ -3978,6 +4007,6 @@
     }
   ],
   "native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
-  "registry_revision": "65f1c722a3c28d903f30ada0ffd268b2fb6aad199ca5d1a7d08c34fe5fb01127",
+  "registry_revision": "681e3bb9a7f78fb431cf428ff5470c10e811e1046d08009961db095948c3ac2b",
   "schema_version": 1
 }
