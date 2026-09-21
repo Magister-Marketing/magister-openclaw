@@ -15,6 +15,7 @@ import { assertMimeAgreement, detectMime } from "./corpus-mime.js";
 import { assertCorpusPathQuotas } from "./corpus-quota.js";
 import { CorpusStore, type CorpusSource } from "./corpus-store.js";
 import { LocalMutationObservation, type LocalMutationContext } from "./mutation-observer.js";
+import { mirrorReadBits } from "./tool-readable.js";
 
 export function normalizeDestination(workspace: string, requested: string): string {
   if (!requested.trim()) {
@@ -65,6 +66,9 @@ async function rejectSymlinkComponents(workspace: string, destination: string): 
       }
       await fs.promises.mkdir(current, { mode: 0o700 });
     }
+    // Every directory on the way to an upload, not only one created here: a
+    // file the tools may read is still unreachable inside a 0700 directory.
+    await mirrorReadBits(current);
   }
   try {
     const target = await fs.promises.lstat(destination);
@@ -312,7 +316,12 @@ export async function ingestOne(params: {
     }
     await fs.promises.rename(stagingPath, params.destination);
     promoted = true;
+    // Owner-only until it is in place, then readable by the agent's tools. Left
+    // at 0600 the upload could be read by the host `read` tool but not by
+    // `exec`, so a spreadsheet or archive could never be parsed: every binary
+    // upload cost ~30 tool calls and ended with the agent working blind.
     await fs.promises.chmod(params.destination, 0o600);
+    await mirrorReadBits(params.destination);
     await fsyncPath(params.destination);
     await fsyncDir(path.dirname(params.destination));
     const store = new CorpusStore(params.workspace);

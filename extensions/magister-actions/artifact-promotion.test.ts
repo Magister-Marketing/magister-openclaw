@@ -100,6 +100,48 @@ describe("artifact promotion", () => {
     expect(fs.existsSync(row.staged)).toBe(false);
   });
 
+  it("leaves a promoted artifact readable by the agent's tools, and staging owner-only", async () => {
+    // Promoted at 0600 inside a 0700 directory, an artifact was invisible to
+    // `exec` until the next restart re-ran the boot-time read-surface pass.
+    const row = fixture();
+    process.env.MAGISTER_LOCAL_MUTATION_ENFORCEMENT = "1";
+    const mode = (target: string) => fs.statSync(target).mode & 0o777;
+    const stagingRoot = path.join(row.workspace, ".magister", "tmp");
+    fs.chmodSync(stagingRoot, 0o700);
+    const nested = { ...request(row), destination_path: "deliverables/q3/report.txt" };
+
+    await promoteArtifact(nested, {
+      workspace: row.workspace,
+      agentToolUid: process.getuid?.() ?? 501,
+    });
+
+    const destination = path.join(row.workspace, "deliverables", "q3", "report.txt");
+    expect(mode(destination)).toBe(0o644);
+    expect(mode(path.join(row.workspace, "deliverables", "q3"))).toBe(0o755);
+    expect(mode(path.join(row.workspace, "deliverables"))).toBe(0o755);
+    expect(mode(destination) & 0o022).toBe(0);
+    // Only the destination chain is widened; the staging tree is not.
+    expect(mode(stagingRoot)).toBe(0o700);
+  });
+
+  it("heals an artifact an earlier promotion left owner-only", async () => {
+    const row = fixture();
+    process.env.MAGISTER_LOCAL_MUTATION_ENFORCEMENT = "1";
+    const destination = path.join(row.workspace, "deliverables", "report.txt");
+    fs.mkdirSync(path.dirname(destination), { mode: 0o700 });
+    fs.writeFileSync(destination, "bounded artifact", { mode: 0o600 });
+    fs.chmodSync(destination, 0o600);
+
+    const result = await promoteArtifact(request(row), {
+      workspace: row.workspace,
+      agentToolUid: process.getuid?.() ?? 501,
+    });
+
+    expect(result.status).toBe("already_current");
+    expect(fs.statSync(destination).mode & 0o777).toBe(0o644);
+    expect(fs.statSync(path.dirname(destination)).mode & 0o777).toBe(0o755);
+  });
+
   it("rejects missing fences and platform-managed destinations", async () => {
     const row = fixture();
     process.env.MAGISTER_LOCAL_MUTATION_ENFORCEMENT = "1";

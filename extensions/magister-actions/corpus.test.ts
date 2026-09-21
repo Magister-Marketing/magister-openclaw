@@ -186,6 +186,45 @@ describe("Magister corpus ingestion", () => {
     expect(manifest).toEqual({ summary_revision: 0, trusted_as_project_source: 0 });
   });
 
+  it("leaves an upload readable by the agent's tools, and its own state owner-only", async () => {
+    // The exec sandbox is a different uid and the boot-time read-surface pass
+    // only runs at boot, so an upload left at 0600 could be read by the host
+    // `read` tool but never parsed by `exec`: every spreadsheet and archive a
+    // customer uploaded cost ~30 tool calls and ended with the agent blind.
+    const root = workspace();
+    const mode = (target: string) => fs.statSync(target).mode & 0o777;
+    // A directory an earlier writer left owner-only hides the file just as well.
+    fs.mkdirSync(path.join(root, "resources"), { recursive: true });
+    fs.chmodSync(path.join(root, "resources"), 0o700);
+    const destination = path.join(root, "resources", "uploads", "notes.md");
+
+    const response = await request({
+      files: [
+        {
+          ...file("notes.md", "Q3 pricing notes.", "text/markdown"),
+          destination_path: destination,
+        },
+      ],
+      extract: true,
+      provenance: "chat",
+    });
+
+    expect(response.statusCode).toBe(200);
+    const payload = JSON.parse(response.body) as {
+      files: Array<{ path: string; extracted_artifact: string }>;
+    };
+    expect(payload.files[0]?.path).toBe(destination);
+    expect(mode(destination)).toBe(0o644);
+    expect(mode(path.join(root, "resources", "uploads"))).toBe(0o755);
+    expect(mode(path.join(root, "resources"))).toBe(0o755);
+    // Never writable by anyone but the host, and nothing private is widened:
+    // extracted text, the corpus database and its directory stay owner-only.
+    expect(mode(destination) & 0o022).toBe(0);
+    expect(mode(payload.files[0]?.extracted_artifact ?? "")).toBe(0o600);
+    expect(mode(path.join(root, ".magister", "state", "corpus.sqlite"))).toBe(0o600);
+    expect(mode(path.join(root, ".magister", "state"))).toBe(0o700);
+  });
+
   it("names the crash class when a non-IngestionError escapes", async () => {
     workspace();
     // A bare "ingestion failed" left two production wedges (2026-08-05,
