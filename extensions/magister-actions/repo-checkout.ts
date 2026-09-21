@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
+import { mirrorReadBits } from "./tool-readable.js";
 
 /**
  * Brokered repository checkout, and what can be done with one (Phases 3.1–3.2).
@@ -633,22 +634,6 @@ export async function makeReadableByTools(root: string): Promise<void> {
     }
   }
   await mirrorReadBits(root);
-}
-
-/** The rule itself, on one path: owner read/execute onto group and other, and
- *  every non-owner write bit cleared. A path that vanished mid-walk needs no
- *  permissions, so failure is silent by design. */
-async function mirrorReadBits(target: string): Promise<void> {
-  try {
-    const mode = (await fs.promises.lstat(target)).mode & 0o7777;
-    const ownerReadExecute = mode & 0o500;
-    await fs.promises.chmod(
-      target,
-      (mode & ~0o077) | (ownerReadExecute >> 3) | (ownerReadExecute >> 6),
-    );
-  } catch {
-    // Nothing to widen.
-  }
 }
 
 export type PreparedCommit = {

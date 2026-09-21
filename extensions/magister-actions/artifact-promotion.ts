@@ -3,6 +3,7 @@ import fs from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
 import { LocalMutationObservation, parseLocalMutationContext } from "./mutation-observer.js";
+import { mirrorReadBits } from "./tool-readable.js";
 
 const MAX_REQUEST_BYTES = 32 * 1024;
 const MAX_ARTIFACT_BYTES = 50 * 1024 * 1024;
@@ -178,6 +179,13 @@ async function assertComponents(
         throw new ArtifactPromotionError("staged artifact parent is missing", 404);
       }
     }
+    // Destination parents only (`createParents`): the staging tree under
+    // `.magister/tmp` takes the other branch and stays owner-only. Existing
+    // directories too, since a readable artifact inside a 0700 directory is
+    // still unreachable by the agent's tools.
+    if (!final && options.createParents) {
+      await mirrorReadBits(current);
+    }
   }
   return current;
 }
@@ -294,6 +302,7 @@ export async function promoteArtifact(
       request.replace_sha256,
     );
     if (initialState === "current") {
+      await mirrorReadBits(destination);
       observation?.finish("promoted");
       await removePromotedStaging(staged, attemptRoot);
       return {
@@ -349,6 +358,10 @@ export async function promoteArtifact(
         await fsyncDirectory(parent);
       }
     }
+    // The copy is owner-only while it is verified; once it is the destination
+    // the agent's tools must be able to read it. Also heals an artifact an
+    // earlier promotion left at 0600 (the `current` branches above).
+    await mirrorReadBits(destination);
     if (commitAttested) {
       await observation?.completeCommit();
       commitAttested = false;
