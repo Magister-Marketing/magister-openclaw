@@ -992,14 +992,17 @@ export async function runEmbeddedPiAgent(
       // subscribers (openai-http, agent.wait) observe a terminal state even
       // when the per-attempt lifecycle handler would suppress it.
       const emitOverflowTerminal = (errorText: string): void => {
+        // The run settled on this failure after its own recovery gave up:
+        // a terminal result, not a lost run (see openai-http.ts codes).
+        const terminalCode = "terminal_result_error";
         emitAgentEvent({
           runId: params.runId,
           stream: "lifecycle",
-          data: { phase: "error", error: errorText, endedAt: Date.now() },
+          data: { phase: "error", error: errorText, terminalCode, endedAt: Date.now() },
         });
         void params.onAgentEvent?.({
           stream: "lifecycle",
-          data: { phase: "error", error: errorText },
+          data: { phase: "error", error: errorText, terminalCode },
         });
       };
       // Magister fork: when the per-attempt terminal lifecycle error was

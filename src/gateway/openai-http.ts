@@ -511,6 +511,18 @@ export type TerminalErrorFrame = {
 const REDACTED_FAILURE_MESSAGE = "Agent couldn't generate a response. Please try again.";
 const ABORTED_RUN_MESSAGE = "Agent run was stopped.";
 const NO_RESULT_MESSAGE = "Agent run ended without a result.";
+// A sessions_yield is an intentional end of turn (the agent waits for a
+// follow-up event, typically a spawned subagent or a workflow it started).
+// It is not a failure, so it never gets an `event: error`; the stream closes
+// cleanly, preceded by one `event: yield` so the Gateway can tell a deliberate
+// silence from a lost answer and neither probes nor replays it.
+export const YIELD_EVENT_MESSAGE = "Turn yielded; waiting for a follow-up event.";
+export type YieldFrame = { message: string };
+
+export function isYieldedRunResult(result: unknown): boolean {
+  const meta = (result as { meta?: { yielded?: unknown } } | null)?.meta;
+  return meta?.yielded === true;
+}
 
 // `pi-embedded-runner/run.ts` wraps an external abort as
 // `new Error("Operation aborted", { cause })`; the HTTP clients' own abort
@@ -534,16 +546,29 @@ export function classifyLifecycleError(
 ): TerminalErrorFrame {
   const rawMessage = typeof data?.error === "string" && data.error ? data.error : "";
   const explicit = data?.terminalCode;
-  if (explicit === "aborted" || isAbortedRunError(rawMessage)) {
+  // The per-attempt lifecycle handler reports a cancelled attempt as
+  // `aborted: true` / `stopReason: "aborted"` with the text "Request
+  // aborted."; the run loop's own wrapper says "Operation aborted".
+  if (
+    explicit === "aborted" ||
+    data?.aborted === true ||
+    data?.stopReason === "aborted" ||
+    isAbortedRunError(rawMessage)
+  ) {
     return { message: ABORTED_RUN_MESSAGE, code: "aborted" };
   }
   if (explicit === "run_ended_without_result") {
     return { message: rawMessage || NO_RESULT_MESSAGE, code: "run_ended_without_result" };
   }
   const message = rawMessage || "Agent run failed";
-  const status = extractPrefixedHttpStatus(rawMessage);
-  if (data?.stopReason === "retry_limit" || status !== undefined) {
+  const stampedStatus =
+    typeof data?.status === "number" && Number.isInteger(data.status) ? data.status : undefined;
+  const status = stampedStatus ?? extractPrefixedHttpStatus(rawMessage);
+  if (explicit === "provider_error" || data?.stopReason === "retry_limit" || status !== undefined) {
     return { message, code: "provider_error", ...(status !== undefined ? { status } : {}) };
+  }
+  if (explicit === "terminal_result_error") {
+    return { message, code: "terminal_result_error" };
   }
   if (options.commandSettled) {
     return { message, code: "terminal_result_error" };
@@ -818,6 +843,18 @@ export async function handleOpenAiHttpRequest(
     terminalError = true;
     writeCustomSseEvent(res, "error", frame);
   };
+  let yieldWritten = false;
+  const writeYield = () => {
+    if (yieldWritten || terminalFrameWritten) {
+      return;
+    }
+    yieldWritten = true;
+    if (!wroteRole) {
+      wroteRole = true;
+      writeAssistantRoleChunk(res, { runId, model });
+    }
+    writeCustomSseEvent(res, "yield", { message: YIELD_EVENT_MESSAGE } satisfies YieldFrame);
+  };
   let stopWatchingDisconnect = () => {};
   const forwardedMediaUrls = new Set<string>();
 
@@ -963,7 +1000,12 @@ export async function handleOpenAiHttpRequest(
           writeCustomSseEvent(res, "draft_verification", receipt);
         }
       }
-      if (phase === "error") {
+      if (phase === "error" && evt.data?.yielded === true) {
+        // An intentional end of turn: no error frame. The command settles
+        // right after with `meta.yielded`, which is what finalizes the
+        // stream; the yield frame is written now so it precedes the close.
+        writeYield();
+      } else if (phase === "error") {
         // Magister fork: surface the terminal error as a classified SSE
         // event before finalizing. Without it a run that died mid-turn is
         // indistinguishable from one that finished, and the gateway records
@@ -1031,6 +1073,9 @@ export async function handleOpenAiHttpRequest(
         return;
       }
 
+      if (isYieldedRunResult(result)) {
+        writeYield();
+      }
       if (!sawAssistantDelta) {
         if (!wroteRole) {
           wroteRole = true;
@@ -1038,6 +1083,12 @@ export async function handleOpenAiHttpRequest(
         }
 
         const content = resolveAgentResponseText(result);
+        if (!content && yieldWritten) {
+          // A yield with nothing said is still a deliberate end, not a
+          // missing answer.
+          requestFinalize();
+          return;
+        }
         if (!content) {
           // Nothing streamed and nothing settled: say so, instead of a
           // placeholder sentence the Gateway would deliver as the answer.

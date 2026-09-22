@@ -1,6 +1,7 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { emitAgentEvent } from "../infra/agent-events.js";
 import { createInlineCodeState } from "../markdown/code-spans.js";
+import { extractPrefixedHttpStatus } from "../shared/assistant-error-format.js";
 import {
   buildApiErrorObservationFields,
   buildTextObservationFields,
@@ -66,6 +67,27 @@ export function resolveSwallowedRunFailure(
     return null;
   }
   return tail;
+}
+
+/**
+ * Magister fork: the classification the HTTP surface (openai-http.ts) puts
+ * on the terminal `event: error` frame. A friendly lifecycle message loses the
+ * provider's HTTP status, so it is read off the raw assistant error here and
+ * carried as `status`. A settled model error is a `provider_error` when it
+ * carries a status (the Gateway keys retry/paywall on it) and a
+ * `terminal_result_error` otherwise; without this stamp the surface could only
+ * call it "run ended without result", which the Gateway treats as a lost run
+ * and the workflow orchestrator retries (2026-09-21: an OpenAI 522 relayed by
+ * the LLM proxy mid-stream).
+ */
+export function resolveTerminalErrorStamp(rawErrorMessage: string | undefined): {
+  terminalCode: "provider_error" | "terminal_result_error";
+  status?: number;
+} {
+  const status = extractPrefixedHttpStatus(rawErrorMessage ?? "");
+  return status !== undefined
+    ? { terminalCode: "provider_error", status }
+    : { terminalCode: "terminal_result_error" };
 }
 
 export function handleAgentEnd(
@@ -194,6 +216,16 @@ export function handleAgentEnd(
       const terminalError = isAborted
         ? "Request aborted."
         : (lifecycleErrorText ?? "LLM request failed.");
+      // A sessions_yield ends the attempt as a synthetic abort; it keeps its
+      // `yielded` mark and no code, so the HTTP surface closes it as an
+      // intentional end rather than a stop or a lost run.
+      const terminalStamp = isAborted
+        ? ctx.state.yielded === true
+          ? {}
+          : { terminalCode: "aborted" as const }
+        : resolveTerminalErrorStamp(
+            isAssistantMessage(lastAssistant) ? lastAssistant.errorMessage : undefined,
+          );
       emitAgentEvent({
         runId: ctx.params.runId,
         stream: "lifecycle",
@@ -201,6 +233,7 @@ export function handleAgentEnd(
           phase: "error",
           error: terminalError,
           ...terminalMeta,
+          ...terminalStamp,
           ...(livenessState ? { livenessState } : {}),
           ...(replayInvalid ? { replayInvalid } : {}),
           endedAt: Date.now(),
@@ -212,6 +245,7 @@ export function handleAgentEnd(
           phase: "error",
           error: terminalError,
           ...terminalMeta,
+          ...terminalStamp,
           ...(livenessState ? { livenessState } : {}),
           ...(replayInvalid ? { replayInvalid } : {}),
         },
@@ -276,6 +310,7 @@ export function handleAgentEnd(
         `embedded run agent end: runId=${sanitizeForConsole(ctx.params.runId) ?? "-"} ` +
           `isError=true (swallowed by agent loop) error=${swallowedErrorText}`,
       );
+      const swallowedStamp = resolveTerminalErrorStamp(swallowedFailure.errorMessage);
       emitAgentEvent({
         runId: ctx.params.runId,
         stream: "lifecycle",
@@ -283,6 +318,7 @@ export function handleAgentEnd(
           phase: "error",
           error: swallowedErrorText,
           ...endData,
+          ...swallowedStamp,
           endedAt: Date.now(),
         },
       });
@@ -292,6 +328,7 @@ export function handleAgentEnd(
           phase: "error",
           error: swallowedErrorText,
           ...endData,
+          ...swallowedStamp,
         },
       });
       return;

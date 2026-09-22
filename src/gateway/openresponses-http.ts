@@ -60,7 +60,12 @@ import {
   type StreamingEvent,
   type Usage,
 } from "./open-responses.schema.js";
-import { classifyFailedResult, classifyLifecycleError } from "./openai-http.js";
+import {
+  classifyFailedResult,
+  classifyLifecycleError,
+  isYieldedRunResult,
+  YIELD_EVENT_MESSAGE,
+} from "./openai-http.js";
 import type { TerminalErrorFrame } from "./openai-http.js";
 import { wrapUntrustedFileContent } from "./openresponses-file-content.js";
 import { buildAgentPrompt } from "./openresponses-prompt.js";
@@ -892,6 +897,17 @@ export async function handleOpenResponsesHttpRequest(
     error?: TerminalErrorFrame;
   } | null = null;
   const forwardedMediaUrls = new Set<string>();
+  // A sessions_yield closes as a completed response (empty text allowed),
+  // announced by one `event: yield` so the Gateway does not treat the
+  // silence as a lost answer. See openai-http.ts.
+  let yielded = false;
+  const noteYield = () => {
+    if (yielded || closed) {
+      return;
+    }
+    yielded = true;
+    res.write(`event: yield\ndata: ${JSON.stringify({ message: YIELD_EVENT_MESSAGE })}\n\n`);
+  };
 
   const maybeFinalize = () => {
     if (closed) {
@@ -907,7 +923,7 @@ export async function handleOpenResponsesHttpRequest(
     const finalText = finalizeRequested.text ?? accumulatedText;
     let finalStatus = finalizeRequested.status;
     let terminalFrame = finalizeRequested.error;
-    if (finalStatus === "completed" && !finalText) {
+    if (finalStatus === "completed" && !finalText && !yielded) {
       // Magister fork: nothing streamed and nothing settled. Close as a
       // failure the Gateway can classify instead of an empty success.
       finalStatus = "failed";
@@ -1117,7 +1133,10 @@ export async function handleOpenResponsesHttpRequest(
         if (receipt) {
           res.write(`event: draft_verification\ndata: ${JSON.stringify(receipt)}\n\n`);
         }
-        if (phase === "error") {
+        if (phase === "error" && evt.data?.yielded === true) {
+          noteYield();
+          requestFinalize("completed");
+        } else if (phase === "error") {
           requestFinalize(
             "failed",
             undefined,
@@ -1289,6 +1308,9 @@ export async function handleOpenResponsesHttpRequest(
             delta: content,
           });
         }
+      }
+      if (isYieldedRunResult(result)) {
+        noteYield();
       }
       const failedResult = classifyFailedResult(result);
       if (failedResult && !closed) {
