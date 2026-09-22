@@ -921,6 +921,7 @@ export async function runEmbeddedAttempt(
             onYield: (message) => {
               yieldDetected = true;
               yieldMessage = message;
+              markSessionYielded?.();
               queueYieldInterruptForSession?.();
               runAbortController.abort("sessions_yield");
               abortSessionForYield?.();
@@ -1071,6 +1072,12 @@ export async function runEmbeddedAttempt(
     // Late-binding reference so onYield can abort the session (declared after tool creation)
     let abortSessionForYield: (() => void) | null = null;
     let queueYieldInterruptForSession: (() => void) | null = null;
+    // Magister fork: the yield abort ends the pi-agent loop synchronously, and
+    // the lifecycle `agent_end` handler reads the subscription's `yielded`
+    // mark right then; stamping it only after the attempt returns (run.ts)
+    // is too late for the terminal lifecycle event. Bound once the
+    // subscription exists.
+    let markSessionYielded: (() => void) | null = null;
     let yieldAbortSettled: Promise<void> | null = null;
     const runtimePlanModelContext = {
       workspaceDir: effectiveWorkspace,
@@ -2464,6 +2471,7 @@ export async function runEmbeddedAttempt(
         getCompactionCount,
         getLastCompactionTokensAfter,
       } = subscription;
+      markSessionYielded = () => setTerminalLifecycleMeta({ yielded: true });
 
       const queueHandle: EmbeddedPiQueueHandle & {
         kind: "embedded";
