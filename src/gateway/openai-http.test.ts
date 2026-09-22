@@ -1373,6 +1373,97 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
     expect(parseSseDataLines(text).at(-1)).toBe("[DONE]");
   });
 
+  it("closes a yielded run cleanly with one yield frame and no error frame", async () => {
+    agentCommand.mockClear();
+    agentCommand.mockImplementationOnce((async (opts: unknown) => {
+      const runId = (opts as { runId: string }).runId;
+      // The per-attempt lifecycle handler reports a sessions_yield as a
+      // synthetic abort that carries its `yielded` mark.
+      emitAgentEvent({
+        runId,
+        stream: "lifecycle",
+        data: {
+          phase: "error",
+          error: "Request aborted.",
+          stopReason: "aborted",
+          aborted: true,
+          yielded: true,
+        },
+      });
+      return { payloads: [], meta: { yielded: true, stopReason: "end_turn" } };
+    }) as never);
+    const response = await postChatCompletions(enabledPort, {
+      stream: true,
+      model: "openclaw",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    const text = await response.text();
+    expect(text).not.toContain("event: error");
+    expect(text.match(/event: yield/g)).toHaveLength(1);
+    expect(text).toContain('"message":"Turn yielded; waiting for a follow-up event."');
+    expect(parseSseDataLines(text).at(-1)).toBe("[DONE]");
+    const stop = parseSseDataLines(text)
+      .filter((line) => line !== "[DONE]")
+      .map((line) => JSON.parse(line) as { choices?: Array<{ finish_reason?: string }> })
+      .find((chunk) => chunk.choices?.[0]?.finish_reason);
+    expect(stop?.choices?.[0]?.finish_reason).toBe("stop");
+  });
+
+  it("names a cancelled attempt reported by the lifecycle handler as aborted", async () => {
+    agentCommand.mockClear();
+    agentCommand.mockImplementationOnce((async (opts: unknown) => {
+      const runId = (opts as { runId: string }).runId;
+      emitAgentEvent({
+        runId,
+        stream: "lifecycle",
+        data: { phase: "error", error: "Request aborted.", stopReason: "aborted", aborted: true },
+      });
+      return { payloads: [] };
+    }) as never);
+    const response = await postChatCompletions(enabledPort, {
+      stream: true,
+      model: "openclaw",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    const text = await response.text();
+    expect(text.match(/event: error/g)).toHaveLength(1);
+    expect(text).toContain('"code":"aborted"');
+    expect(text).not.toContain("event: yield");
+  });
+
+  it("reads a stamped provider status off a friendly lifecycle error", async () => {
+    agentCommand.mockClear();
+    agentCommand.mockImplementationOnce((async (opts: unknown) => {
+      const runId = (opts as { runId: string }).runId;
+      emitAgentEvent({
+        runId,
+        stream: "lifecycle",
+        data: {
+          phase: "error",
+          error: "The AI provider returned an unexpected error. Please try again.",
+          terminalCode: "provider_error",
+          status: 522,
+        },
+      });
+      return { payloads: [] };
+    }) as never);
+    const response = await postChatCompletions(enabledPort, {
+      stream: true,
+      model: "openclaw",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    const text = await response.text();
+    const errorLine = text
+      .split("\n")
+      .find(
+        (line, index, lines) => lines[index - 1] === "event: error" && line.startsWith("data:"),
+      );
+    const frame = JSON.parse(errorLine?.slice(5) ?? "{}") as Record<string, unknown>;
+    expect(frame.code).toBe("provider_error");
+    expect(frame.status).toBe(522);
+    expect(frame.message).toContain("unexpected error");
+  });
+
   it("names an externally aborted run as aborted instead of a retryable failure", async () => {
     agentCommand.mockClear();
     agentCommand.mockImplementationOnce((async (opts: unknown) => {

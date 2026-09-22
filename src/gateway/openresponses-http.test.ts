@@ -1004,6 +1004,45 @@ describe("OpenResponses HTTP API (e2e)", () => {
     expect(events.some((event) => event.data === "[DONE]")).toBe(true);
   });
 
+  it("closes a yielded run as completed with an empty text and one yield event", async () => {
+    const port = enabledPort;
+    agentCommand.mockClear();
+    agentCommand.mockImplementationOnce(
+      ((opts: unknown) =>
+        new Promise((resolve) => {
+          const runId = (opts as { runId?: string } | undefined)?.runId ?? "";
+          emitAgentEvent({
+            runId,
+            stream: "lifecycle",
+            data: {
+              phase: "error",
+              error: "Request aborted.",
+              stopReason: "aborted",
+              aborted: true,
+              yielded: true,
+            },
+          });
+          setTimeout(() => resolve({ payloads: [], meta: { yielded: true } }), 20);
+        })) as never,
+    );
+
+    const res = await postResponses(port, {
+      stream: true,
+      model: "openclaw",
+      input: "spawn the researchers and wait",
+    });
+    expect(res.status).toBe(200);
+    const events = parseSseEvents(await res.text());
+    expect(events.filter((event) => event.event === "yield")).toHaveLength(1);
+    const completedEvent = events.find((event) => event.event === "response.completed");
+    const completed = JSON.parse(completedEvent?.data ?? "{}") as {
+      response?: { status?: string; error?: { code?: string } };
+    };
+    expect(completed.response?.status).toBe("completed");
+    expect(completed.response?.error).toBeUndefined();
+    expect(events.some((event) => event.data === "[DONE]")).toBe(true);
+  });
+
   it("carries the provider status on a failed response's error", async () => {
     const port = enabledPort;
     agentCommand.mockClear();

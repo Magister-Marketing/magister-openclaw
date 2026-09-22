@@ -99,6 +99,7 @@ describe("handleAgentEnd", () => {
         phase: "error",
         error: "LLM request failed: connection refused by the provider endpoint.",
         livenessState: "blocked",
+        terminalCode: "terminal_result_error",
       },
     });
   });
@@ -175,8 +176,62 @@ describe("handleAgentEnd", () => {
       data: {
         phase: "error",
         error: "x-api-key: ***",
+        terminalCode: "terminal_result_error",
       },
     });
+  });
+
+  it("stamps a provider_error with the status the friendly text lost", async () => {
+    const onAgentEvent = vi.fn();
+    const ctx = createContext(
+      {
+        role: "assistant",
+        stopReason: "error",
+        errorMessage: "522 The AI provider returned an unexpected error. Please try again.",
+        content: [{ type: "text", text: "" }],
+      },
+      { onAgentEvent },
+    );
+
+    await handleAgentEnd(ctx);
+
+    expect(onAgentEvent).toHaveBeenCalledWith({
+      stream: "lifecycle",
+      data: expect.objectContaining({
+        phase: "error",
+        terminalCode: "provider_error",
+        status: 522,
+      }),
+    });
+  });
+
+  it("stamps a cancelled attempt as aborted, and a yield as neither", async () => {
+    const aborted = vi.fn();
+    const abortedCtx = createContext(
+      { role: "assistant", stopReason: "aborted", content: [{ type: "text", text: "" }] },
+      { onAgentEvent: aborted },
+    );
+    await handleAgentEnd(abortedCtx);
+    expect(aborted).toHaveBeenCalledWith({
+      stream: "lifecycle",
+      data: expect.objectContaining({
+        phase: "error",
+        error: "Request aborted.",
+        terminalCode: "aborted",
+      }),
+    });
+
+    const yielded = vi.fn();
+    const yieldCtx = createContext(
+      { role: "assistant", stopReason: "aborted", content: [{ type: "text", text: "" }] },
+      { onAgentEvent: yielded },
+    );
+    yieldCtx.state.yielded = true;
+    await handleAgentEnd(yieldCtx);
+    const yieldData = yielded.mock.calls.at(-1)?.[0]?.data as Record<string, unknown>;
+    expect(yieldData.phase).toBe("error");
+    expect(yieldData.yielded).toBe(true);
+    expect(yieldData).not.toHaveProperty("terminalCode");
   });
 
   it("logs runtime failure kind for missing-scope auth errors", async () => {
@@ -647,6 +702,7 @@ describe("handleAgentEnd", () => {
       data: {
         phase: "error",
         error: "LLM request failed: connection refused by the provider endpoint.",
+        terminalCode: "terminal_result_error",
       },
     });
   });
