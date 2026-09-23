@@ -386,3 +386,24 @@ export function formatTransportErrorCopy(raw: string): string | undefined {
   }
   return undefined;
 }
+
+/**
+ * Magister fork: the HTTP status a provider message leads with, or `undefined`.
+ *
+ * Accepts the bare "502 Bad Gateway" form `extractLeadingHttpStatus` parses
+ * and the one-word prefixes SDKs add ("Error: 429 ...", "HTTP 503: ..."). A
+ * status buried mid-sentence is never a status: a byte count, request id, or
+ * timestamp that happens to contain "502" is not a provider failure.
+ */
+export function extractPrefixedHttpStatus(raw: string): number | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const direct = extractLeadingHttpStatus(trimmed);
+  if (direct) {
+    return direct.code;
+  }
+  const prefixed = /^(?:error|http)\s*[:-]?\s*(\d{3})\b/iu.exec(trimmed);
+  return prefixed ? Number(prefixed[1]) : undefined;
+}

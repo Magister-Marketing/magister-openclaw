@@ -1,4 +1,5 @@
 import { asOptionalObjectRecord } from "@openclaw/normalization-core/record-coerce";
+import type { AgentEventPayload } from "../infra/agent-events.js";
 
 type AssistantTextInput = {
   text?: string;
@@ -177,4 +178,34 @@ export function mergeAssistantText(
     text = previous.text.startsWith(input.text) ? previous.text : input.text;
   }
   return { text, scope };
+}
+
+// Magister fork: media URLs an assistant event carries, bounded and de-duplicated,
+// forwarded to the HTTP surface as a `media` SSE event.
+const MAX_ASSISTANT_MEDIA_URLS = 20;
+const MAX_ASSISTANT_MEDIA_URL_LENGTH = 8_192;
+
+export function resolveAssistantMediaUrls(evt: AgentEventPayload): string[] {
+  const mediaUrls = evt.data.mediaUrls;
+  if (!Array.isArray(mediaUrls)) {
+    return [];
+  }
+
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const value of mediaUrls) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const url = value.trim();
+    if (!url || url.length > MAX_ASSISTANT_MEDIA_URL_LENGTH || seen.has(url)) {
+      continue;
+    }
+    seen.add(url);
+    normalized.push(url);
+    if (normalized.length >= MAX_ASSISTANT_MEDIA_URLS) {
+      break;
+    }
+  }
+  return normalized;
 }

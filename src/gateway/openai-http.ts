@@ -15,12 +15,15 @@ import type { AdmittedRunContext } from "../agents/admitted-run-context.js";
 import { isClientToolNameConflictError } from "../agents/agent-tool-definition-adapter.js";
 import type { AgentStreamParams, ClientToolDefinition } from "../agents/command/shared-types.js";
 import type { ImageContent } from "../agents/command/types.js";
+// Magister fork: custom SSE surface + coded terminal frames.
+import { parseDraftVerificationReceipt } from "../agents/draft-verification-receipt.js";
 import { toOpenAiChatCompletionsUsage, type OpenAiChatCompletionsUsage } from "../agents/usage.js";
 import { readAgentRunTerminalOutcome } from "../channels/turn/agent-run-terminal-outcome.js";
 import { createDefaultDeps } from "../cli/deps.js";
 import { agentCommandFromGatewayIngress } from "../commands/agent.js";
 import { getRuntimeConfig } from "../config/io.js";
 import type { GatewayHttpChatCompletionsConfig } from "../config/types.gateway.js";
+import { isAbortError } from "../infra/abort-signal.js";
 import { emitAgentEvent, onAgentEventForRun } from "../infra/agent-events.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { logWarn } from "../logger.js";
@@ -37,6 +40,8 @@ import {
 import { bindGatewayContextResolver } from "../plugins/runtime/gateway-request-scope.js";
 import { retainGatewayRootWorkAdmissionContinuation } from "../process/gateway-work-admission.js";
 import { defaultRuntime } from "../runtime.js";
+import { extractPrefixedHttpStatus } from "../shared/assistant-error-format.js";
+import { resolveAssistantMediaUrls } from "./agent-event-assistant-text.js";
 import {
   mergeAssistantText,
   mergePendingAssistantText,
@@ -78,6 +83,7 @@ import {
   resolveOpenAiCompatibleHttpSenderIsOwner,
 } from "./http-utils.js";
 import { normalizeInputHostnameAllowlist } from "./input-allowlist.js";
+import { extractMagisterApprovalEventFromToolEvent } from "./magister-approval-event.js";
 import { resolveAgentRunUsage } from "./openai-agent-run-usage.js";
 import { resolveOpenAiCompatError, validateOpenAiSamplingParams } from "./openai-compat-errors.js";
 import {
@@ -164,6 +170,12 @@ function resolveOpenAiChatCompletionsLimits(
       timeoutMs: imageConfig?.timeoutMs ?? DEFAULT_INPUT_TIMEOUT_MS,
     },
   };
+}
+
+// Magister fork: named SSE events the Gateway parses (thinking, tool, media,
+// approval, compaction, draft_verification, error, yield).
+function writeCustomSseEvent(res: ServerResponse, event: string, data: unknown) {
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
 function writeSse(res: ServerResponse, data: unknown) {
@@ -796,6 +808,120 @@ function resolveChatCompletionTokenCap(value: unknown, field: string): number | 
   return maxTokens;
 }
 
+export type TerminalErrorCode =
+  | "run_ended_without_result"
+  | "provider_error"
+  | "aborted"
+  | "terminal_result_error";
+
+export type TerminalErrorFrame = {
+  message: string;
+  code: TerminalErrorCode;
+  status?: number;
+};
+
+const REDACTED_FAILURE_MESSAGE = "Agent couldn't generate a response. Please try again.";
+const ABORTED_RUN_MESSAGE = "Agent run was stopped.";
+const NO_RESULT_MESSAGE = "Agent run ended without a result.";
+// A sessions_yield is an intentional end of turn (the agent waits for a
+// follow-up event, typically a spawned subagent or a workflow it started).
+// It is not a failure, so it never gets an `event: error`; the stream closes
+// cleanly, preceded by one `event: yield` so the Gateway can tell a deliberate
+// silence from a lost answer and neither probes nor replays it.
+export const YIELD_EVENT_MESSAGE = "Turn yielded; waiting for a follow-up event.";
+export type YieldFrame = { message: string };
+
+export function isYieldedRunResult(result: unknown): boolean {
+  const meta = (result as { meta?: { yielded?: unknown } } | null)?.meta;
+  return meta?.yielded === true;
+}
+
+// `pi-embedded-runner/run.ts` wraps an external abort as
+// `new Error("Operation aborted", { cause })`; the HTTP clients' own abort
+// shapes are what `isAbortError` recognises.
+function isAbortedRunError(err: unknown): boolean {
+  if (isAbortError(err)) {
+    return true;
+  }
+  const message =
+    err && typeof err === "object" && "message" in err && typeof err.message === "string"
+      ? err.message
+      : typeof err === "string"
+        ? err
+        : "";
+  return message === "Operation aborted" || message.startsWith("Operation aborted:");
+}
+
+export function classifyLifecycleError(
+  data: Record<string, unknown> | undefined,
+  options: { commandSettled: boolean },
+): TerminalErrorFrame {
+  const rawMessage = typeof data?.error === "string" && data.error ? data.error : "";
+  const explicit = data?.terminalCode;
+  // The per-attempt lifecycle handler reports a cancelled attempt as
+  // `aborted: true` / `stopReason: "aborted"` with the text "Request
+  // aborted."; the run loop's own wrapper says "Operation aborted".
+  if (
+    explicit === "aborted" ||
+    data?.aborted === true ||
+    data?.stopReason === "aborted" ||
+    isAbortedRunError(rawMessage)
+  ) {
+    return { message: ABORTED_RUN_MESSAGE, code: "aborted" };
+  }
+  if (explicit === "run_ended_without_result") {
+    return { message: rawMessage || NO_RESULT_MESSAGE, code: "run_ended_without_result" };
+  }
+  const message = rawMessage || "Agent run failed";
+  const stampedStatus =
+    typeof data?.status === "number" && Number.isInteger(data.status) ? data.status : undefined;
+  const status = stampedStatus ?? extractPrefixedHttpStatus(rawMessage);
+  if (explicit === "provider_error" || data?.stopReason === "retry_limit" || status !== undefined) {
+    return { message, code: "provider_error", ...(status !== undefined ? { status } : {}) };
+  }
+  if (explicit === "terminal_result_error") {
+    return { message, code: "terminal_result_error" };
+  }
+  if (options.commandSettled) {
+    return { message, code: "terminal_result_error" };
+  }
+  return { message, code: "run_ended_without_result" };
+}
+
+export function classifyFailedResult(result: unknown): TerminalErrorFrame | null {
+  const finalResult = result as {
+    payloads?: Array<{ text?: string; isError?: boolean; isReasoning?: boolean }>;
+    meta?: { error?: unknown; stopReason?: string };
+  } | null;
+  const errorMeta =
+    finalResult?.meta?.error && typeof finalResult.meta.error === "object"
+      ? (finalResult.meta.error as { kind?: unknown; message?: unknown })
+      : undefined;
+  const stopReason = finalResult?.meta?.stopReason;
+  const payloads = finalResult?.payloads;
+  const errorOnlyPayloads = Boolean(
+    payloads?.length && payloads.every((payload) => payload.isError),
+  );
+  if (
+    !finalResult?.meta?.error &&
+    stopReason !== "error" &&
+    stopReason !== "retry_limit" &&
+    !errorOnlyPayloads
+  ) {
+    return null;
+  }
+  const rawMessage = typeof errorMeta?.message === "string" ? errorMeta.message : "";
+  const status = extractPrefixedHttpStatus(rawMessage);
+  if (errorMeta?.kind === "retry_limit" || stopReason === "retry_limit" || status !== undefined) {
+    return {
+      message: REDACTED_FAILURE_MESSAGE,
+      code: "provider_error",
+      ...(status !== undefined ? { status } : {}),
+    };
+  }
+  return { message: REDACTED_FAILURE_MESSAGE, code: "terminal_result_error" };
+}
+
 export async function handleOpenAiHttpRequest(
   req: IncomingMessage,
   res: ServerResponse,
@@ -1039,7 +1165,19 @@ export async function handleOpenAiHttpRequest(
 
       const meta = (result as { meta?: { error?: unknown; stopReason?: unknown } } | null)?.meta;
       if (readAgentRunTerminalOutcome(result) === "failed") {
-        throw new Error("agent run failed");
+        const failure = classifyFailedResult(result) ?? {
+          message: REDACTED_FAILURE_MESSAGE,
+          code: "terminal_result_error" as const,
+        };
+        sendJson(res, 502, {
+          error: {
+            message: failure.message,
+            type: "api_error",
+            code: failure.code,
+            ...(failure.status !== undefined ? { status: failure.status } : {}),
+          },
+        });
+        return true;
       }
       const usage = resolveChatCompletionUsage(result);
       const { stopReason, pendingToolCalls } = resolveStopReasonAndPendingToolCalls(meta);
@@ -1119,8 +1257,13 @@ export async function handleOpenAiHttpRequest(
         sendJson(res, mapped.status, { error: mapped.error });
         return true;
       }
-      sendJson(res, 500, {
-        error: { message: "internal error", type: "api_error" },
+      const aborted = isAbortedRunError(err);
+      sendJson(res, aborted ? 502 : 500, {
+        error: {
+          message: aborted ? ABORTED_RUN_MESSAGE : "internal error",
+          type: "api_error",
+          code: aborted ? "aborted" : "run_ended_without_result",
+        },
       });
     }
     return true;
@@ -1141,7 +1284,12 @@ export async function handleOpenAiHttpRequest(
   let resultResolved = false;
   let closed = false;
   let observedTerminalLifecycle = false;
-  let terminalStreamError: { message: string; type: string; code?: string } | undefined;
+  let terminalStreamError:
+    | { message: string; type: string; code?: TerminalErrorCode | string; status?: number }
+    | undefined;
+  // Magister fork: a sessions_yield is a deliberate end, not a failure.
+  let yielded = false;
+  const forwardedMediaUrls = new Set<string>();
   let terminalLifecyclePhase: "end" | "error" = "end";
 
   const maybeFinalize = () => {
@@ -1170,8 +1318,16 @@ export async function handleOpenAiHttpRequest(
         pending: pendingAssistantText,
         resultText: finalResultText,
         streamedText: streamedAssistantText.text,
-        fallbackText: finalToolCalls ? "" : "No response from OpenClaw.",
+        fallbackText: "",
       });
+      if (!text && !finalToolCalls && !yielded) {
+        finishStreamWithError({
+          message: NO_RESULT_MESSAGE,
+          type: "api_error",
+          code: "run_ended_without_result",
+        });
+        return;
+      }
       if (!text.startsWith(streamedAssistantText.text)) {
         finishStreamWithError({
           message: "Assistant output cannot be represented as an append-only response stream.",
@@ -1188,6 +1344,9 @@ export async function handleOpenAiHttpRequest(
           ...streamIdentity,
           toolCalls: finalToolCalls,
         });
+      }
+      if (yielded) {
+        writeCustomSseEvent(res, "yield", { message: YIELD_EVENT_MESSAGE } satisfies YieldFrame);
       }
       closed = true;
       unsubscribe();
@@ -1219,7 +1378,66 @@ export async function handleOpenAiHttpRequest(
       return;
     }
 
+    // Magister fork: forward the agent's typed streams as named SSE events.
+    if (evt.stream === "draft_verification") {
+      const receipt = parseDraftVerificationReceipt(evt.data);
+      if (receipt) {
+        writeCustomSseEvent(res, "draft_verification", receipt);
+      }
+      return;
+    }
+    if (evt.stream === "thinking") {
+      const delta = typeof evt.data?.delta === "string" ? evt.data.delta : "";
+      if (delta) {
+        writeCustomSseEvent(res, "thinking", { delta });
+      }
+      return;
+    }
+    if (evt.stream === "tool") {
+      const data = evt.data as Record<string, unknown> | undefined;
+      if (data) {
+        const approval = extractMagisterApprovalEventFromToolEvent(data);
+        if (data.phase === "update" && approval) {
+          writeCustomSseEvent(res, "approval", approval);
+          return;
+        }
+        writeCustomSseEvent(res, "tool", {
+          phase: data.phase,
+          name: data.name,
+          toolCallId: data.toolCallId,
+          ...(data.isError !== undefined && { isError: data.isError }),
+          ...(data.args !== undefined && { args: data.args }),
+          ...(Boolean(data.isError) && data.result !== undefined && { result: data.result }),
+        });
+        if (approval) {
+          writeCustomSseEvent(res, "approval", approval);
+        }
+      }
+      return;
+    }
+    if (evt.stream === "compaction") {
+      const data = (evt.data ?? {}) as Record<string, unknown>;
+      const payload: Record<string, unknown> = { phase: data.phase };
+      for (const key of ["trigger", "willRetry", "tokensBefore", "tokensAfter"]) {
+        if (data[key] !== undefined) {
+          payload[key] = data[key];
+        }
+      }
+      writeCustomSseEvent(res, "compaction", payload);
+      return;
+    }
+
     if (evt.stream === "assistant") {
+      const mediaUrls = resolveAssistantMediaUrls(evt).filter((url) => {
+        if (forwardedMediaUrls.has(url)) {
+          return false;
+        }
+        forwardedMediaUrls.add(url);
+        return true;
+      });
+      if (mediaUrls.length > 0) {
+        writeCustomSseEvent(res, "media", { urls: mediaUrls });
+      }
       const input = resolveAssistantTextInput(evt.data);
       if (!input) {
         return;
@@ -1265,24 +1483,42 @@ export async function handleOpenAiHttpRequest(
       }
       if (phase === "end" || phase === "error") {
         observedTerminalLifecycle = true;
-        if (phase === "error" && terminalLifecyclePhase !== "error") {
-          terminalStreamError ??= {
-            message: normalizeOptionalString(evt.data?.error) ?? "Agent run failed",
-            type: "api_error",
-          };
+        const receipt = parseDraftVerificationReceipt(evt.data?.draftVerification);
+        if (receipt) {
+          writeCustomSseEvent(res, "draft_verification", receipt);
+        }
+        if (phase === "error" && evt.data?.yielded === true) {
+          yielded = true;
+        } else if (phase === "error" && terminalLifecyclePhase !== "error") {
+          const frame = classifyLifecycleError(evt.data as Record<string, unknown> | undefined, {
+            commandSettled: resultResolved,
+          });
+          terminalStreamError ??= { ...frame, type: "api_error" };
         }
         requestFinalize();
       }
     }
   });
 
-  const finishStreamWithError = (error: { message: string; type: string; code?: string }) => {
+  const finishStreamWithError = (error: {
+    message: string;
+    type: string;
+    code?: TerminalErrorCode | string;
+    status?: number;
+  }) => {
     if (closed) {
       return;
     }
     closed = true;
     unsubscribe();
-    writeSse(res, { error });
+    // Magister fork: exactly one coded `event: error` frame closes a stream
+    // that did not deliver an answer (gateway/app/services/machine_terminal_frame.py).
+    const frame: TerminalErrorFrame = {
+      message: error.message,
+      code: (error.code as TerminalErrorCode | undefined) ?? "run_ended_without_result",
+      ...(error.status !== undefined ? { status: error.status } : {}),
+    };
+    writeCustomSseEvent(res, "error", frame);
     writeDone(res);
     res.end();
   };
@@ -1323,13 +1559,20 @@ export async function handleOpenAiHttpRequest(
 
       if (readAgentRunTerminalOutcome(result) === "failed") {
         terminalLifecyclePhase = "error";
-        finishStreamWithError({ message: "internal error", type: "api_error" });
+        const failure = classifyFailedResult(result) ?? {
+          message: REDACTED_FAILURE_MESSAGE,
+          code: "terminal_result_error" as const,
+        };
+        finishStreamWithError({ ...failure, type: "api_error" });
         return;
       }
 
       if (terminalStreamError) {
         finishStreamWithError(terminalStreamError);
         return;
+      }
+      if (isYieldedRunResult(result)) {
+        yielded = true;
       }
 
       finalUsage = resolveChatCompletionUsage(result);
@@ -1381,7 +1624,12 @@ export async function handleOpenAiHttpRequest(
         finishStreamWithError(terminalStreamError);
         return;
       }
-      finishStreamWithError({ message: "internal error", type: "api_error" });
+      const aborted = isAbortedRunError(err);
+      finishStreamWithError({
+        message: aborted ? ABORTED_RUN_MESSAGE : "internal error",
+        type: "api_error",
+        code: aborted ? "aborted" : "run_ended_without_result",
+      });
     } finally {
       releaseAgentRootWork?.();
       // The provider owns observed terminals; a second end would erase a failed session.

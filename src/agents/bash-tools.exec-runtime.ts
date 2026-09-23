@@ -208,6 +208,37 @@ function renderExecHostLabel(host: ExecHost) {
 }
 
 /** Renders an exec target label, preserving `auto`. */
+// Magister fork: every host-shell exec runs through the root supervisor's
+// launcher (bubblewrap, --unshare-net --clearenv, egress proxy socket). The
+// image sets MAGISTER_TOOL_SANDBOX_LAUNCHER to the exact path; anything else
+// means "not a Magister machine" and the hook is inert.
+const MAGISTER_TOOL_SANDBOX_LAUNCHER = "/usr/local/bin/magister-tool-sandbox";
+
+export function magisterToolSandboxLauncher(
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  return env.MAGISTER_TOOL_SANDBOX_LAUNCHER === MAGISTER_TOOL_SANDBOX_LAUNCHER
+    ? MAGISTER_TOOL_SANDBOX_LAUNCHER
+    : undefined;
+}
+
+export function buildMagisterToolSandboxArgv(params: {
+  launcher: string;
+  workspace: string;
+  attemptId: string;
+  childArgv: string[];
+}): string[] {
+  return [
+    params.launcher,
+    "--workspace",
+    params.workspace,
+    "--attempt",
+    params.attemptId,
+    "--",
+    ...params.childArgv,
+  ];
+}
+
 export function renderExecTargetLabel(target: ExecTarget) {
   return target === "auto" ? "auto" : renderExecHostLabel(target);
 }
@@ -913,6 +944,21 @@ export async function runExecProcess({
     });
 
     const shellArgv = [shell, ...shellArgs, commandWithShellSnapshot];
+    const magisterLauncher = magisterToolSandboxLauncher();
+    if (magisterLauncher) {
+      return {
+        mode: "child" as const,
+        argv: buildMagisterToolSandboxArgv({
+          launcher: magisterLauncher,
+          workspace: opts.workdir,
+          attemptId: sessionId,
+          childArgv: shellArgv,
+        }),
+        env: shellRuntimeEnv,
+        cwd: opts.workdir,
+        stdinMode: "pipe-closed" as const,
+      };
+    }
     const argv = opts.githubProfileDir
       ? buildGitHubExecLaunchArgv(shellArgv, opts.githubProfileDir)
       : shellArgv;
