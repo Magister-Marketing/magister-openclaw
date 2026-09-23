@@ -2780,6 +2780,42 @@
       "transport_modes": ["native_json"]
     },
     {
+      "capability_id": "folk",
+      "connection_slug": "folk",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:folk"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["folk"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-folk",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
       "capability_id": "formspree",
       "connection_slug": "formspree",
       "delegation_safe_tools": [],
@@ -4007,6 +4043,6 @@
     }
   ],
   "native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
-  "registry_revision": "681e3bb9a7f78fb431cf428ff5470c10e811e1046d08009961db095948c3ac2b",
+  "registry_revision": "00d5e5bc9a503564be9a23a97b594a635dcd780704807feecb770ee5e71eef9e",
   "schema_version": 1
 }
