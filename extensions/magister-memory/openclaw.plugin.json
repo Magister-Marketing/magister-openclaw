@@ -1,0 +1,37 @@
+{
+  "id": "magister-memory",
+  "name": "Magister Memory",
+  "description": "Bounded curated memory with episodic conversation checkpoints, recent-chat continuity, and threat scanning.",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": ["memory"]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": { "type": "boolean" },
+      "memoryCharLimit": { "type": "integer", "minimum": 200, "maximum": 20000 },
+      "userCharLimit": { "type": "integer", "minimum": 200, "maximum": 20000 },
+      "conversationCheckpoints": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mode": { "type": "string", "enum": ["off", "shadow", "active"] },
+          "legacyMemoryFlushStateBeforeActive": {
+            "type": "string",
+            "enum": ["unset", "enabled", "disabled"]
+          },
+          "model": { "type": "string" },
+          "idleMinutes": { "type": "integer", "minimum": 1, "maximum": 1440 },
+          "recentDays": { "type": "integer", "minimum": 1, "maximum": 365 },
+          "maxInputChars": { "type": "integer", "minimum": 2000, "maximum": 100000 },
+          "maxCheckpointChars": { "type": "integer", "minimum": 200, "maximum": 5000 },
+          "maxHeaderChars": { "type": "integer", "minimum": 200, "maximum": 1000 }
+        }
+      }
+    }
+  }
+}

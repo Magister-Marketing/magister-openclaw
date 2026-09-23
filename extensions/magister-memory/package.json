@@ -1,0 +1,18 @@
+{
+  "name": "@openclaw/magister-memory",
+  "version": "2026.5.4",
+  "private": true,
+  "description": "Magister bounded, file-backed agent memory plugin",
+  "type": "module",
+  "dependencies": {
+    "typebox": "1.1.37"
+  },
+  "devDependencies": {
+    "@openclaw/plugin-sdk": "workspace:*"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

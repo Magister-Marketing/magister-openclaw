@@ -1,0 +1,20 @@
+{
+  "name": "@openclaw/magister-actions",
+  "version": "2026.5.4",
+  "private": true,
+  "description": "Typed project-scoped Magister gateway actions",
+  "type": "module",
+  "dependencies": {
+    "pdfjs-dist": "^5.7.284",
+    "sharp": "^0.34.5",
+    "typebox": "1.1.37"
+  },
+  "devDependencies": {
+    "@openclaw/plugin-sdk": "workspace:*"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

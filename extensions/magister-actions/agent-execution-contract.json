@@ -1,0 +1,4012 @@
+{
+  "capabilities": [
+    {
+      "capability_id": "llm_access",
+      "connection_slug": null,
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [],
+      "mcp_tool_actions": ["llm"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": "Core model traffic is host-owned and is not a model-visible tool.",
+      "rollout_service": null,
+      "skill_name": null,
+      "status": "unsupported",
+      "transport_modes": []
+    },
+    {
+      "capability_id": "brave_search",
+      "connection_slug": null,
+      "delegation_safe_tools": ["web_search"],
+      "hosted_agent_tools": [
+        {
+          "action": "web_search",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "web_search"
+        }
+      ],
+      "mcp_tool_actions": ["web_search"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-brave-search",
+      "status": "typed",
+      "transport_modes": ["brokered_read"]
+    },
+    {
+      "capability_id": "email_send",
+      "connection_slug": "resend",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:resend"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["resend"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-resend",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "dataforseo",
+      "connection_slug": "dataforseo",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["dataforseo"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["dataforseo"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-dataforseo",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "zernio_linkedin",
+      "connection_slug": "zernio",
+      "delegation_safe_tools": [
+        "magister_get_social_analytics",
+        "magister_list_social_accounts",
+        "magister_list_social_posts"
+      ],
+      "hosted_agent_tools": [
+        {
+          "action": "list_social_accounts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_accounts"
+        },
+        {
+          "action": "list_social_posts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_posts"
+        },
+        {
+          "action": "create_social_draft",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "draft",
+          "tool_name": "magister_create_social_draft"
+        },
+        {
+          "action": "schedule_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_schedule_social_post"
+        },
+        {
+          "action": "publish_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_publish_social_post"
+        },
+        {
+          "action": "get_social_analytics",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_get_social_analytics"
+        }
+      ],
+      "mcp_tool_actions": [
+        "list_social_accounts",
+        "list_social_posts",
+        "create_social_draft",
+        "schedule_social_post",
+        "publish_social_post",
+        "get_social_analytics"
+      ],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-zernio",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "zernio_twitter",
+      "connection_slug": "zernio",
+      "delegation_safe_tools": [
+        "magister_get_social_analytics",
+        "magister_list_social_accounts",
+        "magister_list_social_posts"
+      ],
+      "hosted_agent_tools": [
+        {
+          "action": "list_social_accounts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_accounts"
+        },
+        {
+          "action": "list_social_posts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_posts"
+        },
+        {
+          "action": "create_social_draft",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "draft",
+          "tool_name": "magister_create_social_draft"
+        },
+        {
+          "action": "schedule_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_schedule_social_post"
+        },
+        {
+          "action": "publish_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_publish_social_post"
+        },
+        {
+          "action": "get_social_analytics",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_get_social_analytics"
+        }
+      ],
+      "mcp_tool_actions": [
+        "list_social_accounts",
+        "list_social_posts",
+        "create_social_draft",
+        "schedule_social_post",
+        "publish_social_post",
+        "get_social_analytics"
+      ],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-zernio",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "zernio_instagram",
+      "connection_slug": "zernio",
+      "delegation_safe_tools": [
+        "magister_get_social_analytics",
+        "magister_list_social_accounts",
+        "magister_list_social_posts"
+      ],
+      "hosted_agent_tools": [
+        {
+          "action": "list_social_accounts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_accounts"
+        },
+        {
+          "action": "list_social_posts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_posts"
+        },
+        {
+          "action": "create_social_draft",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "draft",
+          "tool_name": "magister_create_social_draft"
+        },
+        {
+          "action": "schedule_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_schedule_social_post"
+        },
+        {
+          "action": "publish_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_publish_social_post"
+        },
+        {
+          "action": "get_social_analytics",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_get_social_analytics"
+        }
+      ],
+      "mcp_tool_actions": [
+        "list_social_accounts",
+        "list_social_posts",
+        "create_social_draft",
+        "schedule_social_post",
+        "publish_social_post",
+        "get_social_analytics"
+      ],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-zernio",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "zernio_threads",
+      "connection_slug": "zernio",
+      "delegation_safe_tools": [
+        "magister_get_social_analytics",
+        "magister_list_social_accounts",
+        "magister_list_social_posts"
+      ],
+      "hosted_agent_tools": [
+        {
+          "action": "list_social_accounts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_accounts"
+        },
+        {
+          "action": "list_social_posts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_posts"
+        },
+        {
+          "action": "create_social_draft",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "draft",
+          "tool_name": "magister_create_social_draft"
+        },
+        {
+          "action": "schedule_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_schedule_social_post"
+        },
+        {
+          "action": "publish_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_publish_social_post"
+        },
+        {
+          "action": "get_social_analytics",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_get_social_analytics"
+        }
+      ],
+      "mcp_tool_actions": [
+        "list_social_accounts",
+        "list_social_posts",
+        "create_social_draft",
+        "schedule_social_post",
+        "publish_social_post",
+        "get_social_analytics"
+      ],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-zernio",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "zernio_facebook",
+      "connection_slug": "zernio",
+      "delegation_safe_tools": [
+        "magister_get_social_analytics",
+        "magister_list_social_accounts",
+        "magister_list_social_posts"
+      ],
+      "hosted_agent_tools": [
+        {
+          "action": "list_social_accounts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_accounts"
+        },
+        {
+          "action": "list_social_posts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_posts"
+        },
+        {
+          "action": "create_social_draft",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "draft",
+          "tool_name": "magister_create_social_draft"
+        },
+        {
+          "action": "schedule_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_schedule_social_post"
+        },
+        {
+          "action": "publish_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_publish_social_post"
+        },
+        {
+          "action": "get_social_analytics",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_get_social_analytics"
+        }
+      ],
+      "mcp_tool_actions": [
+        "list_social_accounts",
+        "list_social_posts",
+        "create_social_draft",
+        "schedule_social_post",
+        "publish_social_post",
+        "get_social_analytics"
+      ],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-zernio",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "zernio_tiktok",
+      "connection_slug": "zernio",
+      "delegation_safe_tools": [
+        "magister_get_social_analytics",
+        "magister_list_social_accounts",
+        "magister_list_social_posts"
+      ],
+      "hosted_agent_tools": [
+        {
+          "action": "list_social_accounts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_accounts"
+        },
+        {
+          "action": "list_social_posts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_posts"
+        },
+        {
+          "action": "create_social_draft",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "draft",
+          "tool_name": "magister_create_social_draft"
+        },
+        {
+          "action": "schedule_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_schedule_social_post"
+        },
+        {
+          "action": "publish_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_publish_social_post"
+        },
+        {
+          "action": "get_social_analytics",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_get_social_analytics"
+        }
+      ],
+      "mcp_tool_actions": [
+        "list_social_accounts",
+        "list_social_posts",
+        "create_social_draft",
+        "schedule_social_post",
+        "publish_social_post",
+        "get_social_analytics"
+      ],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-zernio",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "zernio_youtube",
+      "connection_slug": "zernio",
+      "delegation_safe_tools": [
+        "magister_get_social_analytics",
+        "magister_list_social_accounts",
+        "magister_list_social_posts"
+      ],
+      "hosted_agent_tools": [
+        {
+          "action": "list_social_accounts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_accounts"
+        },
+        {
+          "action": "list_social_posts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_posts"
+        },
+        {
+          "action": "create_social_draft",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "draft",
+          "tool_name": "magister_create_social_draft"
+        },
+        {
+          "action": "schedule_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_schedule_social_post"
+        },
+        {
+          "action": "publish_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_publish_social_post"
+        },
+        {
+          "action": "get_social_analytics",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_get_social_analytics"
+        }
+      ],
+      "mcp_tool_actions": [
+        "list_social_accounts",
+        "list_social_posts",
+        "create_social_draft",
+        "schedule_social_post",
+        "publish_social_post",
+        "get_social_analytics"
+      ],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-zernio",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "zernio_pinterest",
+      "connection_slug": "zernio",
+      "delegation_safe_tools": [
+        "magister_get_social_analytics",
+        "magister_list_social_accounts",
+        "magister_list_social_posts"
+      ],
+      "hosted_agent_tools": [
+        {
+          "action": "list_social_accounts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_accounts"
+        },
+        {
+          "action": "list_social_posts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_posts"
+        },
+        {
+          "action": "create_social_draft",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "draft",
+          "tool_name": "magister_create_social_draft"
+        },
+        {
+          "action": "schedule_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_schedule_social_post"
+        },
+        {
+          "action": "publish_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_publish_social_post"
+        },
+        {
+          "action": "get_social_analytics",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_get_social_analytics"
+        }
+      ],
+      "mcp_tool_actions": [
+        "list_social_accounts",
+        "list_social_posts",
+        "create_social_draft",
+        "schedule_social_post",
+        "publish_social_post",
+        "get_social_analytics"
+      ],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-zernio",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "zernio_reddit",
+      "connection_slug": "zernio",
+      "delegation_safe_tools": [
+        "magister_get_social_analytics",
+        "magister_list_social_accounts",
+        "magister_list_social_posts"
+      ],
+      "hosted_agent_tools": [
+        {
+          "action": "list_social_accounts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_accounts"
+        },
+        {
+          "action": "list_social_posts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_posts"
+        },
+        {
+          "action": "create_social_draft",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "draft",
+          "tool_name": "magister_create_social_draft"
+        },
+        {
+          "action": "schedule_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_schedule_social_post"
+        },
+        {
+          "action": "publish_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_publish_social_post"
+        },
+        {
+          "action": "get_social_analytics",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_get_social_analytics"
+        }
+      ],
+      "mcp_tool_actions": [
+        "list_social_accounts",
+        "list_social_posts",
+        "create_social_draft",
+        "schedule_social_post",
+        "publish_social_post",
+        "get_social_analytics"
+      ],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-zernio",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "zernio_snapchat",
+      "connection_slug": "zernio",
+      "delegation_safe_tools": [
+        "magister_get_social_analytics",
+        "magister_list_social_accounts",
+        "magister_list_social_posts"
+      ],
+      "hosted_agent_tools": [
+        {
+          "action": "list_social_accounts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_accounts"
+        },
+        {
+          "action": "list_social_posts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_posts"
+        },
+        {
+          "action": "create_social_draft",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "draft",
+          "tool_name": "magister_create_social_draft"
+        },
+        {
+          "action": "schedule_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_schedule_social_post"
+        },
+        {
+          "action": "publish_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_publish_social_post"
+        },
+        {
+          "action": "get_social_analytics",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_get_social_analytics"
+        }
+      ],
+      "mcp_tool_actions": [
+        "list_social_accounts",
+        "list_social_posts",
+        "create_social_draft",
+        "schedule_social_post",
+        "publish_social_post",
+        "get_social_analytics"
+      ],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-zernio",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "zernio_telegram",
+      "connection_slug": "zernio",
+      "delegation_safe_tools": [
+        "magister_get_social_analytics",
+        "magister_list_social_accounts",
+        "magister_list_social_posts"
+      ],
+      "hosted_agent_tools": [
+        {
+          "action": "list_social_accounts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_accounts"
+        },
+        {
+          "action": "list_social_posts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_posts"
+        },
+        {
+          "action": "create_social_draft",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "draft",
+          "tool_name": "magister_create_social_draft"
+        },
+        {
+          "action": "schedule_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_schedule_social_post"
+        },
+        {
+          "action": "publish_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_publish_social_post"
+        },
+        {
+          "action": "get_social_analytics",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_get_social_analytics"
+        }
+      ],
+      "mcp_tool_actions": [
+        "list_social_accounts",
+        "list_social_posts",
+        "create_social_draft",
+        "schedule_social_post",
+        "publish_social_post",
+        "get_social_analytics"
+      ],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-zernio",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "zernio_google_business_profile",
+      "connection_slug": "zernio",
+      "delegation_safe_tools": [
+        "magister_get_social_analytics",
+        "magister_list_social_accounts",
+        "magister_list_social_posts"
+      ],
+      "hosted_agent_tools": [
+        {
+          "action": "list_social_accounts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_accounts"
+        },
+        {
+          "action": "list_social_posts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_posts"
+        },
+        {
+          "action": "create_social_draft",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "draft",
+          "tool_name": "magister_create_social_draft"
+        },
+        {
+          "action": "schedule_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_schedule_social_post"
+        },
+        {
+          "action": "publish_social_post",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_publish_social_post"
+        },
+        {
+          "action": "get_social_analytics",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_get_social_analytics"
+        }
+      ],
+      "mcp_tool_actions": [
+        "list_social_accounts",
+        "list_social_posts",
+        "create_social_draft",
+        "schedule_social_post",
+        "publish_social_post",
+        "get_social_analytics"
+      ],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-zernio",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "webflow",
+      "connection_slug": "webflow",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:webflow"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["webflow"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-webflow",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "wix",
+      "connection_slug": "wix",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:wix"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["wix"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-wix",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "wordpress",
+      "connection_slug": "wordpress",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        },
+        {
+          "action": "create_blog_post",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "draft",
+          "tool_name": "magister_create_blog_post"
+        },
+        {
+          "action": "update_blog_post",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "draft",
+          "tool_name": "magister_update_blog_post"
+        },
+        {
+          "action": "publish_content",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_publish_content"
+        }
+      ],
+      "mcp_tool_actions": [
+        "proxy:wordpress",
+        "create_blog_post",
+        "update_blog_post",
+        "publish_content"
+      ],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["wordpress"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-wordpress",
+      "status": "typed",
+      "transport_modes": ["json_v1", "native_json"]
+    },
+    {
+      "capability_id": "shopify",
+      "connection_slug": "shopify",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:shopify"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["shopify"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-shopify",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "posthog",
+      "connection_slug": "posthog",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:posthog"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["posthog"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-posthog",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "google_analytics",
+      "connection_slug": "google_analytics",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:google_analytics"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["ga4", "ga4_admin"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-google-analytics",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "google_search_console",
+      "connection_slug": "google_search_console",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:google_search_console"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["search_console"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-google-analytics",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "fathom",
+      "connection_slug": "fathom",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:fathom"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["fathom"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-fathom",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "mixpanel",
+      "connection_slug": "mixpanel",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:mixpanel"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["mixpanel"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-mixpanel",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "hotjar",
+      "connection_slug": "hotjar",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:hotjar"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["hotjar"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-hotjar",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "ahrefs",
+      "connection_slug": "ahrefs",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:ahrefs"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["ahrefs"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-ahrefs",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "github",
+      "connection_slug": "github",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        },
+        {
+          "action": "checkout_repo",
+          "approval_policy": "none",
+          "idempotency_policy": "natural",
+          "side_effect": "internal_write",
+          "tool_name": "magister_checkout_repo"
+        },
+        {
+          "action": "prepare_repo_commit",
+          "approval_policy": "none",
+          "idempotency_policy": "natural",
+          "side_effect": "internal_write",
+          "tool_name": "magister_prepare_repo_commit"
+        },
+        {
+          "action": "push_repo_branch",
+          "approval_policy": "none",
+          "idempotency_policy": "natural",
+          "side_effect": "draft",
+          "tool_name": "magister_push_repo_branch"
+        },
+        {
+          "action": "install_repo_dependencies",
+          "approval_policy": "none",
+          "idempotency_policy": "natural",
+          "side_effect": "internal_write",
+          "tool_name": "magister_install_repo_dependencies"
+        },
+        {
+          "action": "open_pull_request",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "draft",
+          "tool_name": "magister_open_pull_request"
+        },
+        {
+          "action": "merge_pull_request",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_merge_pull_request"
+        }
+      ],
+      "mcp_tool_actions": [
+        "proxy:github",
+        "checkout_repo",
+        "prepare_repo_commit",
+        "push_repo_branch",
+        "install_repo_dependencies",
+        "open_pull_request",
+        "merge_pull_request"
+      ],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["github"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-github",
+      "status": "typed",
+      "transport_modes": ["json_v1", "native_json"]
+    },
+    {
+      "capability_id": "vercel",
+      "connection_slug": "vercel",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:vercel"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["vercel"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-vercel",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "slack",
+      "connection_slug": "slack",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [],
+      "mcp_tool_actions": ["proxy:slack"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": "A purpose-built Hosted Agent action is not available yet.",
+      "rollout_service": null,
+      "skill_name": "magister-slack",
+      "status": "unsupported",
+      "transport_modes": []
+    },
+    {
+      "capability_id": "google_ads",
+      "connection_slug": "google_ads",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_spend",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "spend",
+          "tool_name": "magister_integration_spend"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:google_ads"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["google_ads"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-google-ads",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "zernio_metaads",
+      "connection_slug": "zernio",
+      "delegation_safe_tools": [
+        "magister_get_ad_analytics",
+        "magister_list_ad_campaigns",
+        "magister_list_social_accounts"
+      ],
+      "hosted_agent_tools": [
+        {
+          "action": "list_social_accounts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_accounts"
+        },
+        {
+          "action": "list_ad_campaigns",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_ad_campaigns"
+        },
+        {
+          "action": "get_ad_analytics",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_get_ad_analytics"
+        },
+        {
+          "action": "create_ad_campaign",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "draft",
+          "tool_name": "magister_create_ad_campaign"
+        },
+        {
+          "action": "activate_ad_campaign",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "spend",
+          "tool_name": "magister_activate_ad_campaign"
+        },
+        {
+          "action": "pause_ad_campaign",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_pause_ad_campaign"
+        }
+      ],
+      "mcp_tool_actions": [
+        "list_social_accounts",
+        "list_ad_campaigns",
+        "get_ad_analytics",
+        "create_ad_campaign",
+        "activate_ad_campaign",
+        "pause_ad_campaign"
+      ],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-zernio-ads",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "zernio_tiktokads",
+      "connection_slug": "zernio",
+      "delegation_safe_tools": [
+        "magister_get_ad_analytics",
+        "magister_list_ad_campaigns",
+        "magister_list_social_accounts"
+      ],
+      "hosted_agent_tools": [
+        {
+          "action": "list_social_accounts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_accounts"
+        },
+        {
+          "action": "list_ad_campaigns",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_ad_campaigns"
+        },
+        {
+          "action": "get_ad_analytics",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_get_ad_analytics"
+        },
+        {
+          "action": "create_ad_campaign",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "draft",
+          "tool_name": "magister_create_ad_campaign"
+        },
+        {
+          "action": "activate_ad_campaign",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "spend",
+          "tool_name": "magister_activate_ad_campaign"
+        },
+        {
+          "action": "pause_ad_campaign",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_pause_ad_campaign"
+        }
+      ],
+      "mcp_tool_actions": [
+        "list_social_accounts",
+        "list_ad_campaigns",
+        "get_ad_analytics",
+        "create_ad_campaign",
+        "activate_ad_campaign",
+        "pause_ad_campaign"
+      ],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-zernio-ads",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "zernio_linkedinads",
+      "connection_slug": "zernio",
+      "delegation_safe_tools": [
+        "magister_get_ad_analytics",
+        "magister_list_ad_campaigns",
+        "magister_list_social_accounts"
+      ],
+      "hosted_agent_tools": [
+        {
+          "action": "list_social_accounts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_accounts"
+        },
+        {
+          "action": "list_ad_campaigns",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_ad_campaigns"
+        },
+        {
+          "action": "get_ad_analytics",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_get_ad_analytics"
+        },
+        {
+          "action": "create_ad_campaign",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "draft",
+          "tool_name": "magister_create_ad_campaign"
+        },
+        {
+          "action": "activate_ad_campaign",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "spend",
+          "tool_name": "magister_activate_ad_campaign"
+        },
+        {
+          "action": "pause_ad_campaign",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_pause_ad_campaign"
+        }
+      ],
+      "mcp_tool_actions": [
+        "list_social_accounts",
+        "list_ad_campaigns",
+        "get_ad_analytics",
+        "create_ad_campaign",
+        "activate_ad_campaign",
+        "pause_ad_campaign"
+      ],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-zernio-ads",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "zernio_pinterestads",
+      "connection_slug": "zernio",
+      "delegation_safe_tools": [
+        "magister_get_ad_analytics",
+        "magister_list_ad_campaigns",
+        "magister_list_social_accounts"
+      ],
+      "hosted_agent_tools": [
+        {
+          "action": "list_social_accounts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_accounts"
+        },
+        {
+          "action": "list_ad_campaigns",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_ad_campaigns"
+        },
+        {
+          "action": "get_ad_analytics",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_get_ad_analytics"
+        },
+        {
+          "action": "create_ad_campaign",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "draft",
+          "tool_name": "magister_create_ad_campaign"
+        },
+        {
+          "action": "activate_ad_campaign",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "spend",
+          "tool_name": "magister_activate_ad_campaign"
+        },
+        {
+          "action": "pause_ad_campaign",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_pause_ad_campaign"
+        }
+      ],
+      "mcp_tool_actions": [
+        "list_social_accounts",
+        "list_ad_campaigns",
+        "get_ad_analytics",
+        "create_ad_campaign",
+        "activate_ad_campaign",
+        "pause_ad_campaign"
+      ],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-zernio-ads",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "zernio_xads",
+      "connection_slug": "zernio",
+      "delegation_safe_tools": [
+        "magister_get_ad_analytics",
+        "magister_list_ad_campaigns",
+        "magister_list_social_accounts"
+      ],
+      "hosted_agent_tools": [
+        {
+          "action": "list_social_accounts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_social_accounts"
+        },
+        {
+          "action": "list_ad_campaigns",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_ad_campaigns"
+        },
+        {
+          "action": "get_ad_analytics",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_get_ad_analytics"
+        },
+        {
+          "action": "create_ad_campaign",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "draft",
+          "tool_name": "magister_create_ad_campaign"
+        },
+        {
+          "action": "activate_ad_campaign",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "spend",
+          "tool_name": "magister_activate_ad_campaign"
+        },
+        {
+          "action": "pause_ad_campaign",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_pause_ad_campaign"
+        }
+      ],
+      "mcp_tool_actions": [
+        "list_social_accounts",
+        "list_ad_campaigns",
+        "get_ad_analytics",
+        "create_ad_campaign",
+        "activate_ad_campaign",
+        "pause_ad_campaign"
+      ],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-zernio-ads",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "hubspot",
+      "connection_slug": "hubspot",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:hubspot"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["hubspot"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-hubspot",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "apollo",
+      "connection_slug": "apollo",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:apollo"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["apollo"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-apollo",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "intercom",
+      "connection_slug": "intercom",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:intercom"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["intercom"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-intercom",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "instantly",
+      "connection_slug": "instantly",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:instantly"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["instantly"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-instantly",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "google_workspace",
+      "connection_slug": "google_workspace",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:google_workspace"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [
+        "google_drive",
+        "google_sheets",
+        "google_docs",
+        "google_slides",
+        "google_calendar"
+      ],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-google-drive",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "gmail",
+      "connection_slug": "gmail",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "send_email",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_send_email"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:gmail", "send_email"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-gmail",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "notion",
+      "connection_slug": "notion",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:notion"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["notion"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": null,
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "stripe",
+      "connection_slug": "stripe",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:stripe"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["stripe"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-stripe",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "zapier",
+      "connection_slug": "zapier",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:zapier"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["zapier"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-zapier",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "buffer",
+      "connection_slug": "buffer",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:buffer"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["buffer"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-buffer",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "typefully",
+      "connection_slug": "typefully",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:typefully"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["typefully"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-typefully",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "postbridge",
+      "connection_slug": "postbridge",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:postbridge"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["postbridge"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-postbridge",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "kit",
+      "connection_slug": "kit",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:kit"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["kit"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-kit",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "activecampaign",
+      "connection_slug": "activecampaign",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:activecampaign"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["activecampaign"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-activecampaign",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "agent_email",
+      "connection_slug": null,
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "send_agent_email",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_send_agent_email"
+        }
+      ],
+      "mcp_tool_actions": ["route:email", "send_agent_email"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-email",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "apify",
+      "connection_slug": null,
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:apify"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["apify"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-apify",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "attentive",
+      "connection_slug": "attentive",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:attentive"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["attentive"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-attentive",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "attio",
+      "connection_slug": "attio",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:attio"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["attio"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-attio",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "beehiiv",
+      "connection_slug": "beehiiv",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:beehiiv"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["beehiiv"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-beehiiv",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "blotato",
+      "connection_slug": "blotato",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:blotato"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["blotato"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-blotato",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "brightdata",
+      "connection_slug": null,
+      "delegation_safe_tools": [
+        "magister_get_ai_visibility_set",
+        "magister_list_ai_visibility_sets"
+      ],
+      "hosted_agent_tools": [
+        {
+          "action": "list_ai_visibility_sets",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_ai_visibility_sets"
+        },
+        {
+          "action": "get_ai_visibility_set",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_get_ai_visibility_set"
+        },
+        {
+          "action": "run_ai_visibility_set",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "internal_write",
+          "tool_name": "magister_run_ai_visibility_set"
+        },
+        {
+          "action": "suggest_ai_visibility_prompts",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_suggest_ai_visibility_prompts"
+        },
+        {
+          "action": "create_ai_visibility_set",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "internal_write",
+          "tool_name": "magister_create_ai_visibility_set"
+        }
+      ],
+      "mcp_tool_actions": [
+        "list_ai_visibility_sets",
+        "get_ai_visibility_set",
+        "run_ai_visibility_set",
+        "suggest_ai_visibility_prompts",
+        "create_ai_visibility_set"
+      ],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-ai-visibility",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "builderio",
+      "connection_slug": "builderio",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:builderio"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["builderio"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-builderio",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "canva",
+      "connection_slug": "canva",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:canva"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["canva"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-canva",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "context_dev",
+      "connection_slug": null,
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:context_dev"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["context_dev"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-web-context",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "creatify",
+      "connection_slug": "creatify",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:creatify"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["creatify"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-creatify",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "customerio",
+      "connection_slug": "customerio",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:customerio"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["customerio", "customerio_app"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-customerio",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "elevenlabs",
+      "connection_slug": null,
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "generate_elevenlabs_voice",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "spend",
+          "tool_name": "magister_generate_elevenlabs_voice"
+        }
+      ],
+      "mcp_tool_actions": ["route:voice_proxy", "generate_elevenlabs_voice"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": "elevenlabs",
+      "skill_name": "magister-voice",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "exa",
+      "connection_slug": null,
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:exa"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["exa"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-exa",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "fal",
+      "connection_slug": null,
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "submit_fal_generation",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "spend",
+          "tool_name": "magister_submit_fal_generation"
+        },
+        {
+          "action": "get_fal_generation",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_get_fal_generation"
+        }
+      ],
+      "mcp_tool_actions": ["route:fal_proxy", "submit_fal_generation", "get_fal_generation"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": "fal",
+      "skill_name": "magister-video",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "firecrawl",
+      "connection_slug": null,
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:firecrawl", "call_integration_api"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["firecrawl"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-firecrawl",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "firehose",
+      "connection_slug": null,
+      "delegation_safe_tools": ["magister_list_firehose_matches"],
+      "hosted_agent_tools": [
+        {
+          "action": "list_firehose_matches",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_firehose_matches"
+        }
+      ],
+      "mcp_tool_actions": ["route:firehose", "list_firehose_matches"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-firehose",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "formspree",
+      "connection_slug": "formspree",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:formspree"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["formspree"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-formspree",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "framer",
+      "connection_slug": "framer",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:framer"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["framer"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-framer",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "gemini",
+      "connection_slug": null,
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "generate_gemini_image",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "spend",
+          "tool_name": "magister_generate_gemini_image"
+        }
+      ],
+      "mcp_tool_actions": ["route:gemini_proxy", "generate_gemini_image"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": "gemini",
+      "skill_name": "magister-gemini-image",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "gitlab",
+      "connection_slug": "gitlab",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        },
+        {
+          "action": "checkout_repo",
+          "approval_policy": "none",
+          "idempotency_policy": "natural",
+          "side_effect": "internal_write",
+          "tool_name": "magister_checkout_repo"
+        },
+        {
+          "action": "prepare_repo_commit",
+          "approval_policy": "none",
+          "idempotency_policy": "natural",
+          "side_effect": "internal_write",
+          "tool_name": "magister_prepare_repo_commit"
+        },
+        {
+          "action": "push_repo_branch",
+          "approval_policy": "none",
+          "idempotency_policy": "natural",
+          "side_effect": "draft",
+          "tool_name": "magister_push_repo_branch"
+        },
+        {
+          "action": "install_repo_dependencies",
+          "approval_policy": "none",
+          "idempotency_policy": "natural",
+          "side_effect": "internal_write",
+          "tool_name": "magister_install_repo_dependencies"
+        }
+      ],
+      "mcp_tool_actions": [
+        "proxy:gitlab",
+        "checkout_repo",
+        "prepare_repo_commit",
+        "push_repo_branch",
+        "install_repo_dependencies"
+      ],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["gitlab"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-gitlab",
+      "status": "typed",
+      "transport_modes": ["json_v1", "native_json"]
+    },
+    {
+      "capability_id": "hunter",
+      "connection_slug": "hunter",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:hunter"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["hunter"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-hunter",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "ideogram",
+      "connection_slug": null,
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "generate_ideogram_image",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "spend",
+          "tool_name": "magister_generate_ideogram_image"
+        }
+      ],
+      "mcp_tool_actions": ["route:image_proxy", "generate_ideogram_image"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": "ideogram",
+      "skill_name": "magister-ideogram",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "klaviyo",
+      "connection_slug": "klaviyo",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:klaviyo"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["klaviyo"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-klaviyo",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "loops",
+      "connection_slug": "loops",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:loops"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["loops"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-loops",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "mailchimp",
+      "connection_slug": "mailchimp",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:mailchimp"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["mailchimp"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-mailchimp",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "moltsets",
+      "connection_slug": null,
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:moltsets", "call_integration_api"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["moltsets"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-moltsets",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "pipedrive",
+      "connection_slug": "pipedrive",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:pipedrive"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["pipedrive"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-pipedrive",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "postscript",
+      "connection_slug": "postscript",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:postscript"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["postscript"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-postscript",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "scrapecreators",
+      "connection_slug": null,
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:scrapecreators"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["scrapecreators"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-social-research",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "supadata",
+      "connection_slug": null,
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:supadata", "call_integration_api"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["supadata"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-supadata",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "tabstack",
+      "connection_slug": null,
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "signed_out_browser_task",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_signed_out_browser_task"
+        }
+      ],
+      "mcp_tool_actions": ["route:tabstack_proxy", "signed_out_browser_task"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": [],
+      "remediation": null,
+      "rollout_service": "tabstack",
+      "skill_name": "magister-browser-automation",
+      "status": "typed",
+      "transport_modes": ["native_json"]
+    },
+    {
+      "capability_id": "truelist",
+      "connection_slug": null,
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:truelist"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["truelist"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-truelist",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "web_vitals",
+      "connection_slug": null,
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:pagespeed", "proxy:crux"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["pagespeed", "crux"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-web-vitals",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "youtube_data",
+      "connection_slug": null,
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:youtube"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["youtube"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-youtube",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "zoho_crm",
+      "connection_slug": "zoho_crm",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:zoho_crm"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["zoho_crm"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-zoho-crm",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "zoho_marketing_automation",
+      "connection_slug": "zoho_marketing_automation",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:zoho_marketing_automation"],
+      "minimum_native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+      "proxy_services": ["zoho_marketing_automation"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-zoho-marketing-automation",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    }
+  ],
+  "delegation_safe_tools": [
+    "magister_get_action_approval",
+    "magister_get_ad_analytics",
+    "magister_get_aeo_audit",
+    "magister_get_ai_visibility_set",
+    "magister_get_audit_health",
+    "magister_get_brand",
+    "magister_get_brief_context",
+    "magister_get_compile_run",
+    "magister_get_influencer_discovery",
+    "magister_get_marketing_plan",
+    "magister_get_skill",
+    "magister_get_social_analytics",
+    "magister_get_tracker",
+    "magister_get_tracker_scorecard",
+    "magister_keyword_research",
+    "magister_list_ad_campaigns",
+    "magister_list_aeo_audits",
+    "magister_list_ai_visibility_sets",
+    "magister_list_analytics_properties",
+    "magister_list_assets",
+    "magister_list_firehose_matches",
+    "magister_list_integrations",
+    "magister_list_marketing_events",
+    "magister_list_skills",
+    "magister_list_social_accounts",
+    "magister_list_social_posts",
+    "magister_list_trackers",
+    "magister_list_workflow_status",
+    "magister_list_workflow_templates",
+    "magister_list_workflows",
+    "magister_read_analytics_breakdown",
+    "magister_read_analytics_snapshots",
+    "magister_read_asset",
+    "web_search"
+  ],
+  "hosted_agent_tools": [
+    {
+      "action": "activate_ad_campaign",
+      "approval_policy": "exact_payload",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "spend",
+      "tool_name": "magister_activate_ad_campaign"
+    },
+    {
+      "action": "check_back",
+      "approval_policy": "none",
+      "idempotency_policy": "occurrence_key",
+      "side_effect": "internal_write",
+      "tool_name": "magister_check_back"
+    },
+    {
+      "action": "checkout_repo",
+      "approval_policy": "none",
+      "idempotency_policy": "natural",
+      "side_effect": "internal_write",
+      "tool_name": "magister_checkout_repo"
+    },
+    {
+      "action": "create_ad_campaign",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "draft",
+      "tool_name": "magister_create_ad_campaign"
+    },
+    {
+      "action": "create_ai_visibility_set",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "internal_write",
+      "tool_name": "magister_create_ai_visibility_set"
+    },
+    {
+      "action": "create_blog_post",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "draft",
+      "tool_name": "magister_create_blog_post"
+    },
+    {
+      "action": "create_product",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "draft",
+      "tool_name": "magister_create_product"
+    },
+    {
+      "action": "create_social_draft",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "draft",
+      "tool_name": "magister_create_social_draft"
+    },
+    {
+      "action": "create_tracker",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "internal_write",
+      "tool_name": "magister_create_tracker"
+    },
+    {
+      "action": "create_workflow",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "internal_write",
+      "tool_name": "magister_create_workflow"
+    },
+    {
+      "action": "discover_influencers",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "internal_write",
+      "tool_name": "magister_discover_influencers"
+    },
+    {
+      "action": "fork_workflow_template",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_fork_workflow_template"
+    },
+    {
+      "action": "generate_elevenlabs_voice",
+      "approval_policy": "exact_payload",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "spend",
+      "tool_name": "magister_generate_elevenlabs_voice"
+    },
+    {
+      "action": "generate_gemini_image",
+      "approval_policy": "exact_payload",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "spend",
+      "tool_name": "magister_generate_gemini_image"
+    },
+    {
+      "action": "generate_ideogram_image",
+      "approval_policy": "exact_payload",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "spend",
+      "tool_name": "magister_generate_ideogram_image"
+    },
+    {
+      "action": "get_action_approval",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_get_action_approval"
+    },
+    {
+      "action": "get_ad_analytics",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_get_ad_analytics"
+    },
+    {
+      "action": "get_aeo_audit",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_get_aeo_audit"
+    },
+    {
+      "action": "get_ai_visibility_set",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_get_ai_visibility_set"
+    },
+    {
+      "action": "get_audit_health",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_get_audit_health"
+    },
+    {
+      "action": "get_brand",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_get_brand"
+    },
+    {
+      "action": "get_brief_context",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_get_brief_context"
+    },
+    {
+      "action": "get_compile_run",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_get_compile_run"
+    },
+    {
+      "action": "get_fal_generation",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_get_fal_generation"
+    },
+    {
+      "action": "get_influencer_discovery",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_get_influencer_discovery"
+    },
+    {
+      "action": "get_marketing_plan",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_get_marketing_plan"
+    },
+    {
+      "action": "get_skill",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_get_skill"
+    },
+    {
+      "action": "get_social_analytics",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_get_social_analytics"
+    },
+    {
+      "action": "get_tracker",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_get_tracker"
+    },
+    {
+      "action": "get_tracker_scorecard",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_get_tracker_scorecard"
+    },
+    {
+      "action": "get_workflow",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_get_workflow"
+    },
+    {
+      "action": "install_repo_dependencies",
+      "approval_policy": "none",
+      "idempotency_policy": "natural",
+      "side_effect": "internal_write",
+      "tool_name": "magister_install_repo_dependencies"
+    },
+    {
+      "action": "integration_change",
+      "approval_policy": "exact_payload",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "external_write",
+      "tool_name": "magister_integration_change"
+    },
+    {
+      "action": "integration_delete",
+      "approval_policy": "exact_payload",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "delete",
+      "tool_name": "magister_integration_delete"
+    },
+    {
+      "action": "integration_read",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_integration_read"
+    },
+    {
+      "action": "integration_spend",
+      "approval_policy": "exact_payload",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "spend",
+      "tool_name": "magister_integration_spend"
+    },
+    {
+      "action": "keyword_research",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_keyword_research"
+    },
+    {
+      "action": "list_ad_campaigns",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_ad_campaigns"
+    },
+    {
+      "action": "list_aeo_audits",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_aeo_audits"
+    },
+    {
+      "action": "list_ai_visibility_sets",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_ai_visibility_sets"
+    },
+    {
+      "action": "list_analytics_properties",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_analytics_properties"
+    },
+    {
+      "action": "list_assets",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_assets"
+    },
+    {
+      "action": "list_firehose_matches",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_firehose_matches"
+    },
+    {
+      "action": "list_integrations",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_integrations"
+    },
+    {
+      "action": "list_marketing_events",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_marketing_events"
+    },
+    {
+      "action": "list_skills",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_skills"
+    },
+    {
+      "action": "list_social_accounts",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_social_accounts"
+    },
+    {
+      "action": "list_social_posts",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_social_posts"
+    },
+    {
+      "action": "list_trackers",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_trackers"
+    },
+    {
+      "action": "list_workflow_status",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_workflow_status"
+    },
+    {
+      "action": "list_workflow_templates",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_workflow_templates"
+    },
+    {
+      "action": "list_workflows",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_workflows"
+    },
+    {
+      "action": "merge_pull_request",
+      "approval_policy": "exact_payload",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "external_write",
+      "tool_name": "magister_merge_pull_request"
+    },
+    {
+      "action": "open_pull_request",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "draft",
+      "tool_name": "magister_open_pull_request"
+    },
+    {
+      "action": "pause_ad_campaign",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "external_write",
+      "tool_name": "magister_pause_ad_campaign"
+    },
+    {
+      "action": "prepare_repo_commit",
+      "approval_policy": "none",
+      "idempotency_policy": "natural",
+      "side_effect": "internal_write",
+      "tool_name": "magister_prepare_repo_commit"
+    },
+    {
+      "action": "promote_artifact",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "internal_write",
+      "tool_name": "magister_promote_artifact"
+    },
+    {
+      "action": "publish_content",
+      "approval_policy": "exact_payload",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "external_write",
+      "tool_name": "magister_publish_content"
+    },
+    {
+      "action": "publish_social_post",
+      "approval_policy": "exact_payload",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "external_write",
+      "tool_name": "magister_publish_social_post"
+    },
+    {
+      "action": "push_repo_branch",
+      "approval_policy": "none",
+      "idempotency_policy": "natural",
+      "side_effect": "draft",
+      "tool_name": "magister_push_repo_branch"
+    },
+    {
+      "action": "read_analytics_breakdown",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_read_analytics_breakdown"
+    },
+    {
+      "action": "read_analytics_snapshots",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_read_analytics_snapshots"
+    },
+    {
+      "action": "read_asset",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_read_asset"
+    },
+    {
+      "action": "recompile_marketing_plan",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "internal_write",
+      "tool_name": "magister_recompile_marketing_plan"
+    },
+    {
+      "action": "record_tracker_checkin",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "internal_write",
+      "tool_name": "magister_record_tracker_checkin"
+    },
+    {
+      "action": "refresh_integration",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_refresh_integration"
+    },
+    {
+      "action": "request_network_access",
+      "approval_policy": "exact_payload",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "external_write",
+      "tool_name": "magister_request_network_access"
+    },
+    {
+      "action": "run_aeo_audit",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "internal_write",
+      "tool_name": "magister_run_aeo_audit"
+    },
+    {
+      "action": "run_ai_visibility_set",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "internal_write",
+      "tool_name": "magister_run_ai_visibility_set"
+    },
+    {
+      "action": "run_workflow",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_run_workflow"
+    },
+    {
+      "action": "schedule_social_post",
+      "approval_policy": "exact_payload",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "external_write",
+      "tool_name": "magister_schedule_social_post"
+    },
+    {
+      "action": "schedule_workflow",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "internal_write",
+      "tool_name": "magister_schedule_workflow"
+    },
+    {
+      "action": "send_agent_email",
+      "approval_policy": "exact_payload",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "external_write",
+      "tool_name": "magister_send_agent_email"
+    },
+    {
+      "action": "send_brief",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "external_write",
+      "tool_name": "magister_send_brief"
+    },
+    {
+      "action": "send_email",
+      "approval_policy": "exact_payload",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "external_write",
+      "tool_name": "magister_send_email"
+    },
+    {
+      "action": "signed_out_browser_task",
+      "approval_policy": "exact_payload",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "external_write",
+      "tool_name": "magister_signed_out_browser_task"
+    },
+    {
+      "action": "submit_fal_generation",
+      "approval_policy": "exact_payload",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "spend",
+      "tool_name": "magister_submit_fal_generation"
+    },
+    {
+      "action": "submit_workflow_completion",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "internal_write",
+      "tool_name": "magister_submit_workflow_completion"
+    },
+    {
+      "action": "suggest_ai_visibility_prompts",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_suggest_ai_visibility_prompts"
+    },
+    {
+      "action": "unschedule_workflow",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "internal_write",
+      "tool_name": "magister_unschedule_workflow"
+    },
+    {
+      "action": "update_blog_post",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "draft",
+      "tool_name": "magister_update_blog_post"
+    },
+    {
+      "action": "update_plan_item_status",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_update_plan_item_status"
+    },
+    {
+      "action": "update_tracker",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "internal_write",
+      "tool_name": "magister_update_tracker"
+    },
+    {
+      "action": "update_workflow",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "internal_write",
+      "tool_name": "magister_update_workflow"
+    },
+    {
+      "action": "web_search",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "web_search"
+    }
+  ],
+  "native_action_registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+  "registry_revision": "681e3bb9a7f78fb431cf428ff5470c10e811e1046d08009961db095948c3ac2b",
+  "schema_version": 1
+}
