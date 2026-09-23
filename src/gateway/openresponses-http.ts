@@ -12,6 +12,8 @@ import { resolveIntegerOption } from "@openclaw/normalization-core/number-coerci
 import type { AdmittedRunContext } from "../agents/admitted-run-context.js";
 import { isClientToolNameConflictError } from "../agents/agent-tool-definition-adapter.js";
 import type { ImageContent } from "../agents/command/types.js";
+// Magister fork: typed streams + coded terminal frames (shared with openai-http.ts).
+import { parseDraftVerificationReceipt } from "../agents/draft-verification-receipt.js";
 import type { ClientToolDefinition } from "../agents/embedded-agent-runner/run/params.js";
 import { toOpenAiResponsesUsage } from "../agents/usage.js";
 import { readAgentRunTerminalOutcome } from "../channels/turn/agent-run-terminal-outcome.js";
@@ -40,6 +42,7 @@ import {
 import { bindGatewayContextResolver } from "../plugins/runtime/gateway-request-scope.js";
 import { retainGatewayRootWorkAdmissionContinuation } from "../process/gateway-work-admission.js";
 import { defaultRuntime } from "../runtime.js";
+import { resolveAssistantMediaUrls } from "./agent-event-assistant-text.js";
 import {
   mergeAssistantText,
   mergePendingAssistantText,
@@ -78,6 +81,7 @@ import {
   resolveOpenAiCompatibleHttpSenderIsOwner,
 } from "./http-utils.js";
 import { normalizeInputHostnameAllowlist } from "./input-allowlist.js";
+import { extractMagisterApprovalEventFromToolEvent } from "./magister-approval-event.js";
 import {
   CreateResponseBodySchema,
   type CreateResponseBody,
@@ -88,6 +92,13 @@ import {
 } from "./open-responses.schema.js";
 import { resolveAgentRunUsage } from "./openai-agent-run-usage.js";
 import { resolveOpenAiCompatError } from "./openai-compat-errors.js";
+import {
+  classifyFailedResult,
+  classifyLifecycleError,
+  isYieldedRunResult,
+  type TerminalErrorFrame,
+  YIELD_EVENT_MESSAGE,
+} from "./openai-http.js";
 import {
   applyToolChoice,
   isToolChoiceConstraintSatisfied,
@@ -255,7 +266,33 @@ export const testing = {
   resolveResponsesLimits,
 };
 
-function writeSseEvent(res: ServerResponse, event: StreamingEvent) {
+type MagisterApprovalStreamingEvent = {
+  type: "approval";
+  approval_id: string;
+  operation_id: string;
+  state: "pending";
+};
+type MagisterMediaStreamingEvent = { type: "media"; urls: string[] };
+type MagisterThinkingStreamingEvent = { type: "thinking"; delta: string };
+type MagisterToolStreamingEvent = {
+  type: "tool";
+  phase?: unknown;
+  name?: unknown;
+  toolCallId?: unknown;
+  isError?: unknown;
+  args?: unknown;
+  result?: unknown;
+};
+
+function writeSseEvent(
+  res: ServerResponse,
+  event:
+    | StreamingEvent
+    | MagisterApprovalStreamingEvent
+    | MagisterMediaStreamingEvent
+    | MagisterThinkingStreamingEvent
+    | MagisterToolStreamingEvent,
+) {
   res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
 }
 
@@ -359,7 +396,7 @@ function createResponseResource(params: {
   status: ResponseResource["status"];
   output: OutputItem[];
   usage?: Usage;
-  error?: { code: string; message: string };
+  error?: { code: string; message: string; status?: number };
 }): ResponseResource {
   return {
     id: params.id,
@@ -686,7 +723,7 @@ export async function handleOpenResponsesHttpRequest(
   const responseId = `resp_${randomUUID()}`;
   const responseIdentity = { id: responseId, createdAt: Math.floor(Date.now() / 1000) };
   const createFailedResponse = (
-    error: { code: string; message: string },
+    error: { code: string; message: string; status?: number },
     usage?: Usage,
   ): ResponseResource =>
     createResponseResource({
@@ -739,7 +776,24 @@ export async function handleOpenResponsesHttpRequest(
 
       const meta = (result as { meta?: { error?: unknown; stopReason?: unknown } } | null)?.meta;
       if (readAgentRunTerminalOutcome(result) === "failed") {
-        throw new Error("agent run failed");
+        const failure = classifyFailedResult(result) ?? {
+          message: "Agent couldn't generate a response. Please try again.",
+          code: "terminal_result_error" as const,
+        };
+        rememberResponseSession();
+        sendJson(
+          res,
+          502,
+          createFailedResponse(
+            {
+              code: failure.code,
+              message: failure.message,
+              ...(failure.status !== undefined ? { status: failure.status } : {}),
+            },
+            extractUsageFromResult(result),
+          ),
+        );
+        return true;
       }
       const assistantText = resolveAssistantResultText(result);
       const usage = extractUsageFromResult(result);
@@ -867,7 +921,11 @@ export async function handleOpenResponsesHttpRequest(
   let unsubscribe = () => {};
   let finalUsage: Usage | undefined;
   let finalOutputStatus: "completed" | "incomplete" = "completed";
-  let finalizeRequested: { status: "completed" | "failed"; errorMessage?: string } | null = null;
+  let finalizeRequested: {
+    status: "completed" | "failed";
+    errorMessage?: string;
+    frame?: TerminalErrorFrame;
+  } | null = null;
   let finalizeScheduled = false;
   let terminalLifecyclePhase: "end" | "error" = "end";
 
@@ -899,11 +957,20 @@ export async function handleOpenResponsesHttpRequest(
         pending: pendingAssistantText,
         resultText: finalResultText,
         streamedText: streamedAssistantText.text,
-        fallbackText: finalToolCalls ? "" : "No response from OpenClaw.",
+        fallbackText: "",
       });
       if (!finalText.startsWith(streamedAssistantText.text)) {
         finalizeUnrepresentableAssistantReplacement();
         return;
+      }
+      let terminalFrame = finalizeRequested.frame;
+      let finalizeStatus: "completed" | "failed" = finalizeRequested.status;
+      if (finalizeStatus === "completed" && !finalText && !finalToolCalls && !yielded) {
+        finalizeStatus = "failed";
+        terminalFrame = {
+          message: "Agent run ended without a result.",
+          code: "run_ended_without_result",
+        };
       }
       const delta = finalText.slice(streamedAssistantText.text.length);
       if (delta) {
@@ -934,14 +1001,12 @@ export async function handleOpenResponsesHttpRequest(
         part: { type: "output_text", text: finalText },
       });
 
+      const effectiveStatus = finalizeStatus === "failed" ? "failed" : status;
       const completedItem = createAssistantOutputItem({
         id: outputItemId,
         text: finalText,
-        phase:
-          finalizeRequested.status === "completed" && !finalToolCalls
-            ? "final_answer"
-            : "commentary",
-        status: status === "incomplete" ? "incomplete" : "completed",
+        phase: finalizeStatus === "completed" && !finalToolCalls ? "final_answer" : "commentary",
+        status: effectiveStatus === "incomplete" ? "incomplete" : "completed",
       });
 
       writeSseEvent(res, {
@@ -975,22 +1040,28 @@ export async function handleOpenResponsesHttpRequest(
       const finalResponse = createResponseResource({
         ...responseIdentity,
         model,
-        status,
+        status: effectiveStatus,
         output,
         usage,
-        ...(finalizeRequested.status === "failed"
+        ...(finalizeStatus === "failed"
           ? {
-              error: {
-                code: "server_error",
-                message: finalizeRequested.errorMessage || "Agent run failed",
-              },
+              error: terminalFrame
+                ? {
+                    code: terminalFrame.code,
+                    message: terminalFrame.message,
+                    ...(terminalFrame.status !== undefined ? { status: terminalFrame.status } : {}),
+                  }
+                : {
+                    code: "run_ended_without_result",
+                    message: finalizeRequested.errorMessage || "Agent run failed",
+                  },
             }
           : {}),
       });
 
       rememberResponseSession();
       writeSseEvent(res, {
-        type: `response.${status}`,
+        type: `response.${effectiveStatus}`,
         response: finalResponse,
       });
       writeDone(res);
@@ -998,13 +1069,28 @@ export async function handleOpenResponsesHttpRequest(
     });
   };
 
-  const requestFinalize = (status: "completed" | "failed", errorMessage?: string) => {
+  const requestFinalize = (
+    status: "completed" | "failed",
+    errorMessage?: string,
+    frame?: TerminalErrorFrame,
+  ) => {
     if (finalizeRequested) {
       return;
     }
-    finalizeRequested = { status, errorMessage };
+    finalizeRequested = { status, errorMessage, frame };
     maybeFinalize();
   };
+  // Magister fork: a sessions_yield is a deliberate end; one `event: yield`
+  // then a completed response, never a failure.
+  let yielded = false;
+  const noteYield = () => {
+    if (yielded || closed) {
+      return;
+    }
+    yielded = true;
+    res.write(`event: yield\ndata: ${JSON.stringify({ message: YIELD_EVENT_MESSAGE })}\n\n`);
+  };
+  const forwardedMediaUrls = new Set<string>();
 
   const finalizeFailedResponse = (response: ResponseResource) => {
     if (closed) {
@@ -1076,7 +1162,56 @@ export async function handleOpenResponsesHttpRequest(
       return;
     }
 
+    // Magister fork: typed streams the Gateway's attachments parser reads.
+    if (evt.stream === "draft_verification") {
+      const receipt = parseDraftVerificationReceipt(evt.data);
+      if (receipt) {
+        res.write(`event: draft_verification\ndata: ${JSON.stringify(receipt)}\n\n`);
+      }
+      return;
+    }
+    if (evt.stream === "thinking") {
+      const delta = typeof evt.data?.delta === "string" ? evt.data.delta : "";
+      if (delta) {
+        writeSseEvent(res, { type: "thinking", delta });
+      }
+      return;
+    }
+    if (evt.stream === "tool") {
+      const data = evt.data as Record<string, unknown> | undefined;
+      if (data) {
+        const approval = extractMagisterApprovalEventFromToolEvent(data);
+        if (data.phase === "update" && approval) {
+          writeSseEvent(res, { type: "approval", ...approval });
+          return;
+        }
+        writeSseEvent(res, {
+          type: "tool",
+          phase: data.phase,
+          name: data.name,
+          toolCallId: data.toolCallId,
+          ...(data.isError !== undefined && { isError: data.isError }),
+          ...(data.args !== undefined && { args: data.args }),
+          ...(Boolean(data.isError) && data.result !== undefined && { result: data.result }),
+        });
+        if (approval) {
+          writeSseEvent(res, { type: "approval", ...approval });
+        }
+      }
+      return;
+    }
+
     if (evt.stream === "assistant") {
+      const mediaUrls = resolveAssistantMediaUrls(evt).filter((url) => {
+        if (forwardedMediaUrls.has(url)) {
+          return false;
+        }
+        forwardedMediaUrls.add(url);
+        return true;
+      });
+      if (mediaUrls.length > 0) {
+        writeSseEvent(res, { type: "media", urls: mediaUrls });
+      }
       const input = resolveAssistantTextInput(evt.data);
       if (!input) {
         return;
@@ -1132,12 +1267,24 @@ export async function handleOpenResponsesHttpRequest(
     if (evt.stream === "lifecycle") {
       const phase = evt.data?.phase;
       if (phase === "end" || phase === "error") {
-        const finalStatus = phase === "error" ? "failed" : "completed";
-        const errorMessage =
-          phase === "error" && typeof evt.data?.error === "string"
-            ? evt.data.error.trim()
-            : undefined;
-        requestFinalize(finalStatus, errorMessage);
+        const receipt = parseDraftVerificationReceipt(evt.data?.draftVerification);
+        if (receipt) {
+          res.write(`event: draft_verification\ndata: ${JSON.stringify(receipt)}\n\n`);
+        }
+        if (phase === "error" && evt.data?.yielded === true) {
+          noteYield();
+          requestFinalize("completed");
+        } else if (phase === "error") {
+          requestFinalize(
+            "failed",
+            undefined,
+            classifyLifecycleError(evt.data as Record<string, unknown> | undefined, {
+              commandSettled: Boolean(finalUsage),
+            }),
+          );
+        } else {
+          requestFinalize("completed");
+        }
       }
     }
   });
@@ -1185,13 +1332,24 @@ export async function handleOpenResponsesHttpRequest(
       if (readAgentRunTerminalOutcome(result) === "failed") {
         terminalLifecyclePhase = "error";
         rememberResponseSession();
+        const failure = classifyFailedResult(result) ?? {
+          message: "Agent couldn't generate a response. Please try again.",
+          code: "terminal_result_error" as const,
+        };
         finalizeFailedResponse(
           createFailedResponse(
-            { code: "api_error", message: "internal error" },
+            {
+              code: failure.code,
+              message: failure.message,
+              ...(failure.status !== undefined ? { status: failure.status } : {}),
+            },
             extractUsageFromResult(result),
           ),
         );
         return;
+      }
+      if (isYieldedRunResult(result)) {
+        noteYield();
       }
 
       finalUsage = extractUsageFromResult(result);
