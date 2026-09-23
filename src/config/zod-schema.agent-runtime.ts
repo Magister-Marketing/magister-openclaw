@@ -122,6 +122,8 @@ export const AgentContextLimitsSchema = z
     memoryGetMaxChars: z.number().int().min(1).max(250_000).optional(),
     /** Max chars retained from post-compaction AGENTS.md context injection (default: 1800). */
     postCompactionMaxChars: z.number().int().min(1).max(50_000).optional(),
+    /** Magister fork: max chars of a tool result kept in context (default: 24000). */
+    toolResultMaxChars: z.number().int().min(1).max(250_000).optional(),
   })
   .strict()
   .optional();
@@ -487,11 +489,43 @@ const ToolFsSchema = z
   .strict()
   .optional();
 
+// Magister fork: outcome-aware failure and denial circuit breakers.
+const ToolRuntimeResilienceSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    failureWarningThreshold: z.number().int().positive().optional(),
+    failureBlockThreshold: z.number().int().positive().optional(),
+    denialBlockThreshold: z.number().int().positive().optional(),
+    browserLaunchLimit: z.number().int().positive().optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    const warningThreshold = value.failureWarningThreshold ?? 2;
+    const blockThreshold = value.failureBlockThreshold ?? 5;
+    if (warningThreshold >= blockThreshold) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["failureBlockThreshold"],
+        message:
+          "tools.loopDetection.runtimeResilience.failureWarningThreshold must be lower than failureBlockThreshold.",
+      });
+    }
+  })
+  .optional();
+
 const ToolLoopDetectionSchema = z
   .object({
     /** Enable tool-loop protection (default: false). */
     enabled: z.boolean().optional(),
+    /** Magister fork: independent, outcome-aware runtime resilience guards. */
+    runtimeResilience: ToolRuntimeResilienceSchema,
   })
+  .strict()
+  .optional();
+
+// Magister fork: request-grounded draft checks; repair is one tool-free attempt.
+const DraftVerificationSchema = z
+  .object({ mode: z.enum(["off", "shadow", "repair"]).optional() })
   .strict()
   .optional();
 
@@ -717,6 +751,7 @@ const AgentToolsSchema = z
     fs: ToolFsSchema,
     /** Runtime loop detection for repetitive/ stuck tool-call patterns. */
     loopDetection: ToolLoopDetectionSchema,
+    draftVerification: DraftVerificationSchema,
     /** Message tool configuration for this agent. */
     message: MessageToolConfigSchema,
     sandbox: z
@@ -782,6 +817,7 @@ export const ToolsSchema = z
       .strict()
       .optional(),
     loopDetection: ToolLoopDetectionSchema,
+    draftVerification: DraftVerificationSchema,
     /** Compact large OpenClaw, MCP, and client tool catalogs behind search/call tools. */
     toolSearch: ToolSearchSchema,
     /** Global Code Mode defaults and limits; agent/model settings can override activation. */

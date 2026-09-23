@@ -35,8 +35,10 @@ export function buildInboundPasteNote(ctx: Pick<MsgContext, "PasteFiles">): stri
     return undefined;
   }
   if (pastes.length === 1) {
-    const [only] = pastes;
-    return `[pasted data saved: ${describePaste(only)}; ${GUIDANCE}]`;
+    const only = pastes[0];
+    if (only) {
+      return `[pasted data saved: ${describePaste(only)}; ${GUIDANCE}]`;
+    }
   }
   const lines = [`[pasted data saved: ${pastes.length} files; ${GUIDANCE}]`];
   pastes.forEach((paste, index) => {

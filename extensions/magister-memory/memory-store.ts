@@ -122,12 +122,12 @@ export class MemoryStore {
       return fail(target, match);
     }
 
-    const original = this.entries[target][match];
+    const original = this.entries[target]?.[match] ?? "";
     this.entries[target][match] = trimmedNew;
 
     if (this.charCount(target) > this.limits[target]) {
       // Revert and reject.
-      this.entries[target][match] = original;
+      (this.entries[target] ??= [])[match] = original;
       return fail(target, `Replace would exceed char limit (${this.limits[target]})`);
     }
 
@@ -207,7 +207,7 @@ function findUniqueMatch(entries: readonly string[], needle: string): number | s
   let foundIdx = -1;
   let count = 0;
   for (let i = 0; i < entries.length; i++) {
-    if (entries[i].includes(needle)) {
+    if ((entries[i] ?? "").includes(needle)) {
       foundIdx = i;
       count++;
     }

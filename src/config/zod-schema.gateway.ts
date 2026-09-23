@@ -327,6 +327,8 @@ export const GatewayConfigSchema = z
     reload: z
       .strictObject({
         mode: z.union([z.literal("off"), z.literal("hybrid")]).optional(),
+        /** Magister fork: how long a hot reload may defer while a turn is active. */
+        deferralTimeoutMs: z.number().int().min(0).optional(),
       })
       .optional(),
     tls: z

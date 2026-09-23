@@ -61,7 +61,7 @@ function explicitCount(text: string, noun: string): number | undefined {
   if (matches.length !== 1) {
     return undefined;
   }
-  const count = countValue(matches[0][1]);
+  const count = countValue(matches[0]?.[1] ?? "");
   return count >= 1 && count <= 20 ? count : undefined;
 }
 
@@ -70,8 +70,11 @@ export function deriveDraftContract(request: string): DraftContract {
   if (!request || request.length > MAX_DRAFT_REQUEST_CHARS) {
     return {};
   }
-  const instructions = request
-    .split(/\n\s*(?:---+|<[^>]+>|(?:#{1,6}\s+)?(?:source|reference|attachment)(?:\s*:\s*|\b))/i)[0]
+  const instructions = (
+    request.split(
+      /\n\s*(?:---+|<[^>]+>|(?:#{1,6}\s+)?(?:source|reference|attachment)(?:\s*:\s*|\b))/i,
+    )[0] ?? ""
+  )
     .replace(/```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)/g, "")
     .replace(/^\s*>.*$/gm, "")
     .replace(/"[^"\n]*"|“[^”\n]*”|(?<!\w)'[^'\n]*'(?!\w)|‘[^’\n]*’|`[^`\n]*`/g, "");
@@ -113,15 +116,16 @@ export function deriveDraftContract(request: string): DraftContract {
     const amount = amounts[0];
     if (
       /^\s*(?:k|m|million|thousand|billion)\b/i.test(
-        instructions.slice((amount.index ?? 0) + amount[0].length),
+        instructions.slice((amount?.index ?? 0) + (amount?.[0].length ?? 0)),
       )
     ) {
       return contract;
     }
     const cents =
-      Number(amount[2].replaceAll(",", "")) * 100 + Number((amount[3] ?? "").padEnd(2, "0"));
+      Number((amount?.[2] ?? "").replaceAll(",", "")) * 100 +
+      Number((amount?.[3] ?? "").padEnd(2, "0"));
     if (Number.isSafeInteger(cents) && cents > 0 && cents <= 100_000_000_00) {
-      contract.allocation = { count: categoryCount, cents, currency: amount[1] };
+      contract.allocation = { count: categoryCount, cents, currency: amount?.[1] ?? "" };
     }
   }
   // Mixed exclusive formats are ambiguous; do not manufacture a satisfiable contract.
@@ -165,10 +169,10 @@ function allocationRows(draft: string, currency: string): number[] | undefined {
   const lines = draft.split(/\r?\n/);
   const candidates: number[][] = [];
   for (let i = 0; i + 1 < lines.length; i += 1) {
-    if (!lines[i].includes("|") || !/^\s*\|?\s*:?-{3,}/.test(lines[i + 1])) {
+    if (!(lines[i] ?? "").includes("|") || !/^\s*\|?\s*:?-{3,}/.test(lines[i + 1] ?? "")) {
       continue;
     }
-    const header = cells(lines[i]);
+    const header = cells(lines[i] ?? "");
     const amountColumns = header.flatMap((cell, index) =>
       /^(?:budget|amount|allocation|spend)(?:\s*\([^)]*\))?$/i.test(cell) ? [index] : [],
     );
@@ -178,7 +182,7 @@ function allocationRows(draft: string, currency: string): number[] | undefined {
     if (amountColumns.length !== 1 || labelColumns.length !== 1) {
       continue;
     }
-    const headerUnit = header[amountColumns[0]].match(/\(([^)]*)\)/)?.[1].trim();
+    const headerUnit = header[amountColumns[0] ?? -1]?.match(/\(([^)]*)\)/)?.[1]?.trim();
     if (headerUnit && headerUnit !== currency) {
       return undefined;
     }
@@ -186,9 +190,9 @@ function allocationRows(draft: string, currency: string): number[] | undefined {
     const labels = new Set<string>();
     let valid = true;
     i += 2;
-    for (; i < lines.length && lines[i].includes("|"); i += 1) {
-      const row = cells(lines[i]);
-      const label = row[labelColumns[0]]?.toLowerCase();
+    for (; i < lines.length && (lines[i] ?? "").includes("|"); i += 1) {
+      const row = cells(lines[i] ?? "");
+      const label = row[labelColumns[0] ?? -1]?.toLowerCase();
       if (row.length !== header.length || !label || labels.has(label)) {
         valid = false;
         continue;
@@ -197,7 +201,7 @@ function allocationRows(draft: string, currency: string): number[] | undefined {
         continue;
       }
       labels.add(label);
-      const amount = amountCents(row[amountColumns[0]], currency);
+      const amount = amountCents(row[amountColumns[0] ?? -1] ?? "", currency);
       if (amount === undefined || amounts.length >= 100) {
         valid = false;
       } else {

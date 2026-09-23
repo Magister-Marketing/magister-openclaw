@@ -841,6 +841,13 @@ export type DiagnosticAsyncQueueDroppedEvent = DiagnosticBaseEvent & {
   drainBatchSize: number;
 };
 
+// Magister fork: durable webhook outbox gave up after its retry budget.
+export type DiagnosticWebhookDeliveryDeadLetteredEvent = DiagnosticBaseEvent & {
+  type: "webhook.delivery.dead_lettered";
+  channel: "cron" | "slack" | "subagent";
+  failureKind: "retry_exhausted";
+};
+
 export type DiagnosticEventPayload =
   | DiagnosticGatewayRpcEvent
   | DiagnosticUsageEvent
@@ -897,6 +904,7 @@ export type DiagnosticEventPayload =
   | DiagnosticSecurityEvent
   | DiagnosticTelemetryExporterEvent
   | DiagnosticAsyncQueueDroppedEvent
+  | DiagnosticWebhookDeliveryDeadLetteredEvent
   | DiagnosticFailoverEvent;
 
 type DiagnosticNonSecurityEventPayload = Exclude<DiagnosticEventPayload, DiagnosticSecurityEvent>;

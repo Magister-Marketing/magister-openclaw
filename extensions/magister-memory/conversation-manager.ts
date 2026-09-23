@@ -230,7 +230,7 @@ export class ConversationCheckpointManager {
         state.lastMessageFingerprint,
         state.lastMessageCount,
       );
-      state.lastMessageFingerprint = entries[entries.length - 1].fingerprint;
+      state.lastMessageFingerprint = entries[entries.length - 1]?.fingerprint;
       state.lastMessageCount = entries.length;
       if (delta.length === 0) {
         await writeConversationSessionState(workspaceDir, state);
@@ -460,8 +460,8 @@ export class ConversationCheckpointManager {
         entries,
         startedAt: Date.now(),
         sequence: state.sequence + 1,
-        startFingerprint: entries[0].fingerprint,
-        endFingerprint: entries.at(-1)?.fingerprint ?? entries[0].fingerprint,
+        startFingerprint: entries[0]?.fingerprint ?? "",
+        endFingerprint: entries.at(-1)?.fingerprint ?? entries[0]?.fingerprint ?? "",
       };
       state.pending = [];
       state.pendingUserTurns = 0;
@@ -517,7 +517,7 @@ export class ConversationCheckpointManager {
       );
       state.pendingUserTurns = countUserTurns(state.pending);
       state.retryCount = params.retryCount;
-      state.retryAt = Date.now() + RETRY_DELAYS_MS[Math.min(params.retryCount - 1, 2)];
+      state.retryAt = Date.now() + (RETRY_DELAYS_MS[Math.min(params.retryCount - 1, 2)] ?? 0);
       delete state.inFlight;
       await writeConversationSessionState(params.workspaceDir, state);
     });

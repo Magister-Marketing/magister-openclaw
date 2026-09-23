@@ -144,6 +144,9 @@ export function boundEntriesFromEnd(
   let chars = 0;
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = entries[index];
+    if (!entry) {
+      continue;
+    }
     const remaining = maxChars - chars;
     if (remaining <= 0) {
       break;

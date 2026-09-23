@@ -23,6 +23,8 @@ import type { NodeHostConfig } from "./types.node-host.js";
 import type { PluginsConfig } from "./types.plugins.js";
 import type { SecretsConfig } from "./types.secrets.js";
 import type { SkillsConfig } from "./types.skills.js";
+import type { SlackCompletionConfig } from "./types.slack-completion.js";
+import type { SubagentConfig } from "./types.subagent.js";
 import type { TelemetryConfig } from "./types.telemetry.js";
 import type { ToolsConfig } from "./types.tools.js";
 import type { TtsConfig } from "./types.tts.js";
@@ -80,6 +82,10 @@ export type SurfaceConfigEntry = {
 
 /** Top-level OpenClaw config as read from user/project config files. */
 export type OpenClawConfig = {
+  /** Magister fork: subagent completion webhook (gateway-side completion delivery). */
+  subagent?: SubagentConfig;
+  /** Magister fork: Slack completion webhook. */
+  slackCompletion?: SlackCompletionConfig;
   /** @deprecated Doctor-only legacy input. */
   audit?: AuditConfig;
   /** JSON schema URL used by editors and generated config files. */

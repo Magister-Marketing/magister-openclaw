@@ -112,6 +112,12 @@ export type CanonicalInboundText = {
 
 /** Raw inbound message context accepted from channels before finalization. */
 export type MsgContext = Partial<CanonicalInboundText> & {
+  /**
+   * Magister fork: large inline data blocks the host wrote into the workspace's
+   * `inbox/` before the model saw this turn (see reply/paste-materializer.ts).
+   * The prompt prelude turns these into a note naming each path.
+   */
+  PasteFiles?: Array<{ path: string; bytes: number; lines: number; name: string }>;
   Body?: string;
   InboundEventKind?: InboundEventKind;
   /**

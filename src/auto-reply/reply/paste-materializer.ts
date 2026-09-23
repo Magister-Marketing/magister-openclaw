@@ -225,7 +225,7 @@ function inferName(lines: string[], beforeLine: number): string | undefined {
     seen += 1;
     const match = NAME_MENTION.exec(candidate);
     if (match) {
-      return sanitizePasteName(match[1]);
+      return sanitizePasteName(match[1] ?? "");
     }
   }
   return undefined;

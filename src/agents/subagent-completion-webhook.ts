@@ -9,15 +9,17 @@
 
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { enqueueAndDeliverDurableWebhook } from "../infra/outbound/durable-webhook-outbox.js";
-import { persistCompletionOutboxIntent } from "../infra/outbound/task-outbox-reconciliation.js";
 import type { GlobalHookRunnerRegistry } from "../plugins/hook-registry.types.js";
 import { getGlobalPluginRegistry } from "../plugins/hook-runner-global.js";
-import type {
-  PluginHookHandlerMap,
-  PluginHookSubagentContext,
-  PluginHookSubagentEndedEvent,
-} from "../plugins/types.js";
-import { captureSubagentCompletionReply } from "./subagent-announce.js";
+import type { PluginHookHandlerMap } from "../plugins/types.js";
+import { captureSubagentCompletionReply } from "./subagents/announce/subagent-announce-output.js";
+
+// Upstream 2026.9.x no longer exports the subagent hook payload types; derive
+// them from the handler map so this stays in step with the hook contract.
+type PluginHookSubagentEndedEvent = Parameters<
+  NonNullable<PluginHookHandlerMap["subagent_ended"]>
+>[0];
+type PluginHookSubagentContext = Parameters<NonNullable<PluginHookHandlerMap["subagent_ended"]>>[1];
 
 function trimToOptionalString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -97,18 +99,12 @@ export async function sendSubagentCompletionWebhook(params: {
     return;
   }
   try {
-    try {
-      persistCompletionOutboxIntent({
-        eventId: `subagent:${params.payload.run_id}`,
-        eventType: "subagent_completion",
-        payload: { ...params.payload },
-        runId: params.payload.run_id,
-        runtime: "subagent",
-        sessionKey: params.payload.child_session_key,
-      });
-    } catch (err) {
-      console.warn("[subagent-completion-webhook] task intent persistence failed:", err);
-    }
+    // SPIKE / REDESIGN: the fork also recorded a completion "intent" on the task
+    // record so a restart could reconcile an undelivered webhook from the task
+    // registry. Upstream 2026.9.x replaced the monolithic task registry with
+    // task-registry-delivery.ts (maybeDeliverTaskTerminalUpdate); that seam is
+    // re-expressed there, not here. The disk-backed outbox below still
+    // survives restarts on its own.
     const delivered = await enqueueAndDeliverDurableWebhook({
       eventId: `subagent:${params.payload.run_id}`,
       eventType: "subagent_completion",
@@ -196,7 +192,11 @@ const SUBAGENT_WEBHOOK_PLUGIN_ID = "magister-subagent-completion-webhook";
  * user's chat — which the model then re-reads as a failure next turn.
  */
 export function shouldSkipSubagentCompletionWebhook(
-  event: Pick<PluginHookSubagentEndedEvent, "outcome" | "killedByRequester">,
+  // SPIKE / REDESIGN: `killedByRequester` was a fork-added stamp on the
+  // subagent_ended event (set by the fork's subagent registry). Upstream
+  // 2026.9.x's event has no such field; until the registry seam is re-expressed
+  // the flag simply reads as absent, so a requester kill counts as "killed".
+  event: Pick<PluginHookSubagentEndedEvent, "outcome"> & { killedByRequester?: boolean },
 ): boolean {
   return event.outcome === "killed" && event.killedByRequester === true;
 }

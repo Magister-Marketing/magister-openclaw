@@ -185,6 +185,9 @@ export type ContextEngineInfo = {
   };
   /** True when the engine manages its own compaction lifecycle. */
   ownsCompaction?: boolean;
+  /** Magister fork: workspace bootstrap files this engine folds in itself, so the
+   * runner must not also inject them into the system prompt. */
+  ownsWorkspaceBootstrapFiles?: string[];
   /**
    * Controls how turn-triggered maintenance should be executed.
    *

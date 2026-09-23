@@ -36,6 +36,9 @@ import { sensitive } from "./zod-schema.sensitive.js";
 import { CommandsSchema, MessagesSchema, SessionSchema } from "./zod-schema.session.js";
 import { TelemetryConfigSchema } from "./zod-schema.telemetry.js";
 
+// Magister fork: completion webhooks accept any http(s) URL (the gateway is private-network).
+const MagisterHttpUrlSchema = z.string().url();
+
 export const OpenClawSchemaShape = {
   $schema: z.string().optional(),
   meta: z
@@ -316,6 +319,22 @@ export const OpenClawSchemaShape = {
   commands: CommandsSchema,
   approvals: ApprovalsSchema,
   session: SessionSchema,
+  /** Magister fork: subagent completion webhook. */
+  subagent: z
+    .object({
+      completionWebhook: MagisterHttpUrlSchema.optional(),
+      webhookToken: SecretInputSchema.optional().register(sensitive),
+    })
+    .strict()
+    .optional(),
+  /** Magister fork: Slack completion webhook. */
+  slackCompletion: z
+    .object({
+      completionWebhook: MagisterHttpUrlSchema.optional(),
+      webhookToken: SecretInputSchema.optional().register(sensitive),
+    })
+    .strict()
+    .optional(),
   cron: z
     .strictObject({
       enabled: z.boolean().optional(),
@@ -326,6 +345,8 @@ export const OpenClawSchemaShape = {
           enabled: z.boolean().optional(),
         })
         .optional(),
+      /** Magister fork: global cron completion webhook (POST per finished job). */
+      completionWebhook: MagisterHttpUrlSchema.optional(),
       /** Bearer token for cron webhook POST delivery. */
       webhookToken: SecretInputSchema.optional().register(sensitive),
       /** SSRF policy for all outbound cron webhook deliveries. */

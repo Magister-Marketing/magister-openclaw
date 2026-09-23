@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "openclaw/plugin-sdk/agent-core";
 import { pruneMapToMaxSize } from "../infra/map-size.js";
 import { LegacyContextEngine } from "./legacy.js";
 import { MagisterIntegrationsContextEngine } from "./magister-integrations.js";
 import { renderMagisterContextBlock } from "./magister-provenance.js";
-import { registerContextEngine } from "./registry.js";
+import { registerContextEngineForOwner } from "./registry.js";
 import type {
   AssembleResult,
   CompactResult,
@@ -110,16 +110,7 @@ export class MagisterWorkflowsContextEngine implements ContextEngine {
     }
   }
 
-  async compact(params: {
-    sessionId: string;
-    sessionFile: string;
-    tokenBudget?: number;
-    force?: boolean;
-    currentTokenCount?: number;
-    compactionTarget?: "budget" | "threshold";
-    customInstructions?: string;
-    runtimeContext?: ContextEngineRuntimeContext;
-  }): Promise<CompactResult> {
+  async compact(params: Parameters<ContextEngine["compact"]>[0]): Promise<CompactResult> {
     return this.inner.compact(params);
   }
 
@@ -153,11 +144,13 @@ export function registerMagisterWorkflowsContextEngine(): void {
   // Each wrapper adds its own systemPromptAddition. The entrypoint.sh
   // change in the gateway repo moves the slot from 'magister-integrations' to
   // 'magister-workflows' so this composed factory becomes active.
-  registerContextEngine(
+  registerContextEngineForOwner(
     "magister-workflows",
     () =>
       new MagisterWorkflowsContextEngine({
         inner: new MagisterIntegrationsContextEngine(),
       }),
+    "core",
+    { allowSameOwnerRefresh: true },
   );
 }

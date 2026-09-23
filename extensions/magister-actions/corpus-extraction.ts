@@ -170,7 +170,7 @@ async function extractPdf(filePath: string): Promise<string> {
     (async () => {
       const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
       const bytes = new Uint8Array(await fs.promises.readFile(filePath));
-      const document = await pdfjs.getDocument({ data: bytes, disableWorker: true }).promise;
+      const document = await pdfjs.getDocument({ data: bytes }).promise;
       if (document.numPages > MAX_PDF_PAGES) {
         throw new IngestionError("PDF exceeds the 250 page extraction limit");
       }

@@ -1,13 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "openclaw/plugin-sdk/agent-core";
 import type { MemoryCitationsMode } from "../config/types.memory.js";
 import { pruneMapToMaxSize } from "../infra/map-size.js";
 import { MagisterIntegrationsContextEngine } from "./magister-integrations.js";
 import { MagisterPlanContextEngine } from "./magister-plan.js";
 import { renderMagisterContextBlock } from "./magister-provenance.js";
 import { MagisterWorkflowsContextEngine } from "./magister-workflows.js";
-import { registerContextEngine } from "./registry.js";
+import { registerContextEngineForOwner } from "./registry.js";
 import type {
   AssembleResult,
   CompactResult,
@@ -169,17 +169,7 @@ export class MagisterMemoryContextEngine implements ContextEngine {
     }
   }
 
-  async compact(params: {
-    sessionId: string;
-    sessionKey?: string;
-    sessionFile: string;
-    tokenBudget?: number;
-    force?: boolean;
-    currentTokenCount?: number;
-    compactionTarget?: "budget" | "threshold";
-    customInstructions?: string;
-    runtimeContext?: ContextEngineRuntimeContext;
-  }): Promise<CompactResult> {
+  async compact(params: Parameters<ContextEngine["compact"]>[0]): Promise<CompactResult> {
     return this.inner.compact(params);
   }
 
@@ -404,7 +394,10 @@ export function registerMagisterMemoryContextEngine(): void {
   //       -> MagisterWorkflowsContextEngine (per-turn)
   //         -> MagisterIntegrationsContextEngine (per-turn)
   //           -> LegacyContextEngine
-  registerContextEngine("magister-memory", (ctx) =>
-    createMagisterMemoryContextEngine({ workspaceDir: ctx?.workspaceDir }),
+  registerContextEngineForOwner(
+    "magister-memory",
+    (ctx) => createMagisterMemoryContextEngine({ workspaceDir: ctx?.workspaceDir }),
+    "core",
+    { allowSameOwnerRefresh: true },
   );
 }

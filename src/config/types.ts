@@ -36,6 +36,8 @@ export type * from "./types.telegram.js";
 export type * from "./types.telemetry.js";
 export type * from "./types.tts.js";
 export * from "./types.tools.js";
+export * from "./types.subagent.js";
+export * from "./types.slack-completion.js";
 export type * from "./types.whatsapp.js";
 export type * from "./types.memory.js";
 export type * from "./types.mcp.js";

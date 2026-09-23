@@ -62,11 +62,11 @@ export function parseCheckpointRecords(markdown: string): CheckpointRecord[] {
       break;
     }
     try {
-      if (match[1].length > 16_000) {
+      if ((match[1] ?? "").length > 16_000) {
         startPattern.lastIndex = endIndex + END_MARKER.length + 1;
         continue;
       }
-      const decoded = Buffer.from(match[1], "base64url").toString("utf8");
+      const decoded = Buffer.from(match[1] ?? "", "base64url").toString("utf8");
       const record = parseCheckpointRecord(JSON.parse(decoded) as unknown);
       if (record) {
         records.push(record);

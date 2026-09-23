@@ -61,7 +61,17 @@ export type AgentStartupContextConfig = NonNullable<SchemaAgentDefaultsConfig["s
 
 export type AgentContextLimitsConfig = NonNullable<z.input<typeof AgentContextLimitsSchema>>;
 
+/** Magister fork: inline data pastes written to the workspace inbox before the model sees a turn. */
+export type AgentPasteMaterializationConfig = {
+  /** Default true. Set false to leave pastes inline only. */
+  enabled?: boolean;
+  /** Minimum paste size, in characters, that earns a file (default 4000). */
+  minChars?: number;
+};
+
 export type AgentDefaultsConfig = SchemaAgentDefaultsConfig & {
+  /** Magister fork: large inline pastes become `inbox/` files the agent can compute from (default on). */
+  pasteMaterialization?: AgentPasteMaterializationConfig;
   /** @deprecated Doctor-only legacy input. */
   imageGenerationModel?: AgentToolModelConfig;
   /** @deprecated Doctor-only legacy input. */

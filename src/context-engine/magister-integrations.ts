@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "openclaw/plugin-sdk/agent-core";
 import { pruneMapToMaxSize } from "../infra/map-size.js";
 import { LegacyContextEngine } from "./legacy.js";
 import { renderMagisterContextBlock } from "./magister-provenance.js";
-import { registerContextEngine } from "./registry.js";
+import { registerContextEngineForOwner } from "./registry.js";
 import type {
   AssembleResult,
   CompactResult,
@@ -108,16 +108,7 @@ export class MagisterIntegrationsContextEngine implements ContextEngine {
     }
   }
 
-  async compact(params: {
-    sessionId: string;
-    sessionFile: string;
-    tokenBudget?: number;
-    force?: boolean;
-    currentTokenCount?: number;
-    compactionTarget?: "budget" | "threshold";
-    customInstructions?: string;
-    runtimeContext?: ContextEngineRuntimeContext;
-  }): Promise<CompactResult> {
+  async compact(params: Parameters<ContextEngine["compact"]>[0]): Promise<CompactResult> {
     return this.inner.compact(params);
   }
 
@@ -145,5 +136,10 @@ export class MagisterIntegrationsContextEngine implements ContextEngine {
 }
 
 export function registerMagisterIntegrationsContextEngine(): void {
-  registerContextEngine("magister-integrations", () => new MagisterIntegrationsContextEngine());
+  registerContextEngineForOwner(
+    "magister-integrations",
+    () => new MagisterIntegrationsContextEngine(),
+    "core",
+    { allowSameOwnerRefresh: true },
+  );
 }

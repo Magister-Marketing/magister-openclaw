@@ -1,11 +1,11 @@
-import type { StreamFn } from "@mariozechner/pi-agent-core";
+import type { AssistantMessage, Usage } from "@openclaw/ai";
 import {
+  type AssistantMessageEventStream,
   createAssistantMessageEventStream,
-  streamSimple,
-  type AssistantMessage,
-  type Usage,
-} from "@mariozechner/pi-ai";
+} from "@openclaw/ai/event-stream";
+import type { StreamFn } from "openclaw/plugin-sdk/agent-core";
 import { parseReplyDirectives } from "../auto-reply/reply/reply-directives.js";
+import { streamSimple } from "../llm/stream.js";
 import { resolveAssistantMessagePhase } from "../shared/chat-message-content.js";
 import {
   checkDraft,
@@ -52,9 +52,9 @@ function boundedText(message: AssistantMessage): string | undefined {
   if (text.length !== 1 || resolveAssistantMessagePhase(message) === "commentary") {
     return undefined;
   }
-  const directives = parseReplyDirectives(text[0]);
+  const directives = parseReplyDirectives(text[0] ?? "");
   if (
-    directives.mediaUrl ||
+    (directives.mediaUrls?.length ?? 0) > 0 ||
     directives.mediaUrls?.length ||
     directives.audioAsVoice ||
     directives.replyToTag ||
@@ -164,7 +164,7 @@ function failedMessage(
 }
 
 /** Fresh stream/result pair: the SDK persists result(), not merely the done event. */
-function emitSelected(stream: Stream, message: AssistantMessage): void {
+function emitSelected(stream: AssistantMessageEventStream, message: AssistantMessage): void {
   stream.push({ type: "start", partial: message });
   for (const [contentIndex, block] of message.content.entries()) {
     if (block.type === "text") {
@@ -193,7 +193,7 @@ function emitSelected(stream: Stream, message: AssistantMessage): void {
   emitTerminal(stream, message);
 }
 
-function emitTerminal(stream: Stream, message: AssistantMessage): void {
+function emitTerminal(stream: AssistantMessageEventStream, message: AssistantMessage): void {
   if (message.stopReason === "error" || message.stopReason === "aborted") {
     stream.push({ type: "error", reason: message.stopReason, error: message });
   } else {
@@ -332,6 +332,9 @@ export class DraftVerificationStream {
               : event.type === "error"
                 ? event.error
                 : event.partial;
+          if (!message) {
+            continue;
+          }
           observed = message;
           this.hadToolActivity ||= hasToolCall(message);
           if (event.type === "done" || event.type === "error") {

@@ -32,7 +32,7 @@ export async function summarizeCheckpoint(params: {
   const sessionFile = join(temporaryDirectory, `${runId}.jsonl`);
   let raw: string;
   try {
-    const result = await params.api.runtime.agent.runEmbeddedPiAgent({
+    const result = await params.api.runtime.agent.runEmbeddedAgent({
       sessionId: runId,
       // Magister fork: the run id doubles as the session key so it reaches the
       // gateway as X-Session-Id. Without it backfillSessionKey looks this
@@ -74,7 +74,7 @@ export async function summarizeCheckpoint(params: {
       cleanupBundleMcpOnRunEnd: true,
     });
     raw = (result.payloads ?? [])
-      .map((payload) => payload.text?.trim() ?? "")
+      .map((payload: { text?: string }) => payload.text?.trim() ?? "")
       .filter(Boolean)
       .join("\n")
       .trim();

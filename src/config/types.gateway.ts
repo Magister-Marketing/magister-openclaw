@@ -122,6 +122,8 @@ export type GatewayReloadMode = "off" | "restart" | "hot" | "hybrid";
 export type GatewayReloadConfig = {
   /** Reload strategy for config changes (default: hybrid). */
   mode?: GatewayReloadMode;
+  /** Magister fork: how long a hot reload may defer while a turn is active. */
+  deferralTimeoutMs?: number;
 };
 
 type GatewayHttpConfigInput = NonNullable<GatewayConfigInput["http"]>;

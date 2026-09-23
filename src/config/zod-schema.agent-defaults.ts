@@ -17,6 +17,14 @@ export { SilentReplyPolicyConfigSchema } from "./zod-schema.agent-defaults-base.
 
 export const AgentDefaultsSchema = AgentDefaultsBaseSchema.safeExtend({
   contextLimits: AgentContextLimitsSchema,
+  /** Magister fork: large inline pastes become inbox/ files the agent can compute from. */
+  pasteMaterialization: z
+    .object({
+      enabled: z.boolean().optional(),
+      minChars: z.number().int().positive().optional(),
+    })
+    .strict()
+    .optional(),
   blockStreamingChunk: BlockStreamingChunkSchema.optional(),
   blockStreamingCoalesce: BlockStreamingCoalesceSchema.optional(),
   humanDelay: HumanDelaySchema.optional(),

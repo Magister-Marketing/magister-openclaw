@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "openclaw/plugin-sdk/agent-core";
 import { pruneMapToMaxSize } from "../infra/map-size.js";
 import { renderMagisterContextBlock } from "./magister-provenance.js";
 import { MagisterWorkflowsContextEngine } from "./magister-workflows.js";
-import { registerContextEngine } from "./registry.js";
+import { registerContextEngineForOwner } from "./registry.js";
 import type {
   AssembleResult,
   CompactResult,
@@ -154,17 +154,7 @@ export class MagisterPlanContextEngine implements ContextEngine {
     }
   }
 
-  async compact(params: {
-    sessionId: string;
-    sessionKey?: string;
-    sessionFile: string;
-    tokenBudget?: number;
-    force?: boolean;
-    currentTokenCount?: number;
-    compactionTarget?: "budget" | "threshold";
-    customInstructions?: string;
-    runtimeContext?: ContextEngineRuntimeContext;
-  }): Promise<CompactResult> {
+  async compact(params: Parameters<ContextEngine["compact"]>[0]): Promise<CompactResult> {
     return this.inner.compact(params);
   }
 
@@ -264,11 +254,13 @@ export class MagisterPlanContextEngine implements ContextEngine {
 }
 
 export function registerMagisterPlanContextEngine(): void {
-  registerContextEngine(
+  registerContextEngineForOwner(
     "magister-plan",
     () =>
       new MagisterPlanContextEngine({
         inner: new MagisterWorkflowsContextEngine(),
       }),
+    "core",
+    { allowSameOwnerRefresh: true },
   );
 }
