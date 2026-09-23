@@ -27,7 +27,7 @@ describe("conversation checkpoint integration", () => {
   it("captures a short chat and freezes its bounded recall in the next session", async () => {
     const evidence = "Our target audience is independent dental practices.";
     const preferenceEvidence = "Please keep reports concise.";
-    const runEmbeddedPiAgent = vi.fn(async () => ({
+    const runEmbeddedAgent = vi.fn(async () => ({
       payloads: [
         {
           text: JSON.stringify({
@@ -38,7 +38,7 @@ describe("conversation checkpoint integration", () => {
         },
       ],
     }));
-    const api = makeApi(runEmbeddedPiAgent);
+    const api = makeApi(runEmbeddedAgent);
     const config = resolveConversationCheckpointConfig(
       { conversationCheckpoints: { mode: "active" } },
       null,
@@ -79,8 +79,8 @@ describe("conversation checkpoint integration", () => {
       sessionHash: hashIdentifier(firstContext.sessionId),
     });
 
-    expect(runEmbeddedPiAgent).toHaveBeenCalledOnce();
-    expect(runEmbeddedPiAgent).toHaveBeenCalledWith(
+    expect(runEmbeddedAgent).toHaveBeenCalledOnce();
+    expect(runEmbeddedAgent).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: "magister-gateway",
         model: "anthropic/claude-haiku-4-5",
@@ -137,14 +137,14 @@ describe("conversation checkpoint integration", () => {
         topics: ["launch positioning"],
       },
     ];
-    const runEmbeddedPiAgent = vi.fn(async () => {
+    const runEmbeddedAgent = vi.fn(async () => {
       const summary = summaries.shift();
       if (!summary) {
         throw new Error("unexpected summary request");
       }
       return { payloads: [{ text: JSON.stringify(summary) }] };
     });
-    const api = makeApi(runEmbeddedPiAgent);
+    const api = makeApi(runEmbeddedAgent);
     const config = resolveConversationCheckpointConfig(
       { conversationCheckpoints: { mode: "active" } },
       null,
@@ -201,7 +201,7 @@ describe("conversation checkpoint integration", () => {
   });
 
   it("removes quiescent session state after a session-end checkpoint", async () => {
-    const runEmbeddedPiAgent = vi.fn(async () => ({
+    const runEmbeddedAgent = vi.fn(async () => ({
       payloads: [
         {
           text: JSON.stringify({
@@ -211,7 +211,7 @@ describe("conversation checkpoint integration", () => {
         },
       ],
     }));
-    const api = makeApi(runEmbeddedPiAgent);
+    const api = makeApi(runEmbeddedAgent);
     const config = resolveConversationCheckpointConfig(
       { conversationCheckpoints: { mode: "active" } },
       null,
@@ -256,7 +256,7 @@ describe("conversation checkpoint integration", () => {
   it("checkpoints a meaningful short chat after the idle window", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(Date.UTC(2026, 6, 22, 12));
-    const runEmbeddedPiAgent = vi.fn(async () => ({
+    const runEmbeddedAgent = vi.fn(async () => ({
       payloads: [
         {
           text: JSON.stringify({
@@ -266,7 +266,7 @@ describe("conversation checkpoint integration", () => {
         },
       ],
     }));
-    const api = makeApi(runEmbeddedPiAgent);
+    const api = makeApi(runEmbeddedAgent);
     const config = resolveConversationCheckpointConfig(
       { conversationCheckpoints: { mode: "active", idleMinutes: 1 } },
       null,
@@ -296,17 +296,17 @@ describe("conversation checkpoint integration", () => {
       );
     });
     manager.stop();
-    expect(runEmbeddedPiAgent).toHaveBeenCalledOnce();
+    expect(runEmbeddedAgent).toHaveBeenCalledOnce();
   });
 
   it("honors retry deadlines and writes a deterministic fallback after three failures", async () => {
     vi.useFakeTimers();
     const startedAt = Date.UTC(2026, 6, 22, 12);
     vi.setSystemTime(startedAt);
-    const runEmbeddedPiAgent = vi.fn(async () => {
+    const runEmbeddedAgent = vi.fn(async () => {
       throw new Error("model unavailable");
     });
-    const api = makeApi(runEmbeddedPiAgent);
+    const api = makeApi(runEmbeddedAgent);
     const config = resolveConversationCheckpointConfig(
       { conversationCheckpoints: { mode: "active" } },
       null,
@@ -332,7 +332,7 @@ describe("conversation checkpoint integration", () => {
     );
 
     await manager.finalizeSessionForTest({ workspaceDir: dir, sessionHash });
-    expect(runEmbeddedPiAgent).toHaveBeenCalledTimes(1);
+    expect(runEmbeddedAgent).toHaveBeenCalledTimes(1);
     let state = await readConversationSessionState({
       workspaceDir: dir,
       sessionHash,
@@ -342,15 +342,15 @@ describe("conversation checkpoint integration", () => {
     expect(state.pending).toHaveLength(2);
 
     await manager.finalizeSessionForTest({ workspaceDir: dir, sessionHash });
-    expect(runEmbeddedPiAgent).toHaveBeenCalledTimes(1);
+    expect(runEmbeddedAgent).toHaveBeenCalledTimes(1);
 
     vi.setSystemTime(startedAt + 60_001);
     await manager.finalizeSessionForTest({ workspaceDir: dir, sessionHash });
-    expect(runEmbeddedPiAgent).toHaveBeenCalledTimes(2);
+    expect(runEmbeddedAgent).toHaveBeenCalledTimes(2);
 
     vi.setSystemTime(startedAt + 60_001 + 5 * 60_000 + 1);
     await manager.finalizeSessionForTest({ workspaceDir: dir, sessionHash });
-    expect(runEmbeddedPiAgent).toHaveBeenCalledTimes(3);
+    expect(runEmbeddedAgent).toHaveBeenCalledTimes(3);
     expect(await readFile(join(dir, "memory", "2026-07-22.md"), "utf8")).toContain(
       "Conversation checkpoint",
     );
@@ -364,7 +364,7 @@ describe("conversation checkpoint integration", () => {
   });
 
   it("records proposals without touching canonical memory in shadow mode", async () => {
-    const runEmbeddedPiAgent = vi.fn(async () => ({
+    const runEmbeddedAgent = vi.fn(async () => ({
       payloads: [
         {
           text: JSON.stringify({
@@ -374,7 +374,7 @@ describe("conversation checkpoint integration", () => {
         },
       ],
     }));
-    const api = makeApi(runEmbeddedPiAgent);
+    const api = makeApi(runEmbeddedAgent);
     const config = resolveConversationCheckpointConfig(
       { conversationCheckpoints: { mode: "shadow" } },
       null,
@@ -413,7 +413,7 @@ describe("conversation checkpoint integration", () => {
     vi.useFakeTimers();
     const startedAt = Date.UTC(2026, 6, 22, 23, 59);
     vi.setSystemTime(startedAt);
-    const runEmbeddedPiAgent = vi.fn(async () => ({
+    const runEmbeddedAgent = vi.fn(async () => ({
       payloads: [
         {
           text: JSON.stringify({
@@ -423,7 +423,7 @@ describe("conversation checkpoint integration", () => {
         },
       ],
     }));
-    const api = makeApi(runEmbeddedPiAgent);
+    const api = makeApi(runEmbeddedAgent);
     const config = resolveConversationCheckpointConfig(
       { conversationCheckpoints: { mode: "active" } },
       null,
@@ -451,7 +451,7 @@ describe("conversation checkpoint integration", () => {
     await expect(
       manager.finalizeSessionForTest({ workspaceDir: dir, sessionHash }),
     ).rejects.toMatchObject({ code: "EEXIST" });
-    expect(runEmbeddedPiAgent).toHaveBeenCalledTimes(1);
+    expect(runEmbeddedAgent).toHaveBeenCalledTimes(1);
     let state = await readConversationSessionState({
       workspaceDir: dir,
       sessionHash,
@@ -466,13 +466,13 @@ describe("conversation checkpoint integration", () => {
     }
 
     await manager.finalizeSessionForTest({ workspaceDir: dir, sessionHash });
-    expect(runEmbeddedPiAgent).toHaveBeenCalledTimes(1);
+    expect(runEmbeddedAgent).toHaveBeenCalledTimes(1);
 
     await rm(join(dir, "memory"), { force: true });
     await mkdir(join(dir, "memory"));
     vi.setSystemTime(startedAt + 5 * 60_000 + 1);
     await manager.finalizeSessionForTest({ workspaceDir: dir, sessionHash });
-    expect(runEmbeddedPiAgent).toHaveBeenCalledTimes(1);
+    expect(runEmbeddedAgent).toHaveBeenCalledTimes(1);
     const daily = await readFile(join(dir, "memory", "2026-07-22.md"), "utf8");
     expect(parseCheckpointRecords(daily).map((record) => record.checkpointId)).toEqual([
       checkpointId,
@@ -490,8 +490,8 @@ describe("conversation checkpoint integration", () => {
   });
 
   it("ignores failed, non-user, and reviewer runs", async () => {
-    const runEmbeddedPiAgent = vi.fn();
-    const api = makeApi(runEmbeddedPiAgent);
+    const runEmbeddedAgent = vi.fn();
+    const api = makeApi(runEmbeddedAgent);
     const config = resolveConversationCheckpointConfig(
       { conversationCheckpoints: { mode: "active" } },
       null,
@@ -519,11 +519,11 @@ describe("conversation checkpoint integration", () => {
         sessionHash: hashIdentifier(sessionId),
       });
     }
-    expect(runEmbeddedPiAgent).not.toHaveBeenCalled();
+    expect(runEmbeddedAgent).not.toHaveBeenCalled();
   });
 
   it("finalizes pre-compaction capture once when the transcript is seen again", async () => {
-    const runEmbeddedPiAgent = vi.fn(async () => ({
+    const runEmbeddedAgent = vi.fn(async () => ({
       payloads: [
         {
           text: JSON.stringify({
@@ -533,7 +533,7 @@ describe("conversation checkpoint integration", () => {
         },
       ],
     }));
-    const api = makeApi(runEmbeddedPiAgent);
+    const api = makeApi(runEmbeddedAgent);
     const config = resolveConversationCheckpointConfig(
       { conversationCheckpoints: { mode: "active" } },
       null,
@@ -566,10 +566,10 @@ describe("conversation checkpoint integration", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     const daily = await readFile(join(dir, "memory", `${checkpointDate}.md`), "utf8");
     expect(parseCheckpointRecords(daily)).toHaveLength(1);
-    expect(runEmbeddedPiAgent).toHaveBeenCalledTimes(1);
+    expect(runEmbeddedAgent).toHaveBeenCalledTimes(1);
   });
 
-  function makeApi(runEmbeddedPiAgent: ReturnType<typeof vi.fn>): OpenClawPluginApi {
+  function makeApi(runEmbeddedAgent: ReturnType<typeof vi.fn>): OpenClawPluginApi {
     return {
       config: {
         agents: {
@@ -583,7 +583,7 @@ describe("conversation checkpoint integration", () => {
       runtime: {
         agent: {
           resolveAgentDir: () => dir,
-          runEmbeddedPiAgent,
+          runEmbeddedAgent,
         },
       },
       logger: {
