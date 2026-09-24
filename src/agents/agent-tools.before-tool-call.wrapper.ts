@@ -15,6 +15,7 @@ import {
 import { pruneMapToMaxSize } from "../infra/map-size.js";
 import { getPluginToolMeta } from "../plugins/tool-metadata.js";
 import { recordRunSkillUsage } from "../skills/runtime/run-usage.js";
+import { isPlainObject } from "../utils.js";
 import { copyBeforeToolCallWrapperMetadata } from "./agent-tool-metadata.js";
 import {
   captureAgentToolExecutionBudget,
@@ -289,6 +290,31 @@ export function buildBlockedToolResult(params: {
   };
   preExecutionBlockedToolResults.add(result);
   return result;
+}
+
+// Magister fork: runtime resilience guidance rides the tool result the model sees.
+function appendRuntimeGuidance<T>(result: T, guidance?: string): T {
+  if (!guidance || !isPlainObject(result) || !Array.isArray(result.content)) {
+    return result;
+  }
+  return {
+    ...result,
+    content: [...result.content, { type: "text", text: guidance }],
+  } as T;
+}
+
+function appendRuntimeGuidanceToError(error: unknown, guidance: string): Error {
+  if (error instanceof Error) {
+    try {
+      error.message = `${error.message}\n\n${guidance}`;
+      return error;
+    } catch {
+      // Frozen errors are rare; preserve the original as the cause below.
+    }
+  }
+  return new Error(`${error instanceof Error ? error.message : String(error)}\n\n${guidance}`, {
+    cause: error,
+  });
 }
 
 export function wrapToolWithBeforeToolCallHook(
@@ -568,7 +594,7 @@ export function wrapToolWithBeforeToolCallHook(
           toolCallId,
           toolCallOrdinal,
         });
-        await recordLoopOutcome({
+        const resilienceDecision = await recordLoopOutcome({
           ctx,
           toolName: normalizedToolName,
           toolParams: executeParams,
@@ -617,8 +643,11 @@ export function wrapToolWithBeforeToolCallHook(
             }),
           );
         }
-        // Keep loop hashes and diagnostics on the raw outcome; this note is model feedback only.
-        return outcome.loopWarning ? appendToolLoopWarning(result, outcome.loopWarning) : result;
+        // Keep loop hashes and diagnostics on the raw outcome; these notes are model feedback only.
+        return appendRuntimeGuidance(
+          outcome.loopWarning ? appendToolLoopWarning(result, outcome.loopWarning) : result,
+          resilienceDecision.guidance,
+        );
       } catch (err) {
         if (hookOptions.emitDiagnostics) {
           emitTrustedDiagnosticEventWithPrivateData(
@@ -634,7 +663,7 @@ export function wrapToolWithBeforeToolCallHook(
             }),
           );
         }
-        await recordLoopOutcome({
+        const resilienceDecision = await recordLoopOutcome({
           ctx,
           toolName: normalizedToolName,
           toolParams: executeParams,
@@ -646,6 +675,9 @@ export function wrapToolWithBeforeToolCallHook(
               : tool.resultContentSource,
           toolCallOrdinal,
         });
+        if (resilienceDecision.guidance) {
+          throw appendRuntimeGuidanceToError(err, resilienceDecision.guidance);
+        }
         throw err;
       } finally {
         liveness.close();

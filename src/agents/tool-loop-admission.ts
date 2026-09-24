@@ -29,29 +29,64 @@ type ToolLoopBatchAdmission = InternalBeforeToolBatchResult & {
   releaseSkippedCalls?: (toolCallIds: readonly string[]) => void;
 };
 
+// Magister fork: the runtime resilience guards have their own switch and must
+// record and evaluate even when upstream's repeat detectors are off.
+function isLoopAdmissionActive(ctx: HookContext): boolean {
+  if (!ctx.sessionKey) {
+    return false;
+  }
+  return (
+    ctx.loopDetection?.enabled === true || ctx.loopDetection?.runtimeResilience?.enabled === true
+  );
+}
+
+function loopScopeFor(ctx: HookContext, toolName: string) {
+  const sideEffect = ctx.toolSideEffects?.get(toolName);
+  return {
+    ...(ctx.runId ? { runId: ctx.runId } : {}),
+    ...(sideEffect ? { sideEffect } : {}),
+  };
+}
+
 async function evaluateToolLoopCall(
   call: ToolLoopCall,
   ctx: HookContext,
   stateOverride?: SessionState,
 ): Promise<ToolLoopIntervention | ToolLoopWarning | undefined> {
-  if (!ctx.sessionKey || ctx.loopDetection?.enabled !== true) {
+  if (!isLoopAdmissionActive(ctx)) {
     return undefined;
   }
   const toolName = normalizeToolPolicyName(call.toolName || "tool");
-  const { getDiagnosticSessionState, logToolLoopAction, detectToolCallLoop } =
-    await loadBeforeToolCallRuntime();
+  const {
+    getDiagnosticSessionState,
+    logToolLoopAction,
+    detectRuntimeResilienceBlock,
+    detectToolCallLoop,
+  } = await loadBeforeToolCallRuntime();
   // Project history for atomic admission, but keep warning buckets on the session owner.
   const sessionState = getDiagnosticSessionState({
     sessionKey: ctx.sessionKey,
     sessionId: ctx.sessionId,
   });
-  const result = detectToolCallLoop(
+  const loopScope = loopScopeFor(ctx, toolName);
+  // Magister fork: outcome-based guards decide first; they are independent of the
+  // repeat detectors, which stay gated on loopDetection.enabled inside detectToolCallLoop.
+  const resilienceResult = detectRuntimeResilienceBlock(
     stateOverride ?? sessionState,
     toolName,
     call.params,
     ctx.loopDetection,
-    ctx.runId ? { runId: ctx.runId } : undefined,
+    loopScope,
   );
+  const result = resilienceResult.stuck
+    ? resilienceResult
+    : detectToolCallLoop(
+        stateOverride ?? sessionState,
+        toolName,
+        call.params,
+        ctx.loopDetection,
+        loopScope,
+      );
   if (!result.stuck) {
     return undefined;
   }
@@ -103,17 +138,18 @@ async function evaluateToolLoopCall(
 }
 
 async function recordToolLoopCall(call: ToolLoopCall, ctx: HookContext): Promise<void> {
-  if (!ctx.sessionKey || ctx.loopDetection?.enabled !== true) {
+  if (!isLoopAdmissionActive(ctx)) {
     return;
   }
   const { getDiagnosticSessionState, recordToolCall } = await loadBeforeToolCallRuntime();
+  const toolName = normalizeToolPolicyName(call.toolName || "tool");
   recordToolCall(
     getDiagnosticSessionState({ sessionKey: ctx.sessionKey, sessionId: ctx.sessionId }),
-    normalizeToolPolicyName(call.toolName || "tool"),
+    toolName,
     call.params,
     call.toolCallId,
     ctx.loopDetection,
-    ctx.runId ? { runId: ctx.runId } : undefined,
+    loopScopeFor(ctx, toolName),
   );
 }
 
@@ -138,7 +174,7 @@ export async function admitToolCallBatch(
   calls: InternalToolBatchCall[],
   ctx: HookContext,
 ): Promise<ToolLoopBatchAdmission> {
-  if (!ctx.sessionKey || ctx.loopDetection?.enabled !== true) {
+  if (!isLoopAdmissionActive(ctx)) {
     return {};
   }
   const {
@@ -158,13 +194,14 @@ export async function admitToolCallBatch(
     toolCallHistory: [...(sessionState.toolCallHistory ?? [])],
   };
   const recordLoopVeto = (state: SessionState, call: InternalToolBatchCall) => {
+    const vetoToolName = normalizeToolPolicyName(call.toolCall.name || "tool");
     recordToolCall(
       state,
-      normalizeToolPolicyName(call.toolCall.name || "tool"),
+      vetoToolName,
       call.args,
       call.toolCall.id,
       ctx.loopDetection,
-      ctx.runId ? { runId: ctx.runId } : undefined,
+      loopScopeFor(ctx, vetoToolName),
     );
     const projectedCall = state.toolCallHistory?.at(-1);
     if (projectedCall) {
@@ -240,7 +277,7 @@ export async function admitToolCallBatch(
       readyCall.args,
       readyCall.toolCallId,
       ctx.loopDetection,
-      ctx.runId ? { runId: ctx.runId } : undefined,
+      loopScopeFor(ctx, admitted.toolName),
     );
     const churn = reconcileToolCallExecutionParams(sessionState, {
       toolName: admitted.toolName,

@@ -9,9 +9,11 @@ import { logToolLoopAction } from "../logging/diagnostic.js";
 import { getArgumentChurnNoProgressStreak } from "./tool-loop-argument-churn.js";
 import { reconcileToolCallExecutionParams } from "./tool-loop-call-reconciliation.js";
 import {
+  detectRuntimeResilienceBlock,
   detectToolCallLoop,
   recordToolCall,
   recordToolCallOutcome,
+  resolveRuntimeResilienceOutcomeDecision,
 } from "./tool-loop-detection.js";
 import { resolveToolLoopWarningThreshold } from "./tool-loop-thresholds.js";
 
@@ -21,9 +23,11 @@ export const beforeToolCallRuntime = {
   markDiagnosticArgumentChurnObservation,
   getDiagnosticSessionState,
   logToolLoopAction,
+  detectRuntimeResilienceBlock,
   detectToolCallLoop,
   reconcileToolCallExecutionParams,
   recordToolCall,
   recordToolCallOutcome,
+  resolveRuntimeResilienceOutcomeDecision,
   resolveToolLoopWarningThreshold,
 };

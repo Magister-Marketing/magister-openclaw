@@ -16,6 +16,7 @@ import type {
 import type { SkillSnapshot, SkillTelemetrySource, SkillUsagePath } from "../skills/types.js";
 import type { AgentTool } from "./runtime/index.js";
 import type { SandboxFsBridge } from "./sandbox/fs-bridge.js";
+import type { ToolSideEffect } from "./tool-loop-detection.js";
 
 export type ToolOutcomeObservation = {
   toolName: string;
@@ -55,6 +56,8 @@ export type HookContext = {
   turnSourceAccountId?: string;
   turnSourceThreadId?: string | number;
   loopDetection?: ToolLoopDetectionConfig;
+  /** Magister fork: side-effect class per canonical tool name, from the action registry. */
+  toolSideEffects?: ReadonlyMap<string, ToolSideEffect>;
   onToolOutcome?: ToolOutcomeObserver;
   allocateToolOutcomeOrdinal?: (toolCallId?: string) => number;
   skillsSnapshot?: SkillSnapshot;

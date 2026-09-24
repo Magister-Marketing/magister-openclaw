@@ -4,6 +4,7 @@ import { resolveCompactionTimeoutMs } from "../agents/embedded-agent-runner/comp
 import { resolveActiveEmbeddedRunRecoveryBlocker } from "../agents/embedded-agent-runner/run-state.js";
 import { getRuntimeConfig } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import type { DiagnosticToolLoopEvent } from "../infra/diagnostic-events.js";
 import {
   areDiagnosticsEnabledForProcess,
   emitInternalDiagnosticEvent as emitDiagnosticEvent,
@@ -1070,13 +1071,8 @@ export function logToolLoopAction(
     toolName: string;
     level: "warning" | "critical";
     action: "warn" | "block";
-    detector:
-      | "generic_repeat"
-      | "argument_churn"
-      | "unknown_tool_repeat"
-      | "known_poll_no_progress"
-      | "global_circuit_breaker"
-      | "ping_pong";
+    // One union, owned by the event type; the Magister fork adds guard kinds there.
+    detector: DiagnosticToolLoopEvent["detector"];
     count: number;
     message: string;
     pairedToolName?: string;

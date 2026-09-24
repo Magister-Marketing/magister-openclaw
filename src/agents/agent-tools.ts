@@ -69,6 +69,7 @@ import { resolveSessionPlacementComputer } from "./session-placement-computer.js
 import { subagentAttachmentRootForRun } from "./subagents/subagent-attachment-paths.js";
 import { resolveToolFsConfig } from "./tool-fs-policy.js";
 import { resolveToolLoopDetectionConfig } from "./tool-loop-detection-config.js";
+import { readToolSideEffect, type ToolSideEffect } from "./tool-loop-detection.js";
 import { buildDeclaredToolAllowlistContext } from "./tool-policy-declared-context.js";
 import {
   expandToolGroups,
@@ -91,6 +92,21 @@ import { wrapToolWithGatewayCallerIdentity } from "./tools/gateway-caller-contex
 const MEMORY_FLUSH_ALLOWED_TOOL_NAMES = new Set(["read", "write"]);
 
 export { resolveToolLoopDetectionConfig } from "./tool-loop-detection-config.js";
+
+// Magister fork: map canonical tool names to the side-effect class hosted action
+// tools declare, so loop admission and outcome classification can trust it.
+function collectToolSideEffects(
+  tools: readonly AnyAgentTool[],
+): ReadonlyMap<string, ToolSideEffect> | undefined {
+  const map = new Map<string, ToolSideEffect>();
+  for (const tool of tools) {
+    const sideEffect = readToolSideEffect((tool as { sideEffect?: unknown }).sideEffect);
+    if (sideEffect) {
+      map.set(normalizeToolPolicyName(tool.name), sideEffect);
+    }
+  }
+  return map.size > 0 ? map : undefined;
+}
 
 /** Internal preparation data stays outside the public harness factory options. */
 export function createOpenClawCodingToolsInternal(
@@ -785,6 +801,7 @@ export function createOpenClawCodingToolsInternal(
     ...(options?.memberRoleIds?.length ? { roleIds: [...options.memberRoleIds] } : {}),
   } satisfies PluginHookToolRequesterContext;
   const hasRequester = Object.keys(requester).length > 0;
+  const toolSideEffects = collectToolSideEffects(authorizedTools);
   const hookContext = {
     agentId: executionAgentId,
     ...(options?.config ? { config: options.config } : {}),
@@ -808,6 +825,8 @@ export function createOpenClawCodingToolsInternal(
     ...(options?.currentThreadTs ? { turnSourceThreadId: options.currentThreadTs } : {}),
     ...(options?.trace ? { trace: options.trace } : {}),
     loopDetection: resolveToolLoopDetectionConfig({ cfg: options?.config, agentId }),
+    // Magister fork: hosted action tools carry the registry's side-effect class.
+    ...(toolSideEffects ? { toolSideEffects } : {}),
     onToolOutcome: options?.onToolOutcome,
     allocateToolOutcomeOrdinal: options?.allocateToolOutcomeOrdinal,
   };

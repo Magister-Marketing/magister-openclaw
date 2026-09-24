@@ -10,7 +10,12 @@ import {
 } from "@openclaw/normalization-core/string-coerce";
 import type { ToolLoopDetectionConfig } from "../config/types.tools.js";
 import { sha256Hex } from "../infra/crypto-digest.js";
-import type { SessionState, ToolCallRecord } from "../logging/diagnostic-session-state.js";
+import type {
+  RuntimeResilienceOutcomeKind,
+  RuntimeResilienceRunState,
+  SessionState,
+  ToolCallRecord,
+} from "../logging/diagnostic-session-state.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { isPlainObject } from "../utils.js";
 import { isMessagingToolSendAction } from "./embedded-agent-messaging.js";
@@ -31,7 +36,11 @@ type LoopDetectorKind =
   | "unknown_tool_repeat"
   | "known_poll_no_progress"
   | "global_circuit_breaker"
-  | "ping_pong";
+  | "ping_pong"
+  // Magister fork: runtime resilience guards.
+  | "terminal_failure"
+  | "denial_circuit_breaker"
+  | "browser_launch_limit";
 
 type LoopDetectionResult =
   | { stuck: false }
@@ -51,9 +60,165 @@ export const UNKNOWN_TOOL_THRESHOLD = 10;
 const CRITICAL_THRESHOLD = 20;
 const GLOBAL_CIRCUIT_BREAKER_THRESHOLD = 30;
 
+/** Magister fork: side-effect class the hosted action registry assigns to a tool. */
+export type ToolSideEffect =
+  | "none"
+  | "draft"
+  | "internal_write"
+  | "external_write"
+  | "spend"
+  | "delete";
+
 type ToolLoopDetectionScope = {
   runId?: string;
+  /** Magister fork: trusted side-effect class of the tool being admitted. */
+  sideEffect?: ToolSideEffect;
 };
+
+const TOOL_SIDE_EFFECTS: ReadonlySet<string> = new Set([
+  "none",
+  "draft",
+  "internal_write",
+  "external_write",
+  "spend",
+  "delete",
+]);
+
+/** Magister fork: read the side-effect class a hosted action tool carries, if valid. */
+export function readToolSideEffect(value: unknown): ToolSideEffect | undefined {
+  return typeof value === "string" && TOOL_SIDE_EFFECTS.has(value)
+    ? (value as ToolSideEffect)
+    : undefined;
+}
+
+// Magister fork: independent, default-off runtime resilience guards. They act on
+// completed outcomes (terminal failures per strategy, user denials of side effects,
+// browser launches per run) and never change upstream's repeat/no-progress detectors.
+const DEFAULT_RUNTIME_RESILIENCE_CONFIG = {
+  enabled: false,
+  failureWarningThreshold: 2,
+  failureBlockThreshold: 5,
+  denialBlockThreshold: 3,
+  browserLaunchLimit: 10,
+};
+
+const RUNTIME_RESILIENCE_LEGACY_RUN_KEY = "__session__";
+const MAX_RUNTIME_RESILIENCE_RUNS_PER_SESSION = 32;
+const MAX_RUNTIME_FAILURE_STRATEGIES_PER_RUN = 256;
+
+type ResolvedRuntimeResilienceConfig = typeof DEFAULT_RUNTIME_RESILIENCE_CONFIG;
+
+export type RuntimeResilienceOutcomeDecision = {
+  guidance?: string;
+};
+
+function asPositiveInt(value: number | undefined, fallback: number): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    return fallback;
+  }
+  return value;
+}
+
+function resolveRuntimeResilienceConfig(
+  config?: ToolLoopDetectionConfig,
+): ResolvedRuntimeResilienceConfig {
+  const configured = config?.runtimeResilience;
+  const failureWarningThreshold = asPositiveInt(
+    configured?.failureWarningThreshold,
+    DEFAULT_RUNTIME_RESILIENCE_CONFIG.failureWarningThreshold,
+  );
+  const requestedBlockThreshold = asPositiveInt(
+    configured?.failureBlockThreshold,
+    DEFAULT_RUNTIME_RESILIENCE_CONFIG.failureBlockThreshold,
+  );
+  return {
+    enabled: configured?.enabled ?? DEFAULT_RUNTIME_RESILIENCE_CONFIG.enabled,
+    failureWarningThreshold,
+    failureBlockThreshold: Math.max(failureWarningThreshold + 1, requestedBlockThreshold),
+    denialBlockThreshold: asPositiveInt(
+      configured?.denialBlockThreshold,
+      DEFAULT_RUNTIME_RESILIENCE_CONFIG.denialBlockThreshold,
+    ),
+    browserLaunchLimit: asPositiveInt(
+      configured?.browserLaunchLimit,
+      DEFAULT_RUNTIME_RESILIENCE_CONFIG.browserLaunchLimit,
+    ),
+  };
+}
+
+function runtimeResilienceRunKey(runId?: string): string {
+  return normalizeRunId(runId) ?? RUNTIME_RESILIENCE_LEGACY_RUN_KEY;
+}
+
+function getRuntimeResilienceRunState(
+  state: SessionState,
+  runId: string | undefined,
+  options: { create: boolean },
+): RuntimeResilienceRunState | undefined {
+  const key = runtimeResilienceRunKey(runId);
+  const existing = state.runtimeResilienceRuns?.get(key);
+  if (existing) {
+    existing.lastTouchedAt = Date.now();
+    return existing;
+  }
+  if (!options.create) {
+    return undefined;
+  }
+  const runs = (state.runtimeResilienceRuns ??= new Map());
+  if (runs.size >= MAX_RUNTIME_RESILIENCE_RUNS_PER_SESSION) {
+    let oldestKey: string | undefined;
+    let oldestTouchedAt = Number.POSITIVE_INFINITY;
+    for (const [candidateKey, candidate] of runs) {
+      if (candidate.lastTouchedAt < oldestTouchedAt) {
+        oldestKey = candidateKey;
+        oldestTouchedAt = candidate.lastTouchedAt;
+      }
+    }
+    if (oldestKey) {
+      runs.delete(oldestKey);
+    }
+  }
+  const created: RuntimeResilienceRunState = {
+    lastTouchedAt: Date.now(),
+    browserLaunchCallIds: new Set(),
+    anonymousBrowserLaunchCount: 0,
+    deniedOperationIds: new Set(),
+    failuresByStrategy: new Map(),
+  };
+  runs.set(key, created);
+  return created;
+}
+
+function runtimeBrowserLaunchCount(runState: RuntimeResilienceRunState | undefined): number {
+  if (!runState) {
+    return 0;
+  }
+  return runState.browserLaunchCallIds.size + runState.anonymousBrowserLaunchCount;
+}
+
+function recordRuntimeBrowserLaunch(params: {
+  state: SessionState;
+  runId?: string;
+  toolCallId?: string;
+}): void {
+  const runState = getRuntimeResilienceRunState(params.state, params.runId, { create: true });
+  if (!runState) {
+    return;
+  }
+  if (params.toolCallId) {
+    runState.browserLaunchCallIds.add(params.toolCallId);
+    return;
+  }
+  runState.anonymousBrowserLaunchCount += 1;
+}
+
+function ensureRuntimeFailureStrategyCapacity(runState: RuntimeResilienceRunState): boolean {
+  if (runState.failuresByStrategy.size < MAX_RUNTIME_FAILURE_STRATEGIES_PER_RUN) {
+    return true;
+  }
+  runState.failureTrackingSaturated = true;
+  return false;
+}
 
 function selectHistoryForScope(
   history: readonly ToolCallRecord[],
@@ -69,6 +234,122 @@ function selectHistoryForScope(
  */
 export function hashToolCall(toolName: string, params: unknown): string {
   return `${toolName}:${sha256Hex(stableStringify(params))}`;
+}
+
+// Magister fork: digest for resilience evidence. Tool params and results can be
+// hostile proxies or carry cycles; diagnostics must never throw because of them.
+function digestStable(value: unknown): string {
+  return sha256Hex(stableStringifyFallback(value));
+}
+
+function stableStringifyFallback(value: unknown): string {
+  try {
+    return stableStringify(value);
+  } catch {
+    if (value === null || value === undefined) {
+      return `${value}`;
+    }
+    if (typeof value === "string") {
+      return value;
+    }
+    if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+      return String(value);
+    }
+    if (Array.isArray(value)) {
+      return `[array:${value.length}]`;
+    }
+    return `[unserializable:${typeof value}]`;
+  }
+}
+
+const VOLATILE_STRATEGY_KEYS = new Set([
+  "approval_id",
+  "call_id",
+  "hold_deadline",
+  "idempotency_key",
+  "operation_id",
+  "request_id",
+  "timestamp",
+]);
+
+function stripVolatileStrategyValues(value: unknown): unknown {
+  try {
+    if (Array.isArray(value)) {
+      return value.map(stripVolatileStrategyValues);
+    }
+    if (!isPlainObject(value)) {
+      return value;
+    }
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => !VOLATILE_STRATEGY_KEYS.has(key.toLowerCase()))
+        .map(([key, child]) => [key, stripVolatileStrategyValues(child)]),
+    );
+  } catch {
+    // Tool params can be hostile proxies. Fall back to the opaque value rather
+    // than making diagnostics fatal.
+    return value;
+  }
+}
+
+/** Same call minus the keys that legitimately change on every retry. */
+function runtimeStrategyHash(toolName: string, params: unknown): string {
+  return `${toolName}:${digestStable(stripVolatileStrategyValues(params))}`;
+}
+
+function isBrowserLaunch(toolName: string, params: unknown): boolean {
+  if (toolName !== "browser" || !isPlainObject(params)) {
+    return false;
+  }
+  return params.action === "start" || params.action === "open";
+}
+
+function isBrowserSideEffectAttempt(toolName: string, params: unknown): boolean {
+  if (toolName !== "browser" || !isPlainObject(params)) {
+    return false;
+  }
+  const action = params.action;
+  if (action === "upload" || action === "dialog") {
+    return true;
+  }
+  if (action !== "act") {
+    return false;
+  }
+  const request = isPlainObject(params.request) ? params.request : params;
+  const kind = request.kind;
+  return (
+    kind === "click" ||
+    kind === "clickCoords" ||
+    kind === "type" ||
+    kind === "press" ||
+    kind === "drag" ||
+    kind === "select" ||
+    kind === "fill" ||
+    kind === "evaluate"
+  );
+}
+
+function isTrustedSideEffect(sideEffect: ToolSideEffect | undefined): boolean {
+  return sideEffect !== undefined && sideEffect !== "none";
+}
+
+function isSideEffectAttempt(
+  toolName: string,
+  params: unknown,
+  scope?: ToolLoopDetectionScope,
+): boolean {
+  return isTrustedSideEffect(scope?.sideEffect) || isBrowserSideEffectAttempt(toolName, params);
+}
+
+function errorIdentityField(error: unknown, key: "code" | "status"): string | number | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+  const value = (error as Record<string, unknown>)[key];
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  return nonEmptyStringField(value) ?? undefined;
 }
 
 function digestToolOutcome(value: unknown): string {
@@ -516,6 +797,328 @@ function canonicalPairKey(signatureA: string, signatureB: string): string {
   return [signatureA, signatureB].toSorted().join("|");
 }
 
+// Magister fork: runtime resilience classification and guards.
+
+type RuntimeOutcomeClassification = {
+  kind: RuntimeResilienceOutcomeKind;
+  terminalFailureHash?: string;
+  deniedOperationId?: string;
+  sideEffecting?: boolean;
+};
+
+function parseTextObject(text: string): Record<string, unknown> | null {
+  if (!text) {
+    return null;
+  }
+  try {
+    const value: unknown = JSON.parse(text);
+    return isPlainObject(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Classify a hosted Magister action envelope ({ ok, status: { terminal }, error, receipt }). */
+function classifyMagisterEnvelope(
+  envelope: Record<string, unknown>,
+): RuntimeOutcomeClassification | null {
+  if (
+    typeof envelope.ok !== "boolean" ||
+    !isPlainObject(envelope.status) ||
+    typeof envelope.status.terminal !== "boolean"
+  ) {
+    return null;
+  }
+  const status = envelope.status;
+  const error = isPlainObject(envelope.error) ? envelope.error : null;
+  const receipt = isPlainObject(envelope.receipt) ? envelope.receipt : {};
+  const approval = isPlainObject(receipt.approval) ? receipt.approval : null;
+  const errorCode = nonEmptyStringField(error?.code);
+  const sideEffect = nonEmptyStringField(envelope.side_effect);
+  const sideEffecting = sideEffect !== null && sideEffect !== "none";
+  const approvalState =
+    nonEmptyStringField(approval?.state) ?? nonEmptyStringField(receipt.approval_state);
+
+  if (approvalState === "denied") {
+    return {
+      kind: "denial",
+      deniedOperationId:
+        nonEmptyStringField(approval?.operation_id) ??
+        nonEmptyStringField(envelope.operation_id) ??
+        undefined,
+      sideEffecting,
+    };
+  }
+  if (
+    status.terminal === false &&
+    (errorCode === "approval_required" || approvalState === "pending" || status.state === "running")
+  ) {
+    return { kind: "pending", sideEffecting };
+  }
+  if (error?.retryable === true || errorCode === "rate_limited") {
+    return { kind: "retryable", sideEffecting };
+  }
+  if (status.state === "failed" || !envelope.ok || errorCode) {
+    return {
+      kind: "failure",
+      terminalFailureHash: `magister:${errorCode ?? "terminal_failed"}`,
+      sideEffecting,
+    };
+  }
+  return { kind: "success", sideEffecting };
+}
+
+function classifyRuntimeOutcome(params: {
+  toolName: string;
+  toolParams: unknown;
+  result: unknown;
+  error: unknown;
+  trustedSideEffect?: ToolSideEffect;
+}): RuntimeOutcomeClassification {
+  const trustedSideEffecting = isTrustedSideEffect(params.trustedSideEffect);
+  if (params.error !== undefined) {
+    const errorClass =
+      params.error instanceof Error && params.error.name.trim()
+        ? params.error.name.trim().toLowerCase()
+        : typeof params.error;
+    const errorCode = errorIdentityField(params.error, "code");
+    const errorStatus = errorIdentityField(params.error, "status");
+    return {
+      kind: "failure",
+      terminalFailureHash: `exception:${digestStable({
+        class: errorClass,
+        code: errorCode ?? null,
+        status: errorStatus ?? null,
+      })}`,
+      sideEffecting: trustedSideEffecting,
+    };
+  }
+  if (!isPlainObject(params.result)) {
+    return params.result === undefined
+      ? { kind: "neutral", sideEffecting: trustedSideEffecting }
+      : { kind: "success", sideEffecting: trustedSideEffecting };
+  }
+
+  const details = isPlainObject(params.result.details) ? params.result.details : {};
+  const text = extractTextContent(params.result);
+  const envelope = parseTextObject(text);
+  const magister = envelope ? classifyMagisterEnvelope(envelope) : null;
+  if (magister) {
+    return {
+      ...magister,
+      sideEffecting: magister.sideEffecting || trustedSideEffecting,
+    };
+  }
+
+  const status = nonEmptyStringField(details.status)?.toLowerCase();
+  const deniedReason = nonEmptyStringField(details.deniedReason)?.toLowerCase();
+  const reason = nonEmptyStringField(details.reason)?.toLowerCase();
+  if (status === "blocked" && deniedReason === "tool-loop") {
+    return { kind: "neutral", sideEffecting: trustedSideEffecting };
+  }
+  if (status === "blocked" && deniedReason === "plugin-approval" && reason === "denied by user") {
+    return {
+      kind: "denial",
+      deniedOperationId: runtimeStrategyHash(params.toolName, params.toolParams),
+      sideEffecting:
+        trustedSideEffecting || isBrowserSideEffectAttempt(params.toolName, params.toolParams),
+    };
+  }
+  if (status === "blocked") {
+    return { kind: "neutral", sideEffecting: trustedSideEffecting };
+  }
+  if (status === "approval-pending" || status === "running") {
+    return { kind: "pending", sideEffecting: trustedSideEffecting };
+  }
+  if (status === "approval-unavailable") {
+    return { kind: "retryable", sideEffecting: trustedSideEffecting };
+  }
+  if (params.toolName === "exec" && status === "completed") {
+    const exitCode = typeof details.exitCode === "number" ? details.exitCode : null;
+    if (exitCode !== null && exitCode !== 0) {
+      return {
+        kind: "failure",
+        terminalFailureHash: `exec:exit:${exitCode}`,
+        sideEffecting: trustedSideEffecting,
+      };
+    }
+    return { kind: "success", sideEffecting: trustedSideEffecting };
+  }
+  if (status === "failed" || status === "error" || status === "timeout") {
+    const code =
+      nonEmptyStringField(details.errorCode) ?? nonEmptyStringField(details.code) ?? status;
+    return {
+      kind: "failure",
+      terminalFailureHash: `tool:${code.toLowerCase()}`,
+      sideEffecting: trustedSideEffecting,
+    };
+  }
+  return { kind: "success", sideEffecting: trustedSideEffecting };
+}
+
+function recordRuntimeResilienceOutcomeState(params: {
+  state: SessionState;
+  runId?: string;
+  record: ToolCallRecord;
+}): void {
+  const runState = getRuntimeResilienceRunState(params.state, params.runId, { create: true });
+  if (!runState) {
+    return;
+  }
+  const record = params.record;
+  const strategyHash = record.resilienceStrategyHash;
+  if (record.resilienceOutcomeKind === "success" && strategyHash) {
+    runState.failuresByStrategy.delete(strategyHash);
+  } else if (
+    record.resilienceOutcomeKind === "failure" &&
+    strategyHash &&
+    record.terminalFailureHash
+  ) {
+    const existing = runState.failuresByStrategy.get(strategyHash);
+    if (existing) {
+      existing.count = existing.failureHash === record.terminalFailureHash ? existing.count + 1 : 1;
+      existing.failureHash = record.terminalFailureHash;
+      existing.updatedAt = Date.now();
+    } else if (ensureRuntimeFailureStrategyCapacity(runState)) {
+      runState.failuresByStrategy.set(strategyHash, {
+        failureHash: record.terminalFailureHash,
+        count: 1,
+        updatedAt: Date.now(),
+      });
+    }
+  }
+
+  if (
+    record.resilienceOutcomeKind === "denial" &&
+    record.sideEffecting === true &&
+    record.deniedOperationId
+  ) {
+    const sizeBefore = runState.deniedOperationIds.size;
+    runState.deniedOperationIds.add(record.deniedOperationId);
+    record.resilienceDenialWasNew = runState.deniedOperationIds.size > sizeBefore;
+  }
+}
+
+/** Independent, default-off hosted-runtime safeguards based on completed outcomes. */
+export function detectRuntimeResilienceBlock(
+  state: SessionState,
+  toolName: string,
+  params: unknown,
+  config?: ToolLoopDetectionConfig,
+  scope?: ToolLoopDetectionScope,
+): LoopDetectionResult {
+  const resolved = resolveRuntimeResilienceConfig(config);
+  if (!resolved.enabled) {
+    return { stuck: false };
+  }
+  const runState = getRuntimeResilienceRunState(state, scope?.runId, { create: false });
+
+  if (isBrowserLaunch(toolName, params)) {
+    const launchCount = runtimeBrowserLaunchCount(runState);
+    if (launchCount >= resolved.browserLaunchLimit) {
+      return {
+        stuck: true,
+        level: "critical",
+        detector: "browser_launch_limit",
+        count: launchCount,
+        message:
+          `Browser launch limit reached (${resolved.browserLaunchLimit} start/open calls in this run). ` +
+          "Reuse an existing tab, change strategy, or report the blocker; do not launch another browser tab.",
+        warningKey: `browser-launch:${scope?.runId ?? "session"}`,
+      };
+    }
+  }
+
+  const deniedCount = runState?.deniedOperationIds.size ?? 0;
+  if (
+    deniedCount >= resolved.denialBlockThreshold &&
+    isSideEffectAttempt(toolName, params, scope)
+  ) {
+    return {
+      stuck: true,
+      level: "critical",
+      detector: "denial_circuit_breaker",
+      count: deniedCount,
+      message:
+        `Side-effect circuit breaker is active after ${deniedCount} distinct user denials in this run. ` +
+        "Do not attempt another side effect or evade the decisions through another tool. Ask the user for a different approach; read-only verification is still allowed.",
+      warningKey: `denial-breaker:${scope?.runId ?? "session"}`,
+    };
+  }
+
+  const strategyHash = runtimeStrategyHash(toolName, params);
+  const failureState = runState?.failuresByStrategy.get(strategyHash);
+  const failureCount = failureState?.count ?? 0;
+  if (failureCount >= resolved.failureBlockThreshold - 1) {
+    return {
+      stuck: true,
+      level: "critical",
+      detector: "terminal_failure",
+      count: failureCount,
+      message:
+        `Blocked the ${resolved.failureBlockThreshold}th equivalent attempt after ${failureCount} terminal failures with the same strategy. ` +
+        "Do not retry or cosmetically rephrase this call. Change strategy or report the blocker and the evidence already gathered.",
+      warningKey: `terminal-failure:${scope?.runId ?? "session"}:${strategyHash}`,
+    };
+  }
+  if (runState?.failureTrackingSaturated === true && !failureState) {
+    return {
+      stuck: true,
+      level: "critical",
+      detector: "terminal_failure",
+      count: MAX_RUNTIME_FAILURE_STRATEGIES_PER_RUN,
+      message:
+        "Blocked a new strategy after this run exhausted its terminal-failure tracking capacity. " +
+        "Stop broad retry exploration and report the blocker and evidence already gathered.",
+      warningKey: `terminal-failure-capacity:${scope?.runId ?? "session"}`,
+    };
+  }
+
+  return { stuck: false };
+}
+
+export function resolveRuntimeResilienceOutcomeDecision(
+  state: SessionState,
+  record: ToolCallRecord,
+  config?: ToolLoopDetectionConfig,
+  scope?: ToolLoopDetectionScope,
+): RuntimeResilienceOutcomeDecision {
+  const resolved = resolveRuntimeResilienceConfig(config);
+  if (!resolved.enabled) {
+    return {};
+  }
+  const runState = getRuntimeResilienceRunState(state, scope?.runId, { create: false });
+  if (record.resilienceOutcomeKind === "failure" && record.resilienceStrategyHash) {
+    const failureState = runState?.failuresByStrategy.get(record.resilienceStrategyHash);
+    const count =
+      failureState && failureState.failureHash === record.terminalFailureHash
+        ? failureState.count
+        : 0;
+    if (count === resolved.failureWarningThreshold) {
+      return {
+        guidance:
+          `RECOVERY REQUIRED: this strategy has produced the same terminal failure ${count} times. ` +
+          "Inspect the structured error and change strategy now. Do not retry with cosmetic argument changes; if no safe alternative exists, report the blocker and the evidence already gathered.",
+      };
+    }
+  }
+  if (
+    record.resilienceOutcomeKind === "denial" &&
+    record.sideEffecting === true &&
+    record.deniedOperationId
+  ) {
+    const deniedCount = runState?.deniedOperationIds.size ?? 0;
+    if (deniedCount === resolved.denialBlockThreshold && record.resilienceDenialWasNew === true) {
+      return {
+        guidance:
+          `USER-DECISION CIRCUIT BREAKER: ${deniedCount} distinct side-effect operations were denied in this run. ` +
+          "Further side effects will be blocked. Do not retry, rephrase, or use the browser to pursue the denied outcomes; ask the user for a different approach.",
+      };
+    }
+  }
+  return {};
+}
+
 /**
  * Detect if an agent is stuck in a repetitive tool call loop.
  * Checks if the same tool+params combination has been called excessively.
@@ -672,7 +1275,7 @@ export function recordToolCall(
   toolName: string,
   params: unknown,
   toolCallId?: string,
-  _config?: ToolLoopDetectionConfig,
+  config?: ToolLoopDetectionConfig,
   scope?: ToolLoopDetectionScope,
 ): void {
   const runId = normalizeRunId(scope?.runId);
@@ -683,10 +1286,17 @@ export function recordToolCall(
   state.toolCallHistory.push({
     toolName,
     argsHash: hashToolCall(toolName, params),
+    resilienceStrategyHash: runtimeStrategyHash(toolName, params),
+    sideEffecting: isTrustedSideEffect(scope?.sideEffect),
+    browserLaunch: isBrowserLaunch(toolName, params),
     toolCallId,
     ...(runId && { runId }),
     timestamp: Date.now(),
   });
+
+  if (resolveRuntimeResilienceConfig(config).enabled && isBrowserLaunch(toolName, params)) {
+    recordRuntimeBrowserLaunch({ state, runId, toolCallId });
+  }
 
   if (state.toolCallHistory.length > TOOL_CALL_HISTORY_SIZE) {
     state.toolCallHistory.splice(0, state.toolCallHistory.length - TOOL_CALL_HISTORY_SIZE);
@@ -706,6 +1316,8 @@ export function recordToolCallOutcome(
     error?: unknown;
     config?: ToolLoopDetectionConfig;
     runId?: string;
+    /** Magister fork: side-effect class the action registry assigned to this tool. */
+    trustedSideEffect?: ToolSideEffect;
   },
 ): ToolCallRecord | undefined {
   const runId = normalizeRunId(params.runId);
@@ -713,6 +1325,13 @@ export function recordToolCallOutcome(
   if (!outcome.resultHash && !outcome.outcomeKind) {
     return undefined;
   }
+  const resilienceOutcome = classifyRuntimeOutcome({
+    toolName: params.toolName,
+    toolParams: params.toolParams,
+    result: params.result,
+    error: params.error,
+    trustedSideEffect: params.trustedSideEffect,
+  });
 
   if (!state.toolCallHistory) {
     state.toolCallHistory = [];
@@ -747,6 +1366,13 @@ export function recordToolCallOutcome(
       delete call.noProgress;
     }
     call.unknownToolName = outcome.unknownToolName;
+    call.resilienceStrategyHash ??= runtimeStrategyHash(params.toolName, params.toolParams);
+    call.resilienceOutcomeKind = resilienceOutcome.kind;
+    call.terminalFailureHash = resilienceOutcome.terminalFailureHash;
+    call.deniedOperationId =
+      resilienceOutcome.deniedOperationId ??
+      (resilienceOutcome.kind === "denial" ? call.resilienceStrategyHash : undefined);
+    call.sideEffecting = resilienceOutcome.sideEffecting ?? call.sideEffecting;
     matched = true;
     recordedOutcome = call;
     break;
@@ -763,10 +1389,24 @@ export function recordToolCallOutcome(
       failureIdentityHash: outcome.failureIdentityHash,
       ...(outcome.noProgress ? { noProgress: true as const } : {}),
       unknownToolName: outcome.unknownToolName,
+      resilienceStrategyHash: runtimeStrategyHash(params.toolName, params.toolParams),
+      resilienceOutcomeKind: resilienceOutcome.kind,
+      terminalFailureHash: resilienceOutcome.terminalFailureHash,
+      deniedOperationId:
+        resilienceOutcome.deniedOperationId ??
+        (resilienceOutcome.kind === "denial"
+          ? runtimeStrategyHash(params.toolName, params.toolParams)
+          : undefined),
+      sideEffecting: resilienceOutcome.sideEffecting,
+      browserLaunch: isBrowserLaunch(params.toolName, params.toolParams),
       timestamp: Date.now(),
     };
     state.toolCallHistory.push(record);
     recordedOutcome = record;
+  }
+
+  if (recordedOutcome && resolveRuntimeResilienceConfig(params.config).enabled) {
+    recordRuntimeResilienceOutcomeState({ state, runId, record: recordedOutcome });
   }
 
   if (state.toolCallHistory.length > TOOL_CALL_HISTORY_SIZE) {

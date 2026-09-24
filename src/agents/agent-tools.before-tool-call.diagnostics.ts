@@ -54,6 +54,7 @@ import { normalizeFileToolPathParam } from "./agent-tools.params.js";
 import { getBeforeToolCallSourceTool } from "./before-tool-call-metadata.js";
 import { getChannelAgentToolMeta } from "./channel-tool-metadata.js";
 import { resolveAgentRunAbortLifecycleFields } from "./run-termination.js";
+import type { RuntimeResilienceOutcomeDecision } from "./tool-loop-detection.js";
 import { normalizeToolPolicyName } from "./tool-policy.js";
 import {
   resolveToolExecutionErrorKind,
@@ -641,17 +642,20 @@ export async function recordLoopOutcome(args: {
   resultContentSource?: AnyAgentTool["resultContentSource"];
   toolCallOrdinal?: number;
   terminalPresentation?: string;
-}): Promise<void> {
+}): Promise<RuntimeResilienceOutcomeDecision> {
   if (!args.ctx?.sessionKey && !args.ctx?.sessionId) {
-    return;
+    return {};
   }
   let recordedOutcome: ToolOutcomeObservation | undefined;
+  // Magister fork: model-facing guidance from the runtime resilience guards.
+  let resilienceDecision: RuntimeResilienceOutcomeDecision = {};
   try {
     const {
       getArgumentChurnNoProgressStreak,
       getDiagnosticSessionState,
       markDiagnosticArgumentChurnObservation,
       recordToolCallOutcome,
+      resolveRuntimeResilienceOutcomeDecision,
     } = await loadBeforeToolCallRuntime();
     const sessionState = getDiagnosticSessionState({
       sessionKey: args.ctx.sessionKey,
@@ -665,7 +669,18 @@ export async function recordLoopOutcome(args: {
       error: args.error,
       config: args.ctx.loopDetection,
       ...(args.ctx.runId && { runId: args.ctx.runId }),
+      ...(args.ctx.toolSideEffects?.get(args.toolName)
+        ? { trustedSideEffect: args.ctx.toolSideEffects.get(args.toolName) }
+        : {}),
     });
+    if (record) {
+      resilienceDecision = resolveRuntimeResilienceOutcomeDecision(
+        sessionState,
+        record,
+        args.ctx.loopDetection,
+        args.ctx.runId ? { runId: args.ctx.runId } : undefined,
+      );
+    }
     const churnContinues =
       record !== undefined &&
       getArgumentChurnNoProgressStreak(
@@ -696,6 +711,7 @@ export async function recordLoopOutcome(args: {
   if (recordedOutcome) {
     args.ctx.onToolOutcome?.(recordedOutcome);
   }
+  return resilienceDecision;
 }
 
 /** Run the full before_tool_call policy chain for a pending tool call. */

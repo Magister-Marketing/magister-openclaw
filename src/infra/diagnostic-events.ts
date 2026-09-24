@@ -521,7 +521,11 @@ export type DiagnosticToolLoopEvent = DiagnosticBaseEvent & {
     | "unknown_tool_repeat"
     | "known_poll_no_progress"
     | "global_circuit_breaker"
-    | "ping_pong";
+    | "ping_pong"
+    // Magister fork: runtime resilience guards (tool-loop-detection.ts).
+    | "terminal_failure"
+    | "denial_circuit_breaker"
+    | "browser_launch_limit";
   count: number;
   message: string;
   pairedToolName?: string;
