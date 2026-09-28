@@ -82,6 +82,33 @@ describe("GPT-5 prompt overlay runtime contract", () => {
     expect(contribution?.sectionOverrides).toEqual({});
   });
 
+  it("applies the same contract to GPT-6, including the Magister gateway id", () => {
+    for (const modelId of [
+      "gpt-6-luna",
+      "gpt-6-sol",
+      "gpt-6-astra",
+      "magister-gateway/openai/gpt-6-luna",
+    ]) {
+      const contribution = resolveGpt5SystemPromptContribution({
+        providerId: OPENAI_CONTRACT_PROVIDER_ID,
+        modelId,
+      });
+      expect(contribution?.stablePrefix, modelId).toContain("<persona_latch>");
+    }
+  });
+
+  it("does not match other generations or look-alike ids", () => {
+    for (const modelId of ["gpt-4o", "gpt-60", "gpt-7-luna", "my-gpt-6-luna"]) {
+      expect(
+        resolveGpt5SystemPromptContribution({
+          providerId: OPENAI_CONTRACT_PROVIDER_ID,
+          modelId,
+        }),
+        modelId,
+      ).toBeUndefined();
+    }
+  });
+
   it("does not apply GPT-5 overlays to non-GPT-5 models", () => {
     expect(
       resolveGpt5SystemPromptContribution({
