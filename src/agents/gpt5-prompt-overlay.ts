@@ -2,7 +2,10 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeOptionalLowercaseString } from "../shared/string-coerce.js";
 import type { ProviderSystemPromptContribution } from "./system-prompt-contribution.js";
 
-const GPT5_MODEL_ID_PATTERN = /(?:^|[/:])gpt-5(?:[.-]|$)/i;
+// GPT-6 (Astra, Sol, Luna) keeps the GPT-5 behaviour contract: without it a
+// Machine provisioned on a GPT-6 default silently drops the persona latch,
+// the interaction-style overlay and empty-reply detection.
+const GPT5_MODEL_ID_PATTERN = /(?:^|[/:])gpt-[56](?:[.-]|$)/i;
 const OPENAI_FAMILY_GPT5_PROMPT_OVERLAY_PROVIDERS = new Set([
   "codex",
   "codex-cli",
