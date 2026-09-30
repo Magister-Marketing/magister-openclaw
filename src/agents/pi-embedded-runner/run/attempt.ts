@@ -139,7 +139,6 @@ import {
 import { resolveSandboxContext } from "../../sandbox.js";
 import { resolveSandboxRuntimeStatus } from "../../sandbox/runtime-status.js";
 import { repairSessionFileIfNeeded } from "../../session-file-repair.js";
-import { resolveSessionStableTaskText } from "../../session-task-text.js";
 import { guardSessionManager } from "../../session-tool-result-guard-wrapper.js";
 import {
   sanitizeToolUseResultPairing,
@@ -757,21 +756,12 @@ export async function runEmbeddedAttempt(
           config: params.config,
         });
 
-    // Key skill routing on the session's first user message, not this turn's
-    // prompt: the hints render inside the cached system prompt, and a per-turn
-    // selection flap forfeits the whole OpenAI prompt cache (see
-    // session-task-text.ts).
-    const skillsTaskText = await resolveSessionStableTaskText({
-      sessionFile: params.sessionFile,
-      currentPrompt: params.prompt,
-    });
     const skillsPrompt = resolveSkillsPromptForRun({
       skillsSnapshot: params.skillsSnapshot,
       entries: shouldLoadSkillEntries ? skillEntries : undefined,
       config: params.config,
       workspaceDir: effectiveWorkspace,
       agentId: sessionAgentId,
-      taskText: skillsTaskText,
       runtimeChannel,
     });
     const skillsCatalogPrompt = resolveSkillsCatalogForRun({

@@ -43,11 +43,11 @@ describe("system prompt cache boundary helpers", () => {
     );
   });
 
-  it("places the complete skills catalog in the stable prefix and hints below the boundary", () => {
+  it("places the catalog and skill rules in the stable prefix and preloaded bodies below the boundary", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/data/.openclaw/workspace",
       toolNames: ["exec", "message"],
-      skillsPrompt: "Task-selected skill hints for the current request follow.",
+      skillsPrompt: "<preloaded_skills>PRELOAD_SENTINEL</preloaded_skills>",
       skillsCatalogPrompt: "<available_skills>CATALOG_SENTINEL</available_skills>",
       contextFiles: [{ path: "AGENTS.md", content: "Static platform policy" }],
       runtimeInfo: { channel: "webchat", capabilities: ["inlineButtons"] },
@@ -55,10 +55,10 @@ describe("system prompt cache boundary helpers", () => {
     const split = splitSystemPromptCacheBoundary(prompt);
     expect(split).toBeDefined();
     expect(split?.stablePrefix).toContain("CATALOG_SENTINEL");
-    expect(split?.stablePrefix).toContain("## Skills catalog (complete)");
+    expect(split?.stablePrefix).toContain("## Skills (mandatory)");
     expect(split?.dynamicSuffix).not.toContain("CATALOG_SENTINEL");
-    expect(split?.dynamicSuffix).toContain("Task-selected skill hints");
-    expect(split?.stablePrefix).not.toContain("Task-selected skill hints");
+    expect(split?.dynamicSuffix).toContain("PRELOAD_SENTINEL");
+    expect(split?.stablePrefix).not.toContain("PRELOAD_SENTINEL");
   });
 
   it("keys the memoized stable prefix on the skills catalog", () => {
@@ -81,7 +81,7 @@ describe("system prompt cache boundary helpers", () => {
     expect(second?.stablePrefix).not.toContain("CATALOG_A");
   });
 
-  it("keeps channel, task-selected skills, and project state out of stable bytes", () => {
+  it("keeps channel, preloaded skills, and project state out of stable bytes", () => {
     const build = (params: { channel: string; skillsPrompt: string }) =>
       buildAgentSystemPrompt({
         workspaceDir: "/data/.openclaw/workspace",
@@ -99,15 +99,18 @@ describe("system prompt cache boundary helpers", () => {
       });
 
     const webchat = splitSystemPromptCacheBoundary(
-      build({ channel: "webchat", skillsPrompt: "SEO task-selected hint" }),
+      build({
+        channel: "webchat",
+        skillsPrompt: "<preloaded_skills>webchat body</preloaded_skills>",
+      }),
     );
     const slack = splitSystemPromptCacheBoundary(
-      build({ channel: "slack", skillsPrompt: "Email task-selected hint" }),
+      build({ channel: "slack", skillsPrompt: "<preloaded_skills>slack body</preloaded_skills>" }),
     );
     expect(webchat).toBeDefined();
     expect(slack).toBeDefined();
     expect(webchat?.stablePrefix).toBe(slack?.stablePrefix);
-    expect(webchat?.dynamicSuffix).toContain("SEO task-selected hint");
+    expect(webchat?.dynamicSuffix).toContain("<preloaded_skills>webchat body</preloaded_skills>");
     expect(webchat?.dynamicSuffix).toContain("Webchat supports canonical `<json-render>`");
     expect(webchat?.dynamicSuffix).toContain("magister-ui-render skill is preloaded");
     expect(webchat?.dynamicSuffix).toContain("You MUST emit one minimal JSON-render block");
@@ -119,7 +122,7 @@ describe("system prompt cache boundary helpers", () => {
     expect(webchat?.dynamicSuffix).toContain("do not emit JSON-render or repeat its approval URL");
     expect(webchat?.dynamicSuffix).toContain("never bypass approval requirements");
     expect(webchat?.dynamicSuffix).not.toContain("This channel does not render JSON-render");
-    expect(slack?.dynamicSuffix).toContain("Email task-selected hint");
+    expect(slack?.dynamicSuffix).toContain("<preloaded_skills>slack body</preloaded_skills>");
     expect(slack?.dynamicSuffix).toContain("Never emit `<json-render>`");
     expect(slack?.dynamicSuffix).not.toContain("You MUST emit one minimal JSON-render block");
 
@@ -130,7 +133,10 @@ describe("system prompt cache boundary helpers", () => {
       "Integration readiness changed",
     ]) {
       const composed = prependSystemPromptAdditionAfterCacheBoundary({
-        systemPrompt: build({ channel: "webchat", skillsPrompt: "SEO task-selected hint" }),
+        systemPrompt: build({
+          channel: "webchat",
+          skillsPrompt: "<preloaded_skills>webchat body</preloaded_skills>",
+        }),
         systemPromptAddition: addition,
       });
       expect(splitSystemPromptCacheBoundary(composed)?.stablePrefix).toBe(stable);

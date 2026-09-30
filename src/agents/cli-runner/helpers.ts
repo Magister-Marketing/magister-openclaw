@@ -80,6 +80,7 @@ export function buildSystemPrompt(params: {
   tools: AgentTool[];
   contextFiles?: EmbeddedContextFile[];
   skillsPrompt?: string;
+  skillsCatalogPrompt?: string;
   modelDisplay: string;
   agentId?: string;
 }) {
@@ -125,6 +126,7 @@ export function buildSystemPrompt(params: {
     toolNames: params.tools.map((tool) => tool.name),
     modelAliasLines: buildModelAliasLines(params.config),
     skillsPrompt: params.skillsPrompt,
+    skillsCatalogPrompt: params.skillsCatalogPrompt,
     userTimezone,
     userTime,
     userTimeFormat,

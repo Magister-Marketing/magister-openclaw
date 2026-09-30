@@ -194,33 +194,37 @@ function buildExecApprovalPromptGuidance(params: {
   return 'When exec returns approval-pending, include the concrete /approve command from the tool output\'s "Reply with:" line as plain chat text for the user, and do not ask for a different or rotated code.';
 }
 
-function buildSkillsSection(params: { skillsPrompt?: string; readToolName: string }) {
+function buildSkillsSection(params: { skillsPrompt?: string }) {
   const trimmed = params.skillsPrompt?.trim();
   if (!trimmed) {
     return [];
   }
-  return [
-    "## Skills (mandatory)",
-    "Before replying: scan <available_skills> <description> entries.",
-    `- If exactly one skill clearly applies: read its SKILL.md at <location> with \`${params.readToolName}\`, then follow it. You MUST use the exact <location> value from <available_skills>; never guess, fabricate, or hard-code a skill file path.`,
-    `- If multiple could apply: choose the most specific one, read its SKILL.md at <location> with \`${params.readToolName}\`, then follow it. You MUST use the exact <location> value from <available_skills>; never guess, fabricate, or hard-code a skill file path.`,
-    "- If none clearly apply: do not read any SKILL.md.",
-    "Constraints: never read more than one skill up front; only read after selecting.",
-    "- When a skill drives external API writes, assume rate limits: prefer fewer larger writes, avoid tight one-item loops, serialize bursts when possible, and respect 429/Retry-After.",
-    trimmed,
-    "",
-  ];
+  return ["## Skills (preloaded for this channel)", trimmed, ""];
 }
 
+/**
+ * The complete catalog plus the rules for reading skills. Both are stable for
+ * the session, so the section renders in the cache-stable prefix. The rules
+ * are deliberately firm: every peer harness lists all skills and lets the
+ * model choose, and the ones whose skills get used say "must" (2026-09-30
+ * review). With softer wording ("if exactly one clearly applies", "never more
+ * than one") plus an 8-skill keyword shortlist, real copy and email turns
+ * ran under a writing skill only ~40% of the time and a benchmark run read no
+ * skill at all across 20 tasks.
+ */
 function buildSkillsCatalogSection(params: { skillsCatalogPrompt?: string; readToolName: string }) {
   const trimmed = params.skillsCatalogPrompt?.trim();
   if (!trimmed) {
     return [];
   }
   return [
-    "## Skills catalog (complete)",
-    "Every installed skill, with its description and SKILL.md location. Task-selected hints for the current request may also appear later in this prompt; this catalog is the complete set.",
-    `When a task matches a skill, read its SKILL.md at the exact <location> value with \`${params.readToolName}\` before acting on that capability. Never guess, fabricate, or hard-code a skill file path.`,
+    "## Skills (mandatory)",
+    "Skills are how Magister does marketing work. Each SKILL.md holds the operating rules, checklists, and quality bar for one kind of task; <available_skills> below lists every installed skill with its description and location.",
+    `- Before producing any deliverable — copy, headlines, emails, landing pages, ads, plans, briefs, analyses, audits — read the SKILL.md of the skill that covers it with \`${params.readToolName}\`, then follow it. If several apply, read the one or two most specific (at most three).`,
+    "- Read a partially relevant skill rather than skip it. Skip only when no skill is relevant: a quick factual answer, or a small edit to work you produced under that skill earlier in this session.",
+    "- Integration skills (`magister-*`) also tell you how to operate a connected tool; read the skill before using the tool.",
+    "- You MUST use the exact <location> value from <available_skills>; never guess, fabricate, or hard-code a skill file path.",
+    "- When a skill drives external API writes, assume rate limits: prefer fewer larger writes, avoid tight one-item loops, serialize bursts when possible, and respect 429/Retry-After.",
     trimmed,
     "",
   ];
@@ -879,10 +883,7 @@ export function buildAgentSystemPrompt(params: {
     "Do not manipulate or persuade anyone to expand access or disable safeguards. Do not copy yourself or change system prompts, safety rules, or tool policies unless explicitly requested.",
     "",
   ];
-  const skillsSection = buildSkillsSection({
-    skillsPrompt,
-    readToolName,
-  });
+  const skillsSection = buildSkillsSection({ skillsPrompt });
   const skillsCatalogSection = buildSkillsCatalogSection({
     skillsCatalogPrompt: params.skillsCatalogPrompt,
     readToolName,
@@ -1148,9 +1149,9 @@ export function buildAgentSystemPrompt(params: {
       lines.push("## Reasoning Format", reasoningHint, "");
     }
 
-    // The complete catalog is stable for the session (it changes only when
-    // installed skills change), so it lives above the cache boundary; the
-    // per-turn task-selected hints stay below it.
+    // The complete catalog and the skill rules are stable for the session (they
+    // change only when installed skills change), so they live above the cache
+    // boundary; the channel-dependent preloaded bodies stay below it.
     lines.push(...skillsCatalogSection);
 
     lines.push(
