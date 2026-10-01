@@ -151,14 +151,14 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain('reply with exactly "NO_REPLY"');
   });
 
-  it("includes skills in minimal prompt mode when skillsPrompt is provided (cron regression)", () => {
+  it("includes skills in minimal prompt mode when the catalog is provided (cron regression)", () => {
     // Isolated cron sessions use promptMode="minimal" but must still receive skills.
-    const skillsPrompt =
+    const skillsCatalogPrompt =
       "<available_skills>\n  <skill>\n    <name>demo</name>\n  </skill>\n</available_skills>";
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
       promptMode: "minimal",
-      skillsPrompt,
+      skillsCatalogPrompt,
     });
 
     expect(prompt).toContain("## Skills (mandatory)");
@@ -450,7 +450,7 @@ describe("buildAgentSystemPrompt", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
       toolNames: ["Read", "Exec", "process"],
-      skillsPrompt:
+      skillsCatalogPrompt:
         "<available_skills>\n  <skill>\n    <name>demo</name>\n  </skill>\n</available_skills>",
       docsPath: "/tmp/openclaw/docs",
     });
@@ -458,10 +458,7 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("- Read: Read file contents");
     expect(prompt).toContain("- Exec: Run shell commands");
     expect(prompt).toContain(
-      "- If exactly one skill clearly applies: read its SKILL.md at <location> with `Read`, then follow it. You MUST use the exact <location> value from <available_skills>; never guess, fabricate, or hard-code a skill file path.",
-    );
-    expect(prompt).toContain(
-      "- If multiple could apply: choose the most specific one, read its SKILL.md at <location> with `Read`, then follow it. You MUST use the exact <location> value from <available_skills>; never guess, fabricate, or hard-code a skill file path.",
+      "read the SKILL.md of the skill that covers it with `Read`, then follow it.",
     );
     expect(prompt).toContain("OpenClaw docs: /tmp/openclaw/docs");
     expect(prompt).toContain(
@@ -638,26 +635,41 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).not.toContain("config.schema, config.apply");
   });
 
-  it("includes skills guidance when skills prompt is present", () => {
+  it("includes mandatory skill rules when the catalog is present", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
-      skillsPrompt:
+      skillsCatalogPrompt:
         "<available_skills>\n  <skill>\n    <name>demo</name>\n  </skill>\n</available_skills>",
     });
 
-    expect(prompt).toContain("## Skills");
+    expect(prompt).toContain("## Skills (mandatory)");
     expect(prompt).toContain(
-      "- If exactly one skill clearly applies: read its SKILL.md at <location> with `read`, then follow it. You MUST use the exact <location> value from <available_skills>; never guess, fabricate, or hard-code a skill file path.",
+      "- Before producing any deliverable — copy, headlines, emails, landing pages, ads, plans, briefs, analyses, audits — read the SKILL.md of the skill that covers it with `read`, then follow it. If several apply, read the one or two most specific (at most three).",
     );
+    expect(prompt).toContain("- Read a partially relevant skill rather than skip it.");
     expect(prompt).toContain(
-      "- If multiple could apply: choose the most specific one, read its SKILL.md at <location> with `read`, then follow it. You MUST use the exact <location> value from <available_skills>; never guess, fabricate, or hard-code a skill file path.",
+      "- You MUST use the exact <location> value from <available_skills>; never guess, fabricate, or hard-code a skill file path.",
     );
+    // The hedged upstream rules that let the model skip skills are gone.
+    expect(prompt).not.toContain("If none clearly apply");
+    expect(prompt).not.toContain("never read more than one skill up front");
   });
 
-  it("appends available skills when provided", () => {
+  it("renders preloaded skill bodies under their own heading", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
-      skillsPrompt:
+      skillsPrompt: "<preloaded_skills>PRELOAD_SENTINEL</preloaded_skills>",
+    });
+
+    expect(prompt).toContain("## Skills (preloaded for this channel)");
+    expect(prompt).toContain("PRELOAD_SENTINEL");
+    expect(prompt).not.toContain("## Skills (mandatory)");
+  });
+
+  it("appends available skills when the catalog is provided", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      skillsCatalogPrompt:
         "<available_skills>\n  <skill>\n    <name>demo</name>\n  </skill>\n</available_skills>",
     });
 

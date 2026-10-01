@@ -226,7 +226,7 @@ describe("runCliAgent spawn path", () => {
       workspaceDir: "/tmp",
       modelDisplay: "claude-cli/sonnet",
       tools: [],
-      skillsPrompt: [
+      skillsCatalogPrompt: [
         "<available_skills>",
         "  <skill>",
         "    <name>weather</name>",

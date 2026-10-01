@@ -135,44 +135,7 @@ const DEFAULT_MIN_RAW_ENTRIES_PER_DIRECTORY_SCAN = 1_000;
 const PRELOADED_SKILL_MAX_CHARS = 12_000;
 const PRELOADED_SKILLS_PROMPT_MAX_CHARS = 24_000;
 const DEFAULT_MAX_RAW_ENTRIES_PER_DIRECTORY_SCAN = 10_000;
-const TASK_SELECTED_SKILL_LIMIT = 8;
-const TASK_SELECTED_SKILL_PROMPT_MAX_CHARS = 12_000;
 export const SKILL_INDEX_RELATIVE_PATH = ".openclaw/SKILL_INDEX.md";
-const TASK_SKILL_STOP_WORDS = new Set([
-  "about",
-  "after",
-  "agent",
-  "and",
-  "are",
-  "before",
-  "can",
-  "create",
-  "data",
-  "for",
-  "from",
-  "help",
-  "into",
-  "magister",
-  "manage",
-  "marketing",
-  "not",
-  "only",
-  "project",
-  "our",
-  "specific",
-  "task",
-  "that",
-  "their",
-  "the",
-  "this",
-  "tool",
-  "user",
-  "using",
-  "when",
-  "with",
-  "you",
-  "your",
-]);
 
 type ResolvedSkillsLimits = {
   maxCandidatesPerRoot: number;
@@ -917,141 +880,6 @@ export function formatSkillsCompact(skills: Skill[]): string {
   return lines.join("\n");
 }
 
-function taskTokens(value: string): Set<string> {
-  return new Set(
-    value
-      .toLocaleLowerCase("en")
-      .split(/[^a-z0-9]+/g)
-      .filter((token) => token.length >= 3 && !TASK_SKILL_STOP_WORDS.has(token)),
-  );
-}
-
-function normalizedSkillPhrase(value: string): string {
-  return value
-    .toLocaleLowerCase("en")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
-
-function hasAnyTaskToken(tokens: Set<string>, values: readonly string[]): boolean {
-  return values.some((value) => tokens.has(value));
-}
-
-function isSkillExplicitlyNegated(skill: Skill, normalizedTask: string): boolean {
-  const nameTokens = taskTokens(skill.name);
-  for (const token of nameTokens) {
-    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const pattern = new RegExp(
-      `(?:do not|don t|never|without|instead of|rather than)(?: [a-z0-9]+){0,4} ${escaped}(?: |$)`,
-    );
-    if (pattern.test(` ${normalizedTask} `)) return true;
-  }
-  return false;
-}
-
-function conflictsWithTaskIntent(params: {
-  skill: Skill;
-  promptTokens: Set<string>;
-  normalizedTask: string;
-}): boolean {
-  const name = normalizedSkillPhrase(params.skill.name);
-  const workflowAuthoringIntent = hasAnyTaskToken(params.promptTokens, [
-    "author",
-    "configure",
-    "daily",
-    "fork",
-    "monday",
-    "monthly",
-    "recurring",
-    "schedule",
-    "scheduled",
-    "weekly",
-  ]);
-  const workflowExecutionIntent = hasAnyTaskToken(params.promptTokens, [
-    "execute",
-    "existing",
-    "monitor",
-    "now",
-    "pause",
-    "resume",
-    "run",
-    "start",
-    "uuid",
-  ]);
-  if (name === "magister workflows" && workflowExecutionIntent && !workflowAuthoringIntent) {
-    return true;
-  }
-  if (name === "magister workflow runtime" && workflowAuthoringIntent && !workflowExecutionIntent) {
-    return true;
-  }
-
-  const aeoIntent =
-    params.promptTokens.has("aeo") || params.normalizedTask.includes("answer engine");
-  const trackingIntent =
-    hasAnyTaskToken(params.promptTokens, [
-      "monitor",
-      "monitoring",
-      "track",
-      "tracker",
-      "tracking",
-    ]) ||
-    params.normalizedTask.includes("over time") ||
-    params.normalizedTask.includes("time series");
-  if (name === "magister aeo audit") {
-    if (trackingIntent && !aeoIntent) return true;
-    if (params.promptTokens.has("seo") && !aeoIntent) return true;
-  }
-  if (
-    name === "magister ai visibility" &&
-    aeoIntent &&
-    !trackingIntent &&
-    hasAnyTaskToken(params.promptTokens, ["audit", "one", "probe", "standalone"])
-  ) {
-    return true;
-  }
-  return false;
-}
-
-export function selectSkillsForTask(
-  skills: Skill[],
-  taskText: string,
-  limit = TASK_SELECTED_SKILL_LIMIT,
-): Skill[] {
-  const boundedTask = taskText.slice(0, 20_000);
-  const promptTokens = taskTokens(boundedTask);
-  const normalizedTask = normalizedSkillPhrase(boundedTask);
-  if (promptTokens.size === 0 || !normalizedTask) {
-    return [];
-  }
-
-  return skills
-    .filter(
-      (skill) =>
-        !isSkillExplicitlyNegated(skill, normalizedTask) &&
-        !conflictsWithTaskIntent({ skill, promptTokens, normalizedTask }),
-    )
-    .map((skill) => {
-      const namePhrase = normalizedSkillPhrase(skill.name);
-      const nameTokens = taskTokens(skill.name);
-      const descriptionTokens = taskTokens(skill.description ?? "");
-      let score = namePhrase && normalizedTask.includes(namePhrase) ? 100 : 0;
-      for (const token of nameTokens) {
-        if (promptTokens.has(token)) score += 12;
-      }
-      for (const token of descriptionTokens) {
-        if (promptTokens.has(token)) score += 1;
-      }
-      return { skill, score };
-    })
-    .filter((row) => row.score >= 2)
-    .toSorted(
-      (left, right) =>
-        right.score - left.score || left.skill.name.localeCompare(right.skill.name, "en"),
-    )
-    .slice(0, Math.max(0, limit))
-    .map((row) => row.skill);
-}
-
 export function renderSkillNameIndex(skills: Skill[]): string {
   const lines = [
     "<!-- System-managed. Generated from the current eligible runtime skills. -->",
@@ -1101,39 +929,6 @@ function ensureSkillNameIndex(workspaceDir: string, skills: Skill[]): string | u
     skillsLogger.warn(`unable to refresh on-demand skill index: ${String(error)}`);
     return undefined;
   }
-}
-
-function renderTaskSelectedSkillsPrompt(params: {
-  skills: Skill[];
-  taskText: string;
-  workspaceDir: string;
-}): string {
-  const promptSkills = compactSkillPaths(params.skills)
-    .slice()
-    .sort((a, b) => a.name.localeCompare(b.name, "en"));
-  const indexPath = ensureSkillNameIndex(params.workspaceDir, promptSkills);
-  const candidates = selectSkillsForTask(promptSkills, params.taskText).map((skill) => ({
-    ...skill,
-    description: (skill.description ?? "").slice(0, 1_200),
-  }));
-  const selected: Skill[] = [];
-  for (const skill of candidates) {
-    const next = [...selected, skill];
-    if (formatSkillsForPrompt(next).length > TASK_SELECTED_SKILL_PROMPT_MAX_CHARS) break;
-    selected.push(skill);
-  }
-  const indexGuidance = indexPath
-    ? `The complete skill index (names, descriptions, locations) is available on demand at \`${indexPath}\`. Read it when no task-selected hint fits.`
-    : "If no task-selected hint fits, run `openclaw skills list --json` for the complete on-demand index.";
-  return [
-    "Task-selected skill hints for the current request follow. They are routing hints, not proof that a capability is ready.",
-    selected.length > 0 ? SKILL_READ_NORM : "",
-    formatSkillsForPrompt(selected),
-    selected.length === 0 ? "No skill description matched the current task deterministically." : "",
-    indexGuidance,
-  ]
-    .filter(Boolean)
-    .join("\n");
 }
 
 function stripSkillFrontmatter(content: string): string {
@@ -1349,6 +1144,9 @@ export function resolveSkillsCatalogForRun(params: {
   if (!skills || skills.length === 0) {
     return "";
   }
+  // The on-demand index (full descriptions, on disk) backs the trimmed and
+  // compact catalog tiers, which point the agent at it for the full text.
+  ensureSkillNameIndex(params.workspaceDir, compactSkillPaths(skills));
   return renderSkillsCatalogPrompt({ skills, maxChars: limits.maxSkillsPromptChars });
 }
 
@@ -1454,53 +1252,37 @@ function resolveWorkspaceSkillPromptState(
   return { eligible, prompt, resolvedSkills };
 }
 
+/**
+ * Per-channel preloaded skill bodies for a run. They depend on the runtime
+ * channel, so they render below the system-prompt cache boundary. The complete
+ * catalog and the rules for reading skills live in resolveSkillsCatalogForRun,
+ * in the cache-stable prefix.
+ */
 export function resolveSkillsPromptForRun(params: {
   skillsSnapshot?: SkillSnapshot;
   entries?: SkillEntry[];
   config?: OpenClawConfig;
   workspaceDir: string;
   agentId?: string;
-  taskText?: string;
   runtimeChannel?: string;
 }): string {
-  let resolvedState: ReturnType<typeof resolveWorkspaceSkillPromptState> | undefined;
   let resolvedSkills = params.skillsSnapshot?.resolvedSkills;
   if (!resolvedSkills && params.entries && params.entries.length > 0) {
-    resolvedState = resolveWorkspaceSkillPromptState(params.workspaceDir, {
+    resolvedSkills = resolveWorkspaceSkillPromptState(params.workspaceDir, {
       entries: params.entries,
       config: params.config,
       agentId: params.agentId,
-    });
-    resolvedSkills = resolvedState.resolvedSkills;
+    }).resolvedSkills;
   }
-  const preloadedPrompt = resolvedSkills
-    ? renderPreloadedSkillsPrompt({
-        skills: resolvedSkills,
-        runtimeChannel: params.runtimeChannel,
-        config: params.config,
-        agentId: params.agentId,
-      })
-    : "";
-  let routedPrompt = "";
-
-  if (params.taskText === undefined) {
-    const snapshotPrompt = params.skillsSnapshot?.prompt?.trim();
-    if (snapshotPrompt) {
-      routedPrompt = snapshotPrompt;
-    } else if (resolvedState) {
-      routedPrompt = resolvedState.prompt.trim();
-    }
-  } else if (resolvedSkills) {
-    routedPrompt = renderTaskSelectedSkillsPrompt({
-      skills: resolvedSkills,
-      taskText: params.taskText ?? "",
-      workspaceDir: params.workspaceDir,
-    });
-  } else {
-    routedPrompt = params.skillsSnapshot?.prompt?.trim() ?? "";
+  if (!resolvedSkills || resolvedSkills.length === 0) {
+    return "";
   }
-
-  return [preloadedPrompt, routedPrompt].filter(Boolean).join("\n\n");
+  return renderPreloadedSkillsPrompt({
+    skills: resolvedSkills,
+    runtimeChannel: params.runtimeChannel,
+    config: params.config,
+    agentId: params.agentId,
+  });
 }
 
 export function loadWorkspaceSkillEntries(
