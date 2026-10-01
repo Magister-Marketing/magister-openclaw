@@ -236,6 +236,11 @@ export function resolveCapabilityModelCandidates(params: {
       add(candidate);
     }
   }
+  // Nothing configured to fall back to: keep the override so the caller gets
+  // its provider's specific "key missing" error, not a generic "no model".
+  if (override && candidates.length === 0) {
+    return [override];
+  }
   return candidates;
 }
 

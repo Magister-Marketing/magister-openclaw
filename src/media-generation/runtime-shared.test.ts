@@ -41,6 +41,19 @@ describe("media-generation runtime shared candidates", () => {
     expect(candidates).toEqual([{ provider: "google", model: "gemini-3.1-flash-image-preview" }]);
   });
 
+  it("keeps an unconfigured override when nothing configured could replace it", () => {
+    const candidates = resolveCapabilityModelCandidates({
+      cfg: {} as never,
+      modelConfig: undefined,
+      modelOverride: "openai/gpt-image-1.5",
+      parseModelRef,
+      listProviders: () => [
+        { id: "openai", defaultModel: "gpt-image-1", isConfigured: () => false },
+      ],
+    });
+    expect(candidates).toEqual([{ provider: "openai", model: "gpt-image-1.5" }]);
+  });
+
   it("still honours an explicit override for a configured or unknown provider", () => {
     const listProviders = () => [
       { id: "google", defaultModel: "gemini-3.1-flash-image-preview", isConfigured: () => true },
