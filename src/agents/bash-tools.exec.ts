@@ -52,6 +52,7 @@ import type {
   ExecToolDefaults,
   ExecToolDetails,
 } from "./bash-tools.exec-types.js";
+import { execSchemaFor } from "./bash-tools.schemas.js";
 import {
   buildSandboxEnv,
   clampWithDefault,
@@ -1236,7 +1237,7 @@ export function createExecTool(
     get description() {
       return describeExecTool({ agentId, hasCronTool: defaults?.hasCronTool === true });
     },
-    parameters: execSchema,
+    parameters: execSchemaFor(defaults?.host),
     execute: async (_toolCallId, args, signal, onUpdate) => {
       const params = args as {
         command: string;

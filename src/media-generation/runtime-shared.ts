@@ -162,6 +162,36 @@ function resolveAutoCapabilityFallbackRefs(params: {
   });
 }
 
+/**
+ * An explicit model for a provider this runtime knows but cannot authenticate
+ * (no key, no OAuth) can only fail. Hosted machines hold no provider keys, yet
+ * the tool description invites `openai/...` for transparent backgrounds, so
+ * the model asked for it and got "OpenAI API key or Codex OAuth missing" while
+ * the configured Google provider sat ready. Such an override is dropped in
+ * favour of the configured chain; an unknown provider is still honoured as-is.
+ */
+function isUnconfiguredKnownProvider(
+  providerId: string,
+  params: {
+    cfg: OpenClawConfig;
+    agentDir?: string;
+    listProviders?: (cfg?: OpenClawConfig) => CapabilityProviderCandidate[];
+  },
+): boolean {
+  if (!params.listProviders) {
+    return false;
+  }
+  const provider = params
+    .listProviders(params.cfg)
+    .find(
+      (candidate) => candidate.id === providerId || (candidate.aliases ?? []).includes(providerId),
+    );
+  return (
+    provider !== undefined &&
+    !isCapabilityProviderConfigured({ provider, cfg: params.cfg, agentDir: params.agentDir })
+  );
+}
+
 export function resolveCapabilityModelCandidates(params: {
   cfg: OpenClawConfig;
   modelConfig: AgentModelConfig | undefined;
@@ -187,11 +217,9 @@ export function resolveCapabilityModelCandidates(params: {
   };
 
   const override = params.parseModelRef(params.modelOverride);
-  if (override) {
+  if (override && !isUnconfiguredKnownProvider(override.provider, params)) {
     return [override];
   }
-
-  add(params.modelOverride);
   add(resolveAgentModelPrimaryValue(params.modelConfig));
   for (const fallback of resolveAgentModelFallbackValues(params.modelConfig)) {
     add(fallback);
@@ -207,6 +235,11 @@ export function resolveCapabilityModelCandidates(params: {
     })) {
       add(candidate);
     }
+  }
+  // Nothing configured to fall back to: keep the override so the caller gets
+  // its provider's specific "key missing" error, not a generic "no model".
+  if (override && candidates.length === 0) {
+    return [override];
   }
   return candidates;
 }

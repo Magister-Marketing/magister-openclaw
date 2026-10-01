@@ -1696,6 +1696,42 @@ describe("resolvePluginTools optional tools", () => {
     expect(factory).toHaveBeenCalledTimes(2);
   });
 
+  it("does not offer a workflow-only tool in chat after a workflow turn cached it", () => {
+    const factory = vi.fn((rawCtx: unknown) => {
+      const ctx = rawCtx as { sessionKey?: string };
+      return ctx.sessionKey?.startsWith("workflow_run:") ? makeTool("workflow_only_tool") : null;
+    });
+    setRegistry([
+      {
+        pluginId: "workflow-scoped",
+        optional: false,
+        source: "/tmp/workflow-scoped.js",
+        names: ["workflow_only_tool"],
+        factory,
+      },
+    ]);
+
+    const workflowTools = resolvePluginTools(
+      createResolveToolsParams({
+        context: {
+          ...createContext(),
+          sessionKey: "workflow_run:11111111-1111-4111-8111-111111111111",
+        },
+      }),
+    );
+    const chatTools = resolvePluginTools(
+      createResolveToolsParams({
+        context: {
+          ...createContext(),
+          sessionKey: "agent:main:webchat:22222222-2222-4222-8222-222222222222",
+        },
+      }),
+    );
+
+    expectResolvedToolNames(workflowTools, ["workflow_only_tool"]);
+    expect(chatTools).toEqual([]);
+  });
+
   it("executes cached plugin tools registered with implicit names", async () => {
     const factory = vi.fn(() => ({
       ...makeTool("implicit_tool"),

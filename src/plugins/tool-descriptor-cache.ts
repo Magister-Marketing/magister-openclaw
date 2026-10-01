@@ -5,7 +5,7 @@ import type { JsonObject, ToolDescriptor } from "../tools/types.js";
 import type { PluginLoadOptions } from "./loader.js";
 import type { OpenClawPluginToolContext } from "./types.js";
 
-const PLUGIN_TOOL_DESCRIPTOR_CACHE_VERSION = 2;
+const PLUGIN_TOOL_DESCRIPTOR_CACHE_VERSION = 3;
 const PLUGIN_TOOL_DESCRIPTOR_CACHE_LIMIT = 256;
 
 export type CachedPluginToolDescriptor = {
@@ -88,6 +88,24 @@ function getDescriptorConfigCacheKey(
   return resolved;
 }
 
+/**
+ * The kind of session a key belongs to, without its per-session id:
+ * `workflow_run:<uuid>` -> `workflow_run`, `agent:main:webchat:<uuid>` ->
+ * `agent:main:webchat`. A factory may build a tool for one kind of session and
+ * return null for another (Magister's workflow-completion tool exists only in
+ * workflow runs). Without this in the key, a workflow turn cached that tool and
+ * every later web-chat turn on the process was offered it, then failed with
+ * "plugin tool runtime missing" when the model called it.
+ */
+function descriptorSessionScope(sessionKey: string | undefined): string | null {
+  const key = sessionKey?.trim();
+  if (!key) {
+    return null;
+  }
+  const separator = key.lastIndexOf(":");
+  return separator > 0 ? key.slice(0, separator) : key;
+}
+
 function buildDescriptorContextCacheKey(params: {
   ctx: OpenClawPluginToolContext;
   currentRuntimeConfig?: PluginLoadOptions["config"] | null;
@@ -112,6 +130,7 @@ function buildDescriptorContextCacheKey(params: {
     requesterSenderId: ctx.requesterSenderId ?? null,
     senderIsOwner: ctx.senderIsOwner ?? null,
     sandboxed: ctx.sandboxed ?? null,
+    sessionScope: descriptorSessionScope(ctx.sessionKey),
   });
 }
 

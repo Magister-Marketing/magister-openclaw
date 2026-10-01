@@ -26,6 +26,50 @@ function parseModelRef(raw?: string) {
 }
 
 describe("media-generation runtime shared candidates", () => {
+  it("drops an explicit override for a registered provider that is not configured", () => {
+    const listProviders = () => [
+      { id: "google", defaultModel: "gemini-3.1-flash-image-preview", isConfigured: () => true },
+      { id: "openai", defaultModel: "gpt-image-1", isConfigured: () => false },
+    ];
+    const candidates = resolveCapabilityModelCandidates({
+      cfg: {} as never,
+      modelConfig: undefined,
+      modelOverride: "openai/gpt-image-1.5",
+      parseModelRef,
+      listProviders,
+    });
+    expect(candidates).toEqual([{ provider: "google", model: "gemini-3.1-flash-image-preview" }]);
+  });
+
+  it("keeps an unconfigured override when nothing configured could replace it", () => {
+    const candidates = resolveCapabilityModelCandidates({
+      cfg: {} as never,
+      modelConfig: undefined,
+      modelOverride: "openai/gpt-image-1.5",
+      parseModelRef,
+      listProviders: () => [
+        { id: "openai", defaultModel: "gpt-image-1", isConfigured: () => false },
+      ],
+    });
+    expect(candidates).toEqual([{ provider: "openai", model: "gpt-image-1.5" }]);
+  });
+
+  it("still honours an explicit override for a configured or unknown provider", () => {
+    const listProviders = () => [
+      { id: "google", defaultModel: "gemini-3.1-flash-image-preview", isConfigured: () => true },
+    ];
+    for (const override of ["google/gemini-3-pro-image-preview", "custom/model-x"]) {
+      const candidates = resolveCapabilityModelCandidates({
+        cfg: {} as never,
+        modelConfig: undefined,
+        modelOverride: override,
+        parseModelRef,
+        listProviders,
+      });
+      expect(candidates).toEqual([parseModelRef(override)]);
+    }
+  });
+
   it("appends auth-backed provider defaults after explicit refs by default", () => {
     const cfg = {
       agents: {

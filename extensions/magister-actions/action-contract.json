@@ -716,6 +716,12 @@
           "status": {
             "enum": ["ready", "running", "completed", "blocked", "failed", "skipped"],
             "type": "string"
+          },
+          "user_approval_quote": {
+            "description": "Only with status=completed on an item awaiting approval, when the user approved it in this chat: their exact words, copied from their latest message. Completes the item as their sign-off.",
+            "maxLength": 500,
+            "minLength": 2,
+            "type": "string"
           }
         },
         "required": ["plan_item_id", "status"],
@@ -3883,6 +3889,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "a942f6acbbaa9bdd02232684b0ce165d897f02ab3890a6112850692ba7a6cbab",
+  "registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
   "schema_version": 1
 }

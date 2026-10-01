@@ -49,6 +49,20 @@ export const execSchema = Type.Object({
   ),
 });
 
+const PINNED_HOST_EXEC_SCHEMA = Type.Omit(execSchema, ["host", "node"]);
+
+/**
+ * The exec schema the model should see. Once `tools.exec.host` pins a target
+ * other than `auto`, only that target is accepted, so advertising
+ * `host`/`node` just invites calls that fail ("requires a sandbox runtime",
+ * no paired node) — which production agents did.
+ */
+export function execSchemaFor(host?: string | null): typeof execSchema {
+  return host && host !== "auto"
+    ? (PINNED_HOST_EXEC_SCHEMA as unknown as typeof execSchema)
+    : execSchema;
+}
+
 export const processSchema = Type.Object({
   action: Type.String({ description: "Process action" }),
   sessionId: Type.Optional(Type.String({ description: "Session id for actions other than list" })),
