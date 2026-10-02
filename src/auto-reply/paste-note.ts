@@ -21,8 +21,12 @@ function describePaste(paste: { path: string; bytes: number; lines: number }): s
   return `${sanitizeNoteValue(paste.path)} (${paste.lines} lines, ${formatPasteSize(paste.bytes)})`;
 }
 
+// The skill step sits in this note, not only in the system prompt's mandatory
+// skill rules: on pasted-data turns the model followed this note every time
+// and went straight to exec, so the covering analysis skill was never read
+// (0 of 6 data-task attempts across three benchmark runs, 2026-09-29..10-01).
 const GUIDANCE =
-  "the same content is inline below; compute from the file rather than from the chat text";
+  "the same content is inline below; first read the SKILL.md that covers this task, then compute from the file rather than from the chat text";
 
 /**
  * `[pasted data saved: inbox/ads_daily-3f2a9c1e.csv (785 lines, 54.2 KB); …]`
