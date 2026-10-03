@@ -2,13 +2,24 @@
 export const MAX_DRAFT_REQUEST_CHARS = 16_000;
 export const MAX_DRAFT_CHARS = 32_000;
 
-export type DraftCheckKind = "json_only" | "bullet_count" | "allocation_count" | "allocation_total";
+export type DraftCheckKind =
+  | "json_only"
+  | "bullet_count"
+  | "allocation_count"
+  | "allocation_total"
+  | "figures_grounded";
 export type DraftCheck = { kind: DraftCheckKind; status: "pass" | "fail" | "unknown" };
 export type DraftContract = {
   jsonOnly?: true;
   bulletCount?: number;
   allocation?: { count: number; cents: number; currency: string };
+  /** Every reported figure in the draft must appear in a tool output or in the request. */
+  figuresGrounded?: true;
 };
+/** Prefix of the note the paste materializer puts on a turn that carries a data file. */
+export const PASTE_NOTE_MARKER = "[pasted data saved:";
+/** Evidence (tool outputs and the request) kept for the figures check, newest first. */
+export const MAX_EVIDENCE_CHARS = 2_000_000;
 export type DraftVerificationReceipt = {
   version: 1;
   mode: "off" | "shadow" | "repair";
@@ -65,8 +76,20 @@ function explicitCount(text: string, noun: string): number | undefined {
   return count >= 1 && count <= 20 ? count : undefined;
 }
 
-/** Do not reinterpret examples, quotes, fenced code, or delimited source material as policy. */
+/**
+ * A pasted-data turn carries the request-side checks like any other, plus the
+ * figures check: the deliverable computes from a file, so every figure it
+ * states has an exec output or the request itself to be quoted from. The
+ * marker is read on the raw request, which is usually far over
+ * MAX_DRAFT_REQUEST_CHARS because the pasted data is inline.
+ */
 export function deriveDraftContract(request: string): DraftContract {
+  const contract = deriveRequestContract(request);
+  return request.includes(PASTE_NOTE_MARKER) ? { ...contract, figuresGrounded: true } : contract;
+}
+
+/** Do not reinterpret examples, quotes, fenced code, or delimited source material as policy. */
+function deriveRequestContract(request: string): DraftContract {
   if (!request || request.length > MAX_DRAFT_REQUEST_CHARS) {
     return {};
   }
@@ -134,8 +157,142 @@ export function hasDraftChecks(contract: DraftContract): boolean {
   return (
     contract.jsonOnly === true ||
     contract.bulletCount !== undefined ||
-    contract.allocation !== undefined
+    contract.allocation !== undefined ||
+    contract.figuresGrounded === true
   );
+}
+
+// ---------------------------------------------------------------- figures
+
+// A number as a report states it: optional currency, thousands groups, a
+// fraction, a percent or multiplier suffix. Not part of a word or identifier
+// (W11, r2, v3). A grouped number is consumed whole from its first digit, so
+// no match starts inside one; a CSV delimiter before a number is fine, which
+// is how most tool output arrives.
+const FIGURE_RE = /(?<![\w.])([$€£])?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(%|x)?(?![\w.])/g;
+
+type Figure = {
+  text: string;
+  value: number;
+  decimals: number;
+  currency: boolean;
+  percent: boolean;
+};
+
+function parseFigure(match: RegExpMatchArray): Figure | undefined {
+  const [text, currency, whole, fraction = "", suffix] = match;
+  const value = Number(whole.replaceAll(",", "") + fraction);
+  if (!Number.isFinite(value)) {
+    return undefined;
+  }
+  return {
+    text,
+    value,
+    decimals: fraction ? fraction.length - 1 : 0,
+    currency: Boolean(currency),
+    percent: suffix === "%",
+  };
+}
+
+/** Digits that carry information: no leading zeros, no trailing zeros. */
+function significantDigits(figure: Figure): number {
+  const digits = figure.value.toFixed(figure.decimals).replace(".", "").replace(/^0+/, "");
+  return digits.replace(/0+$/, "").length;
+}
+
+/**
+ * Figures a report states as measured, as opposed to the round numbers it
+ * proposes (a $1,400 cap, a 50% cut, a 14-day test) and the small counts it
+ * narrates: three or more significant digits, and for whole numbers not a
+ * multiple of 50. A bare whole number also has to reach 100, and a bare
+ * four-digit number in the calendar range is a year.
+ */
+function isReportedFigure(figure: Figure): boolean {
+  const unitless = !figure.currency && !figure.percent;
+  if (unitless && figure.decimals === 0 && figure.value >= 1900 && figure.value <= 2100) {
+    return false;
+  }
+  if (significantDigits(figure) < 3) {
+    return false;
+  }
+  if (figure.decimals > 0) {
+    return true;
+  }
+  return figure.value % 50 !== 0 && (!unitless || figure.value >= 100);
+}
+
+/** Prose only: code, dates, clock times, list markers and footnotes are not figures. */
+function reportProse(draft: string): string {
+  return draft
+    .replace(/```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)/g, " ")
+    .replace(/`[^`\n]*`/g, " ")
+    .replace(/\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?Z?)?\b/g, " ")
+    .replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, " ")
+    .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, " ")
+    .replace(/^\s*(?:#{1,6}\s+)?\d+[.)]\s/gm, " ")
+    .replace(/\[\d+\]/g, " ");
+}
+
+function figuresIn(text: string): Figure[] {
+  const figures: Figure[] = [];
+  for (const match of text.matchAll(FIGURE_RE)) {
+    const figure = parseFigure(match);
+    if (figure) {
+      figures.push(figure);
+    }
+  }
+  return figures;
+}
+
+/**
+ * Every value the evidence states, at the precisions a report may round it
+ * to; a ratio also counts as the percentage it expresses.
+ */
+function evidenceValues(evidence: readonly string[]): Set<string> {
+  const values = new Set<string>();
+  const add = (value: number) => {
+    for (let decimals = 0; decimals <= 4; decimals += 1) {
+      values.add(value.toFixed(decimals));
+    }
+  };
+  for (const text of evidence) {
+    for (const figure of figuresIn(text)) {
+      add(figure.value);
+      if (figure.decimals > 0 && figure.value > 0 && figure.value < 1) {
+        add(figure.value * 100);
+      }
+      // "116,310" in a CSV row is two cells as often as one number.
+      if (figure.text.includes(",")) {
+        for (const cell of figure.text.replace(/^[$€£]/, "").split(",")) {
+          add(Number(cell.replace(/[%x]$/, "")));
+        }
+      }
+    }
+  }
+  return values;
+}
+
+/**
+ * Reported figures in ``draft`` that no evidence text states, in order of
+ * first appearance, as the draft wrote them. A figure is grounded when the
+ * evidence holds its value at the draft's precision (so a report may round
+ * $1,758.80 to $1,759, or 0.2174 to 21.7%), never when it only holds the
+ * inputs the figure was derived from.
+ */
+export function ungroundedFigures(draft: string, evidence: readonly string[]): string[] {
+  const known = evidenceValues(evidence);
+  const flagged: string[] = [];
+  const seen = new Set<string>();
+  for (const figure of figuresIn(reportProse(draft))) {
+    if (!isReportedFigure(figure) || seen.has(figure.text)) {
+      continue;
+    }
+    seen.add(figure.text);
+    if (!known.has(figure.value.toFixed(Math.min(figure.decimals, 4)))) {
+      flagged.push(figure.text);
+    }
+  }
+  return flagged;
 }
 
 function cells(line: string): string[] {
@@ -213,7 +370,11 @@ function allocationRows(draft: string, currency: string): number[] | undefined {
   return candidates.length === 1 ? candidates[0] : undefined;
 }
 
-export function checkDraft(contract: DraftContract, draft: string): DraftCheck[] {
+export function checkDraft(
+  contract: DraftContract,
+  draft: string,
+  evidence: readonly string[] = [],
+): DraftCheck[] {
   const checks: DraftCheck[] = [];
   const bounded = draft.length > 0 && draft.length <= MAX_DRAFT_CHARS;
   if (contract.jsonOnly) {
@@ -258,10 +419,25 @@ export function checkDraft(contract: DraftContract, draft: string): DraftCheck[]
           : "fail",
     });
   }
+  if (contract.figuresGrounded) {
+    // Without evidence nothing can be grounded, and that is unknown, not a failure.
+    checks.push({
+      kind: "figures_grounded",
+      status:
+        !bounded || evidence.length === 0
+          ? "unknown"
+          : ungroundedFigures(draft, evidence).length === 0
+            ? "pass"
+            : "fail",
+    });
+  }
   return checks;
 }
 
-export function draftRepairInstruction(contract: DraftContract): string {
+export function draftRepairInstruction(
+  contract: DraftContract,
+  ungrounded: readonly string[] = [],
+): string {
   const constraints: string[] = [];
   if (contract.jsonOnly) {
     constraints.push("Return only valid JSON, without markdown fences or surrounding prose.");
@@ -272,6 +448,11 @@ export function draftRepairInstruction(contract: DraftContract): string {
   if (contract.allocation) {
     constraints.push(
       `The allocation table must contain exactly ${contract.allocation.count} categories totaling ${contract.allocation.currency}${(contract.allocation.cents / 100).toFixed(2)}; do not count the total row as a category.`,
+    );
+  }
+  if (contract.figuresGrounded && ungrounded.length > 0) {
+    constraints.push(
+      `These figures appear in neither a tool output nor the request: ${ungrounded.join(", ")}. Replace each with the figure your script printed that it was derived from, quoted exactly with its window and unit, or remove it. Do not compute new figures.`,
     );
   }
   return [
