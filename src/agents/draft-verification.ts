@@ -168,8 +168,8 @@ export function hasDraftChecks(contract: DraftContract): boolean {
 // fraction, a percent or multiplier suffix. Not part of a word or identifier
 // (W11, r2, v3). A grouped number is consumed whole from its first digit, so
 // no match starts inside one; a CSV delimiter before a number is fine, which
-// is how most tool output arrives.
-const FIGURE_RE = /(?<![\w.])([$€£])?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(%|x)?(?![\w.])/g;
+// is how most tool output arrives, and so is a sentence-ending period.
+const FIGURE_RE = /(?<![\w.])([$€£])?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(%|x)?(?!\w|\.\d)/g;
 
 type Figure = {
   text: string;
@@ -272,23 +272,129 @@ function evidenceValues(evidence: readonly string[]): Set<string> {
   return values;
 }
 
+const NUMBER = "[$€£]?\\d[\\d,]*(?:\\.\\d+)?%?";
+const OPERATOR = "[+\\-−–×*÷/]";
+// "$400 + $300 + $630 = $1,330", "630 ÷ 600 = 1.05", "31 / 116 = 26.7%".
+const ARITHMETIC_RE = new RegExp(
+  `(${NUMBER}(?:\\s*${OPERATOR}\\s*${NUMBER})+)\\s*(?:=|≈|→)\\s*(?:about\\s+|approximately\\s+|roughly\\s+|~\\s*)?(${NUMBER})`,
+  "g",
+);
+
+function numberValue(text: string): number {
+  return Number(text.replace(/[$€£%,]/g, ""));
+}
+
+function decimalsOf(text: string): number {
+  const fraction = text.match(/\.(\d+)/);
+  return fraction ? fraction[1].length : 0;
+}
+
+/** Standard precedence over a flat "a op b op c" expression. */
+function evaluate(operands: number[], operators: string[]): number {
+  const values = [operands[0]];
+  const pending: string[] = [];
+  for (let i = 0; i < operators.length; i += 1) {
+    const operator = operators[i];
+    const right = operands[i + 1];
+    if (/[×*÷/]/.test(operator)) {
+      const left = values.pop() ?? Number.NaN;
+      values.push(/[×*]/.test(operator) ? left * right : left / right);
+    } else {
+      values.push(right);
+      pending.push(operator);
+    }
+  }
+  let total = values[0];
+  for (let i = 0; i < pending.length; i += 1) {
+    total = pending[i] === "+" ? total + values[i + 1] : total - values[i + 1];
+  }
+  return total;
+}
+
+function statesValue(known: Set<string>, value: number, decimals: number): boolean {
+  return known.has(value.toFixed(Math.min(decimals, 4)));
+}
+
+/**
+ * Arithmetic a report shows inline grounds its result when every operand is
+ * grounded and the result is right at the stated precision (a percentage
+ * result may be the ratio times 100). Tasks ask for exactly this ("show the
+ * arithmetic needed to audit every total"), and a correction that may only
+ * quote or remove figures drops the subtotals and ratios a brief requires
+ * (2026-10-03: "the last-touch paid subtotal is never summed to $1,330").
+ */
+function groundShownArithmetic(prose: string, known: Set<string>): void {
+  for (const match of prose.matchAll(ARITHMETIC_RE)) {
+    const [, expression, result] = match;
+    const operandTexts = expression.match(new RegExp(NUMBER, "g")) ?? [];
+    const operators = expression.match(new RegExp(`\\s*(${OPERATOR})\\s*`, "g")) ?? [];
+    if (operandTexts.length < 2 || operators.length !== operandTexts.length - 1) {
+      continue;
+    }
+    const operands = operandTexts.map(numberValue);
+    // A reported operand must itself be grounded; a round constant (4 weeks,
+    // 28 days, 100) is the reader's arithmetic, not a figure.
+    const ungroundedOperand = operandTexts.some((text, index) => {
+      const value = operands[index];
+      if (!Number.isFinite(value)) {
+        return true;
+      }
+      const figure = figuresIn(text)[0];
+      return (
+        figure !== undefined &&
+        isReportedFigure(figure) &&
+        !statesValue(known, value, decimalsOf(text))
+      );
+    });
+    if (ungroundedOperand) {
+      continue;
+    }
+    const computed = evaluate(
+      operands,
+      operators.map((operator) =>
+        operator
+          .trim()
+          .replace(/[−–]/, "-")
+          .replace("*", "×")
+          .replace("/", "÷"),
+      ),
+    );
+    const stated = numberValue(result);
+    const decimals = decimalsOf(result);
+    const candidates = result.endsWith("%") ? [computed, computed * 100] : [computed];
+    if (
+      Number.isFinite(stated) &&
+      candidates.some(
+        (value) => Number.isFinite(value) && value.toFixed(decimals) === stated.toFixed(decimals),
+      )
+    ) {
+      for (let k = 0; k <= 4; k += 1) {
+        known.add(stated.toFixed(k));
+      }
+    }
+  }
+}
+
 /**
  * Reported figures in ``draft`` that no evidence text states, in order of
  * first appearance, as the draft wrote them. A figure is grounded when the
  * evidence holds its value at the draft's precision (so a report may round
- * $1,758.80 to $1,759, or 0.2174 to 21.7%), never when it only holds the
- * inputs the figure was derived from.
+ * $1,758.80 to $1,759, or 0.2174 to 21.7%), or when the draft shows correct
+ * arithmetic from grounded figures that produces it; never when the evidence
+ * only holds inputs and the arithmetic is left to the reader.
  */
 export function ungroundedFigures(draft: string, evidence: readonly string[]): string[] {
   const known = evidenceValues(evidence);
+  const prose = reportProse(draft);
+  groundShownArithmetic(prose, known);
   const flagged: string[] = [];
   const seen = new Set<string>();
-  for (const figure of figuresIn(reportProse(draft))) {
+  for (const figure of figuresIn(prose)) {
     if (!isReportedFigure(figure) || seen.has(figure.text)) {
       continue;
     }
     seen.add(figure.text);
-    if (!known.has(figure.value.toFixed(Math.min(figure.decimals, 4)))) {
+    if (!statesValue(known, figure.value, figure.decimals)) {
       flagged.push(figure.text);
     }
   }
@@ -452,7 +558,7 @@ export function draftRepairInstruction(
   }
   if (contract.figuresGrounded && ungrounded.length > 0) {
     constraints.push(
-      `These figures appear in neither a tool output nor the request: ${ungrounded.join(", ")}. Replace each with the figure your script printed that it was derived from, quoted exactly with its window and unit, or remove it. Do not compute new figures.`,
+      `These figures appear in neither a tool output nor the request: ${ungrounded.join(", ")}. For each one, either quote the figure your script printed that it comes from, exactly and with its window and unit, or show the arithmetic that produces it from printed figures inline (for example "$400 + $300 + $630 = $1,330" or "630 ÷ 600 = 1.05"). Keep every figure the request asks for; a figure you can neither quote nor show is removed.`,
     );
   }
   return [

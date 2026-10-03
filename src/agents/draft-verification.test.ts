@@ -164,6 +164,19 @@ describe("figures grounded in tool output", () => {
     expect(ungroundedFigures(draft, [output])).toEqual([]);
   });
 
+  it("grounds a figure the draft derives with correct arithmetic from grounded figures", () => {
+    const channels = "channel,last_touch_revenue,spend\nmeta,400,600\npaid_search,300,600\nemail,630,600";
+    const draft =
+      "Last-touch paid subtotal: $400 + $300 + $630 = $1,330. Email ROAS 630 ÷ 600 = 1.05. " +
+      "Refunds 31 / 116 = 26.7%. Weekly spend $1,758.80 / 4 = $439.70.";
+    expect(ungroundedFigures(draft, [channels, output])).toEqual([]);
+    // Wrong arithmetic grounds nothing; arithmetic over an ungrounded operand grounds nothing.
+    expect(ungroundedFigures("Email ROAS 630 ÷ 600 = 1.15.", [channels])).toEqual(["1.15"]);
+    expect(ungroundedFigures("Total 999 + 400 = $1,399.", [channels])).toEqual(["999", "$1,399"]);
+    // A figure stated without its arithmetic is still ungrounded.
+    expect(ungroundedFigures("Last-touch paid subtotal is $1,330.", [channels])).toEqual(["$1,330"]);
+  });
+
   it("checks the draft against evidence and stays unknown without any", () => {
     const contract = deriveDraftContract(request);
     expect(checkDraft(contract, "Spent $1,759.", [output])).toEqual([
@@ -183,7 +196,8 @@ describe("figures grounded in tool output", () => {
   it("names the ungrounded figures in the repair instruction and forbids new arithmetic", () => {
     const instruction = draftRepairInstruction({ figuresGrounded: true }, ["$251", "112"]);
     expect(instruction).toContain("neither a tool output nor the request: $251, 112");
-    expect(instruction).toContain("Do not compute new figures");
+    expect(instruction).toContain("show the arithmetic that produces it from printed figures");
+    expect(instruction).toContain("Keep every figure the request asks for");
     expect(instruction).toContain("Tools are unavailable");
   });
 });
