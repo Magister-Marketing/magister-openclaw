@@ -50,6 +50,9 @@ describe("paste note plumbing", () => {
       prefixedBody: "hi",
     }).pasteNote;
     expect(note).toContain("[pasted data saved: 2 files;");
+    // The skill step rides on the note in both shapes: it is the one
+    // instruction the model reliably follows on a pasted-data turn.
+    expect(note).toContain("first read the SKILL.md that covers this task, then compute");
     expect(note).toContain("[pasted data 1/2: inbox/ads_daily-3f2a9c1e.csv (785 lines, 54.2 KB)]");
     expect(note).toContain("[pasted data 2/2: inbox/paste-2-3f2a9c1e.json (1 lines, 900 B)]");
   });
@@ -83,7 +86,7 @@ describe("prependInboundPasteNote", () => {
 
   it("prefixes the body with the note when a paste was written", () => {
     expect(prependInboundPasteNote("Review the quarter.", [paste])).toBe(
-      "[pasted data saved: inbox/ads_daily-3f2a9c1e.csv (785 lines, 54.2 KB); the same content is inline below; compute from the file rather than from the chat text]\n\nReview the quarter.",
+      "[pasted data saved: inbox/ads_daily-3f2a9c1e.csv (785 lines, 54.2 KB); the same content is inline below; first read the SKILL.md that covers this task, then compute from the file rather than from the chat text]\n\nReview the quarter.",
     );
   });
 
