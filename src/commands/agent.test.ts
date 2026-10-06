@@ -1024,7 +1024,7 @@ describe("agentCommand paste materialization", () => {
 
       const prompt = String(getLastEmbeddedCall()?.prompt);
       expect(prompt).toMatch(
-        /^\[long message: [\d,]+ chars of supplied material inline below; before the deliverable, read the SKILL\.md that covers it; .*never assumed\]\n\n/,
+        /^\[long message: [\d,]+ chars of supplied material inline below; before the deliverable, read the SKILL\.md that covers it, if one does; .*never assumed\]\n\n/,
       );
       expect(prompt.endsWith(brief)).toBe(true);
       expect(prompt).not.toContain("[pasted data saved:");

@@ -12,7 +12,7 @@
 export const BRIEF_NOTE_MIN_CHARS = 1_500;
 
 const GUIDANCE =
-  "before the deliverable, read the SKILL.md that covers it; the material is the complete set of supplied facts, so a figure, budget, capacity, claim, or option it does not state comes from a tool output or is named as missing or declined, never assumed";
+  "before the deliverable, read the SKILL.md that covers it, if one does; the material is the complete set of supplied facts, so a figure, budget, capacity, claim, or option it does not state comes from a tool output or is named as missing or declined, never assumed";
 
 export function buildInboundBriefNote(params: {
   body: string | undefined;
