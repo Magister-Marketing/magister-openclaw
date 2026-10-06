@@ -626,11 +626,13 @@ describe("figures grounded on pasted-data turns", () => {
     );
     const corrected =
       "pb-video spent $1,758.80 in 28 days: $62.81 per day (script output). Pause it.";
+    const noLabelEdits = message("[]", 2);
     const inner = vi
       .fn<StreamFn>()
       .mockImplementationOnce(() => completed(exec).stream)
       .mockImplementationOnce(() => completed(original).stream)
-      .mockImplementationOnce(() => completed(correction).stream);
+      .mockImplementationOnce(() => completed(correction).stream)
+      .mockImplementationOnce(() => completed(noLabelEdits).stream);
     const verification = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
     const wrapped = verification.wrap(inner);
     const first = await collect(
@@ -643,11 +645,17 @@ describe("figures grounded on pasted-data turns", () => {
     expect(result.result).not.toBe(correction);
     expect(result.result.content).toEqual([{ type: "text", text: corrected }]);
     expect(result.result.usage).toBe(original.usage);
-    expect(verification.takeAdditionalUsage()).toBe(correction.usage);
+    // Both tool-free calls (the correction and the label pass) are reported separately.
+    expect(verification.takeAdditionalUsage()?.output).toBe(
+      correction.usage.output + noLabelEdits.usage.output,
+    );
     expect(verification.receipt).toMatchObject({
       outcome: "repaired",
       repair_attempts: 1,
-      checks: [{ kind: "figures_grounded", status: "pass" }],
+      checks: [
+        { kind: "figures_grounded", status: "pass" },
+        { kind: "figures_labelled", status: "pass" },
+      ],
     });
     const [, repairContext, repairOptions] = inner.mock.calls[2];
     expect(repairContext.tools).toEqual([]);
@@ -671,23 +679,98 @@ describe("figures grounded on pasted-data turns", () => {
       timeoutMs: 90_000,
     });
     expect(toolTurnContext.messages).toHaveLength(3);
+    const labelInstruction = inner.mock.calls[3][1].messages.at(-1);
+    expect(String(labelInstruction?.content)).toContain("wrong label, base, window, or set");
   });
 
-  it("passes a draft that quotes the script's figures and makes no correction call", async () => {
+  it("passes a draft that quotes the script's figures: no correction, one label pass", async () => {
+    const original = message(
+      "pb-video spent $1,758.80 in 28 days, about $440 a week ($439.70). Pause it.",
+    );
+    const inner = vi
+      .fn<StreamFn>()
+      .mockImplementationOnce(() => completed(original).stream)
+      .mockImplementationOnce(() => completed(message("[]")).stream);
+    const verification = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
+    verification.hadToolActivity = true;
+    const result = await collect(await verification.wrap(inner)(model, toolTurnContext));
+    expect(result.result).toBe(original);
+    expect(inner).toHaveBeenCalledTimes(2);
+    expect(verification.receipt).toMatchObject({
+      outcome: "passed",
+      repair_attempts: 0,
+      checks: [
+        { kind: "figures_grounded", status: "pass" },
+        { kind: "figures_labelled", status: "pass" },
+      ],
+    });
+  });
+
+  it("the label pass fixes a printed figure stated against the wrong referent", async () => {
+    // 439.70 is the per-week figure; the draft calls it the per-day figure.
+    const original = message("pb-video spent $1,758.80 in 28 days, $439.70 a day. Pause it.");
+    const relabel = message(
+      '[{"find": "$439.70 a day", "replace": "$439.70 a week ($62.81 a day)"}]',
+    );
+    const inner = vi
+      .fn<StreamFn>()
+      .mockImplementationOnce(() => completed(original).stream)
+      .mockImplementationOnce(() => completed(relabel).stream);
+    const verification = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
+    verification.hadToolActivity = true;
+    const result = await collect(await verification.wrap(inner)(model, toolTurnContext));
+    expect(result.result.content).toEqual([
+      {
+        type: "text",
+        text: "pb-video spent $1,758.80 in 28 days, $439.70 a week ($62.81 a day). Pause it.",
+      },
+    ]);
+    expect(result.result.usage).toBe(original.usage);
+    expect(verification.takeAdditionalUsage()).toBe(relabel.usage);
+    expect(verification.receipt).toMatchObject({
+      outcome: "repaired",
+      repair_attempts: 0,
+      checks: [
+        { kind: "figures_grounded", status: "pass" },
+        { kind: "figures_labelled", status: "fail" },
+      ],
+    });
+
+    // A relabel that would introduce an unprinted figure, or prose instead of
+    // edits, leaves the answer unchanged and the pass unknown.
+    for (const bad of [
+      '[{"find": "$439.70 a day", "replace": "$97.31 a day"}]',
+      "Everything is labelled correctly.",
+    ]) {
+      const inner2 = vi
+        .fn<StreamFn>()
+        .mockImplementationOnce(() => completed(original).stream)
+        .mockImplementationOnce(() => completed(message(bad)).stream);
+      const verification2 = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
+      verification2.hadToolActivity = true;
+      const result2 = await collect(await verification2.wrap(inner2)(model, toolTurnContext));
+      expect(result2.result).toBe(original);
+      expect(verification2.receipt).toMatchObject({
+        outcome: "passed",
+        checks: [
+          { kind: "figures_grounded", status: "pass" },
+          { kind: "figures_labelled", status: "unknown" },
+        ],
+      });
+    }
+  });
+
+  it("stays shadow-only without a label pass when the mode is shadow", async () => {
     const original = message(
       "pb-video spent $1,758.80 in 28 days, about $440 a week ($439.70). Pause it.",
     );
     const inner = vi.fn<StreamFn>(() => completed(original).stream);
-    const verification = state({ prompt: pastePrompt });
+    const verification = state({ mode: "shadow", prompt: pastePrompt });
     verification.hadToolActivity = true;
     const result = await collect(await verification.wrap(inner)(model, toolTurnContext));
     expect(result.result).toBe(original);
     expect(inner).toHaveBeenCalledTimes(1);
-    expect(verification.receipt).toMatchObject({
-      outcome: "passed",
-      repair_attempts: 0,
-      checks: [{ kind: "figures_grounded", status: "pass" }],
-    });
+    expect(verification.receipt.checks).toEqual([{ kind: "figures_grounded", status: "pass" }]);
   });
 
   it("releases the original when the correction still states an ungrounded figure", async () => {
@@ -715,7 +798,8 @@ describe("figures grounded on pasted-data turns", () => {
     const inner = vi
       .fn<StreamFn>()
       .mockImplementationOnce(() => completed(original).stream)
-      .mockImplementationOnce(() => completed(better).stream);
+      .mockImplementationOnce(() => completed(better).stream)
+      .mockImplementationOnce(() => completed(message("[]")).stream);
     const verification = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
     verification.hadToolActivity = true;
     const result = await collect(await verification.wrap(inner)(model, toolTurnContext));
@@ -728,9 +812,12 @@ describe("figures grounded on pasted-data turns", () => {
     expect(verification.receipt).toMatchObject({
       outcome: "improved",
       repair_attempts: 1,
-      checks: [{ kind: "figures_grounded", status: "fail" }],
+      checks: [
+        { kind: "figures_grounded", status: "fail" },
+        { kind: "figures_labelled", status: "pass" },
+      ],
     });
-    expect(verification.takeAdditionalUsage()).toBe(better.usage);
+    expect(verification.takeAdditionalUsage()?.output).toBeGreaterThanOrEqual(better.usage.output);
   });
 
   it("keeps the original when the edits drop the deliverable or are not a list of edits", async () => {

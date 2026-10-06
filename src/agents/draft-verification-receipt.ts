@@ -24,12 +24,13 @@ const receiptSchema = z
               "allocation_count",
               "allocation_total",
               "figures_grounded",
+              "figures_labelled",
             ]),
             status: z.enum(["pass", "fail", "unknown"]),
           })
           .strict(),
       )
-      .max(5),
+      .max(6),
     repair_attempts: z.union([z.literal(0), z.literal(1)]),
     stop_reason: z.enum(DRAFT_STOP_REASONS).nullable(),
     ceiling_retried: z.null(),

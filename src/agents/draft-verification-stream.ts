@@ -14,12 +14,14 @@ import {
   deriveDraftContract,
   draftRepairInstruction,
   draftStopReason,
+  figuresLabelInstruction,
   figuresRepairInstruction,
   hasDraftChecks,
   MAX_DRAFT_CHARS,
   MAX_EVIDENCE_CHARS,
   parseFigureEdits,
   ungroundedFigures,
+  type DraftCheck,
   type DraftVerificationReceipt,
 } from "./draft-verification.js";
 
@@ -47,6 +49,30 @@ const MAX_FIGURES_REPAIR_TOKENS = 4_000;
 // A tool output in the correction context keeps its tail, where a script
 // prints its figures table.
 const MAX_EVIDENCE_IN_REPAIR_CHARS = 20_000;
+// The label pass runs on every pasted-data turn in repair mode, after the
+// mechanical stage, so it is bounded tighter than a correction.
+const MAX_LABEL_PASS_MS = 60_000;
+const MAX_LABEL_PASS_TOKENS = 4_000;
+
+function addUsage(a: Usage | undefined, b: Usage): Usage {
+  if (!a) {
+    return b;
+  }
+  return {
+    input: a.input + b.input,
+    output: a.output + b.output,
+    cacheRead: a.cacheRead + b.cacheRead,
+    cacheWrite: a.cacheWrite + b.cacheWrite,
+    totalTokens: a.totalTokens + b.totalTokens,
+    cost: {
+      input: a.cost.input + b.cost.input,
+      output: a.cost.output + b.cost.output,
+      cacheRead: a.cost.cacheRead + b.cost.cacheRead,
+      cacheWrite: a.cost.cacheWrite + b.cost.cacheWrite,
+      total: a.cost.total + b.cost.total,
+    },
+  };
+}
 
 const draftLogger = createSubsystemLogger("draft-verification");
 
@@ -495,145 +521,216 @@ export class DraftVerificationStream {
           override.maxRepairMs ?? repairCeilingMs,
           this.options.deadline - Date.now(),
         );
-        if (
-          this.receipt.outcome !== "failed" ||
-          original.stopReason !== "stop" ||
-          (this.hadToolActivity && !this.toolTurnChecks) ||
-          !Number.isFinite(repairMs) ||
-          repairMs <= 1_000
-        ) {
-          if (this.receipt.outcome === "failed") {
-            this.receipt.outcome = "excluded";
-          }
-          release(original);
-          return;
-        }
-
-        this.receipt.repair_attempts = 1;
-        this.receipt.outcome = "repair_failed";
-        const originalText = boundedText(original) ?? "";
-        const ungrounded = figuresRepair ? ungroundedFigures(originalText, evidence) : [];
-        if (figuresRepair) {
-          draftLogger.warn("draft states figures no tool output or request holds", {
-            count: ungrounded.length,
-            figures: ungrounded.slice(0, 24),
-          });
-        }
-        let candidate: AssistantMessage | undefined;
-        try {
-          candidate = await boundedOperation(
+        const repairable =
+          original.stopReason === "stop" &&
+          !(this.hadToolActivity && !this.toolTurnChecks) &&
+          Number.isFinite(repairMs) &&
+          repairMs > 1_000;
+        // One tool-free call on INNER (never this wrapper or AgentSession.prompt:
+        // no mutation replay/retry loop), with the draft so far in its history.
+        const toolFreeCall = async (
+          base: AssistantMessage,
+          instruction: string,
+          tokenCeiling: number,
+          ms: number,
+        ): Promise<AssistantMessage> =>
+          boundedOperation(
             async (signal) => {
-              const tokenCeiling = figuresRepair ? MAX_FIGURES_REPAIR_TOKENS : MAX_REPAIR_TOKENS;
               const maxTokens = Math.max(
                 1,
                 Math.min(tokenCeiling, options?.maxTokens ?? tokenCeiling, model.maxTokens),
               );
-              const repairOptions = {
+              const callOptions = {
                 ...options,
                 signal,
                 toolChoice: "none",
                 maxRetries: 0,
                 maxTokens,
-                timeoutMs: repairMs,
+                timeoutMs: ms,
                 onPayload: toolFreePayloadGuard(options, model.api, maxTokens),
               };
-              const repairContext = {
+              const callContext = {
                 ...context,
                 tools: [],
                 messages: [
                   ...(this.hadToolActivity
-                    ? toolFreeMessages([...context.messages, original])
-                    : [...context.messages, original]),
-                  {
-                    role: "user" as const,
-                    content: figuresRepair
-                      ? figuresRepairInstruction(ungrounded)
-                      : draftRepairInstruction(this.contract),
-                    timestamp: Date.now(),
-                  },
+                    ? toolFreeMessages([...context.messages, base])
+                    : [...context.messages, base]),
+                  { role: "user" as const, content: instruction, timestamp: Date.now() },
                 ],
               };
-              // Call captured INNER, not this wrapper or AgentSession.prompt: no mutation replay/retry loop.
               return consume(
-                await callInner({ ...model, maxTokens }, repairContext, repairOptions),
+                await callInner({ ...model, maxTokens }, callContext, callOptions),
                 false,
                 signal,
               );
             },
             [this.options.abortSignal, options?.signal],
-            Date.now() + repairMs,
+            Date.now() + ms,
           );
-          this.receipt.stop_reason = draftStopReason(candidate.stopReason);
-        } catch {
-          this.receipt.stop_reason = null; // No observed terminal means no invented provider stop/usage.
-        }
-        if (candidate) {
-          const deliverable =
-            !parentAborted() &&
-            (!this.hadToolActivity || this.toolTurnChecks) &&
-            candidate.stopReason === "stop";
+        const withText = (base: AssistantMessage, text: string): AssistantMessage => ({
+          ...base,
+          content: base.content.map((block) =>
+            block.type === "text" ? { ...block, text } : block,
+          ),
+        });
+        const finish = () => {
+          if (parentAborted()) {
+            this.receipt.stop_reason = "aborted";
+            release(failedMessage(model, true, original));
+          } else {
+            release(original);
+          }
+        };
+
+        if (this.receipt.outcome === "failed" && repairable) {
+          this.receipt.repair_attempts = 1;
+          this.receipt.outcome = "repair_failed";
+          const originalText = boundedText(original) ?? "";
+          const ungrounded = figuresRepair ? ungroundedFigures(originalText, evidence) : [];
           if (figuresRepair) {
-            // The correction is a list of edits; the draft with them applied
-            // is the candidate answer, and it ships when every figure is
-            // grounded or when strictly fewer are not.
-            const edits = parseFigureEdits(boundedText(candidate) ?? "");
-            const patchedText = edits ? applyFigureEdits(originalText, edits) : undefined;
-            const checks = patchedText ? checkDraft(this.contract, patchedText, evidence) : [];
-            const remaining = patchedText ? ungroundedFigures(patchedText, evidence) : ungrounded;
-            const otherChecksPass = checks.every(
-              (check) => check.kind === "figures_grounded" || check.status === "pass",
+            draftLogger.warn("draft states figures no tool output or request holds", {
+              count: ungrounded.length,
+              figures: ungrounded.slice(0, 24),
+            });
+          }
+          let candidate: AssistantMessage | undefined;
+          try {
+            candidate = await toolFreeCall(
+              original,
+              figuresRepair
+                ? figuresRepairInstruction(ungrounded)
+                : draftRepairInstruction(this.contract),
+              figuresRepair ? MAX_FIGURES_REPAIR_TOKENS : MAX_REPAIR_TOKENS,
+              repairMs,
             );
-            if (deliverable && patchedText && checks.length > 0 && otherChecksPass) {
-              if (checks.every((check) => check.status === "pass")) {
+            this.receipt.stop_reason = draftStopReason(candidate.stopReason);
+          } catch {
+            this.receipt.stop_reason = null; // No observed terminal means no invented provider stop/usage.
+          }
+          if (candidate) {
+            const deliverable =
+              !parentAborted() &&
+              (!this.hadToolActivity || this.toolTurnChecks) &&
+              candidate.stopReason === "stop";
+            if (figuresRepair) {
+              // The correction is a list of edits; the draft with them applied
+              // is the candidate answer, and it ships when every figure is
+              // grounded or when strictly fewer are not.
+              const edits = parseFigureEdits(boundedText(candidate) ?? "");
+              const patchedText = edits ? applyFigureEdits(originalText, edits) : undefined;
+              const checks = patchedText ? checkDraft(this.contract, patchedText, evidence) : [];
+              const remaining = patchedText ? ungroundedFigures(patchedText, evidence) : ungrounded;
+              const otherChecksPass = checks.every(
+                (check) => check.kind === "figures_grounded" || check.status === "pass",
+              );
+              if (deliverable && patchedText && checks.length > 0 && otherChecksPass) {
+                if (checks.every((check) => check.status === "pass")) {
+                  this.receipt.outcome = "repaired";
+                } else if (remaining.length < ungrounded.length) {
+                  this.receipt.outcome = "improved";
+                }
+              }
+              this.additionalUsage = addUsage(this.additionalUsage, candidate.usage);
+              if (this.receipt.outcome === "repaired" || this.receipt.outcome === "improved") {
+                original = withText(original, patchedText!);
+                this.receipt.checks = checks;
+              }
+              draftLogger.warn("figures correction finished", {
+                outcome: this.receipt.outcome,
+                edits: edits?.length ?? null,
+                before: ungrounded.length,
+                after: remaining.length,
+                remaining: remaining.slice(0, 24),
+                stopReason: candidate.stopReason,
+              });
+            } else {
+              const checks = checkDraft(this.contract, boundedText(candidate) ?? "", evidence);
+              if (
+                deliverable &&
+                checks.length > 0 &&
+                checks.every((check) => check.status === "pass")
+              ) {
+                this.additionalUsage = addUsage(this.additionalUsage, original.usage);
+                original = candidate;
+                this.receipt.checks = checks;
                 this.receipt.outcome = "repaired";
-              } else if (remaining.length < ungrounded.length) {
-                this.receipt.outcome = "improved";
+              } else {
+                this.additionalUsage = addUsage(this.additionalUsage, candidate.usage);
               }
             }
-            this.additionalUsage = candidate.usage;
-            if (this.receipt.outcome === "repaired" || this.receipt.outcome === "improved") {
-              original = {
-                ...original,
-                content: original.content.map((block) =>
-                  block.type === "text" ? { ...block, text: patchedText! } : block,
-                ),
-              };
-              this.receipt.checks = checks;
-            }
-            draftLogger.warn("figures correction finished", {
-              outcome: this.receipt.outcome,
-              edits: edits?.length ?? null,
+          } else if (figuresRepair) {
+            draftLogger.warn("figures correction produced no candidate", {
               before: ungrounded.length,
-              after: remaining.length,
-              remaining: remaining.slice(0, 24),
-              stopReason: candidate.stopReason,
             });
-          } else {
-            const checks = checkDraft(this.contract, boundedText(candidate) ?? "", evidence);
-            if (
-              deliverable &&
-              checks.length > 0 &&
-              checks.every((check) => check.status === "pass")
-            ) {
-              this.additionalUsage = original.usage;
-              original = candidate;
-              this.receipt.checks = checks;
-              this.receipt.outcome = "repaired";
-            } else {
-              this.additionalUsage = candidate.usage;
-            }
           }
-        } else if (figuresRepair) {
-          draftLogger.warn("figures correction produced no candidate", {
-            before: ungrounded.length,
+        } else if (this.receipt.outcome === "failed") {
+          this.receipt.outcome = "excluded";
+        }
+
+        // The label pass: on a pasted-data turn in repair mode, whatever the
+        // mechanical stage decided, one more tool-free call checks that each
+        // printed figure is stated against its own referent.
+        const labelMs = Math.min(
+          MAX_LABEL_PASS_MS,
+          this.options.maxRepairMs ?? MAX_LABEL_PASS_MS,
+          override.maxRepairMs ?? MAX_LABEL_PASS_MS,
+          this.options.deadline - Date.now(),
+        );
+        if (
+          this.toolTurnChecks &&
+          this.options.mode === "repair" &&
+          repairable &&
+          !parentAborted() &&
+          this.receipt.outcome !== "excluded" &&
+          this.receipt.outcome !== "unchecked" &&
+          Number.isFinite(labelMs) &&
+          labelMs > 5_000
+        ) {
+          const baseText = boundedText(original) ?? "";
+          const baseUngrounded = ungroundedFigures(baseText, evidence).length;
+          let status: DraftCheck["status"] = "unknown";
+          let applied = 0;
+          try {
+            const reply = await toolFreeCall(
+              original,
+              figuresLabelInstruction(),
+              MAX_LABEL_PASS_TOKENS,
+              labelMs,
+            );
+            this.additionalUsage = addUsage(this.additionalUsage, reply.usage);
+            if (reply.stopReason === "stop" && !parentAborted()) {
+              const edits = parseFigureEdits(boundedText(reply) ?? "", { allowEmpty: true });
+              if (edits && edits.length === 0) {
+                status = "pass";
+              } else if (edits) {
+                const patched = applyFigureEdits(baseText, edits);
+                if (patched && ungroundedFigures(patched, evidence).length <= baseUngrounded) {
+                  applied = edits.length;
+                  status = "fail";
+                  original = withText(original, patched);
+                  if (this.receipt.outcome === "passed") {
+                    this.receipt.outcome = "repaired";
+                  } else if (this.receipt.outcome === "repair_failed") {
+                    this.receipt.outcome = "improved";
+                  }
+                }
+              }
+            }
+          } catch {
+            // No observed terminal: the pass is unknown, the answer unchanged.
+          }
+          this.receipt.checks = [
+            ...this.receipt.checks.filter((check) => check.kind !== "figures_labelled"),
+            { kind: "figures_labelled", status },
+          ];
+          draftLogger.warn("figures label pass finished", {
+            status,
+            applied,
+            outcome: this.receipt.outcome,
           });
         }
-        if (parentAborted()) {
-          this.receipt.stop_reason = "aborted";
-          release(failedMessage(model, true, original));
-        } else {
-          release(original);
-        }
+        finish();
       };
       void run().catch(() => {
         const message = failedMessage(model, Boolean(parentAborted()), observed);

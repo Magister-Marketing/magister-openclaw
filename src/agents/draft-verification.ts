@@ -7,7 +7,8 @@ export type DraftCheckKind =
   | "bullet_count"
   | "allocation_count"
   | "allocation_total"
-  | "figures_grounded";
+  | "figures_grounded"
+  | "figures_labelled";
 export type DraftCheck = { kind: DraftCheckKind; status: "pass" | "fail" | "unknown" };
 export type DraftContract = {
   jsonOnly?: true;
@@ -631,6 +632,24 @@ export function figuresRepairInstruction(ungrounded: readonly string[]): string 
   ].join("\n");
 }
 
+/**
+ * The mechanical check proves each figure was printed; it cannot see a
+ * printed figure stated against the wrong referent (a share of the campaign
+ * total stated as a share of one ad set's spend, a final-28-day rate stated
+ * as the full-period rate, a range over a set that one member is outside, a
+ * week label with the wrong dates). Those were every critical data-fidelity
+ * miss left after rounds 5–9 (2026-10-06), and the judge finds them from
+ * the same tool output, so a tool-free self-check call can too.
+ */
+export function figuresLabelInstruction(): string {
+  return [
+    'Check every figure in your draft against the tool output it comes from: the label it is stated under, the base of every share or rate, the window or period it covers, and the set a range or "every other" statement covers.',
+    "Return only a JSON array of edits, no prose and no code fence, for the sentences or table rows where a figure is stated against the wrong label, base, window, or set:",
+    '[{"find": "<the exact sentence or table row from the draft, copied character for character>", "replace": "<that text corrected: the printed figure for the stated referent, or the referent the figure belongs to>"}]',
+    "Return [] when every figure is stated against its own referent. Do not add figures the tool output does not print. Change nothing else. Tools are unavailable.",
+  ].join("\n");
+}
+
 function stripFence(text: string): string {
   const trimmed = text.trim();
   const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
@@ -638,14 +657,21 @@ function stripFence(text: string): string {
 }
 
 /** The edits a correction returned, or undefined when it is not a well-formed list. */
-export function parseFigureEdits(text: string): FigureEdit[] | undefined {
+export function parseFigureEdits(
+  text: string,
+  options: { allowEmpty?: boolean } = {},
+): FigureEdit[] | undefined {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stripFence(text));
   } catch {
     return undefined;
   }
-  if (!Array.isArray(parsed) || parsed.length === 0 || parsed.length > MAX_FIGURE_EDITS) {
+  if (
+    !Array.isArray(parsed) ||
+    (parsed.length === 0 && !options.allowEmpty) ||
+    parsed.length > MAX_FIGURE_EDITS
+  ) {
     return undefined;
   }
   const edits: FigureEdit[] = [];
