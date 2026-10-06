@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
+import { reportCleanupFailure, reportHostRouteFailure } from "./host-route-telemetry.js";
 import { LocalMutationObservation, parseLocalMutationContext } from "./mutation-observer.js";
 import { mirrorReadBits } from "./tool-readable.js";
 
@@ -148,6 +149,22 @@ async function removePromotedStaging(staged: string, attemptRoot: string): Promi
     if (!["ENOENT", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? "")) {
       throw error;
     }
+  }
+}
+
+/** Staging cleanup after the promotion is committed, and only then.
+ *
+ *  It cannot change the outcome: the destination is written and the mutation
+ *  ledger already says `promoted`. It can fail, though — the sandbox creates
+ *  `promote/<sub>/` as agent-tool under umask 0027, so the host may read the
+ *  staged file but not unlink it — and letting that throw answered 500 for a
+ *  delivered artifact. Whatever stays behind is reclaimed by the supervisor's
+ *  scratch reaper, which runs as root. */
+async function cleanUpPromotedStaging(staged: string, attemptRoot: string): Promise<void> {
+  try {
+    await removePromotedStaging(staged, attemptRoot);
+  } catch (error) {
+    reportCleanupFailure("magister_artifact_promotion", error);
   }
 }
 
@@ -304,7 +321,7 @@ export async function promoteArtifact(
     if (initialState === "current") {
       await mirrorReadBits(destination);
       observation?.finish("promoted");
-      await removePromotedStaging(staged, attemptRoot);
+      await cleanUpPromotedStaging(staged, attemptRoot);
       return {
         status: "already_current",
         destination_path: request.destination_path,
@@ -367,7 +384,7 @@ export async function promoteArtifact(
       commitAttested = false;
     }
     observation?.finish("promoted");
-    await removePromotedStaging(staged, attemptRoot);
+    await cleanUpPromotedStaging(staged, attemptRoot);
     return {
       status: "promoted",
       destination_path: request.destination_path,
@@ -410,6 +427,9 @@ export async function handleArtifactPromotion(
   try {
     sendJson(res, 200, await promoteArtifact(await readJsonBody(req)));
   } catch (error) {
+    if (!(error instanceof ArtifactPromotionError)) {
+      reportHostRouteFailure("magister_artifact_promotion", error);
+    }
     const status = error instanceof ArtifactPromotionError ? error.statusCode : 500;
     const message = error instanceof ArtifactPromotionError ? error.message : "promotion failed";
     sendJson(res, status, { error: "promotion_rejected", message });

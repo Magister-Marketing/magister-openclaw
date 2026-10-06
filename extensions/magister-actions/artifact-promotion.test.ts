@@ -1,17 +1,46 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
+import {
+  onInternalDiagnosticEvent,
+  resetDiagnosticEventsForTest,
+  type DiagnosticEventPayload,
+} from "openclaw/plugin-sdk/diagnostic-runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ArtifactPromotionError, promoteArtifact } from "./artifact-promotion.js";
+import {
+  ArtifactPromotionError,
+  handleArtifactPromotion,
+  promoteArtifact,
+} from "./artifact-promotion.js";
 
 const roots: string[] = [];
 const previousEnforcement = process.env.MAGISTER_LOCAL_MUTATION_ENFORCEMENT;
 const previousGatewayToken = process.env.GATEWAY_TOKEN;
 const previousGatewayUrl = process.env.GATEWAY_INTERNAL_URL;
+const previousWorkspace = process.env.OPENCLAW_WORKSPACE_DIR;
+const previousAgentToolUid = process.env.MAGISTER_AGENT_TOOL_UID;
+// chmod cannot refuse root, so the permission-shaped tests need a real user.
+const runsAsRoot = process.getuid?.() === 0;
+let diagnostics: DiagnosticEventPayload[] = [];
+let stopDiagnostics: (() => void) | undefined;
 
 afterEach(() => {
+  stopDiagnostics?.();
+  stopDiagnostics = undefined;
   vi.unstubAllGlobals();
+  for (const [key, value] of [
+    ["OPENCLAW_WORKSPACE_DIR", previousWorkspace],
+    ["MAGISTER_AGENT_TOOL_UID", previousAgentToolUid],
+  ] as const) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
   if (previousEnforcement === undefined) {
     delete process.env.MAGISTER_LOCAL_MUTATION_ENFORCEMENT;
   } else {
@@ -33,6 +62,11 @@ afterEach(() => {
 });
 
 beforeEach(() => {
+  resetDiagnosticEventsForTest();
+  diagnostics = [];
+  stopDiagnostics = onInternalDiagnosticEvent((event) => {
+    diagnostics.push(event);
+  });
   process.env.GATEWAY_TOKEN = "broker-local";
   process.env.GATEWAY_INTERNAL_URL = "http://127.0.0.1:18796";
   vi.stubGlobal(
@@ -179,5 +213,116 @@ describe("artifact promotion", () => {
     expect(fs.readFileSync(path.join(row.workspace, "deliverables", "report.txt"), "utf8")).toBe(
       "user edit",
     );
+  });
+
+  it.skipIf(runsAsRoot)(
+    "keeps a committed promotion when the staging directory refuses cleanup",
+    async () => {
+      // The sandbox creates `promote/<sub>/` as agent-tool under umask 0027, so
+      // the host can read the staged file but not unlink it. The artifact is
+      // already at its destination and the ledger says promoted; answering 500
+      // here told the agent a delivered file had failed (MAGISTER-GATEWAY-CW).
+      const row = fixture();
+      process.env.MAGISTER_LOCAL_MUTATION_ENFORCEMENT = "1";
+      const subdir = path.join(path.dirname(row.staged), "sub");
+      fs.mkdirSync(subdir);
+      const staged = path.join(subdir, "report.txt");
+      fs.renameSync(row.staged, staged);
+      fs.chmodSync(subdir, 0o550);
+      const nested = { ...request(row), staged_path: "promote/sub/report.txt" };
+      const options = { workspace: row.workspace, agentToolUid: process.getuid?.() ?? 501 };
+      try {
+        await expect(promoteArtifact(nested, options)).resolves.toMatchObject({
+          status: "promoted",
+        });
+        // A retry finds the same refused staging and must still succeed.
+        await expect(promoteArtifact(nested, options)).resolves.toMatchObject({
+          status: "already_current",
+        });
+      } finally {
+        fs.chmodSync(subdir, 0o750);
+      }
+      expect(fs.readFileSync(path.join(row.workspace, "deliverables", "report.txt"), "utf8")).toBe(
+        "bounded artifact",
+      );
+      // Left for the supervisor's scratch reaper, which runs as root.
+      expect(fs.existsSync(staged)).toBe(true);
+      const cleanup = diagnostics.filter((event) => event.type === "plugin.cleanup.failed");
+      expect(cleanup).toHaveLength(2);
+      expect(cleanup[0]).toMatchObject({
+        pluginId: "magister-actions",
+        toolName: "magister_artifact_promotion",
+        reasonCode: "eacces",
+      });
+      expect(diagnostics.some((event) => event.type === "http.request.error")).toBe(false);
+    },
+  );
+});
+
+function fakeExchange(body: unknown) {
+  const req = Object.assign(Readable.from([Buffer.from(JSON.stringify(body))]), {
+    method: "POST",
+  }) as unknown as IncomingMessage;
+  const response = { status: 0, body: "" };
+  const res = {
+    set statusCode(value: number) {
+      response.status = value;
+    },
+    setHeader: () => undefined,
+    end: (chunk: string) => {
+      response.body = chunk;
+    },
+  } as unknown as ServerResponse;
+  return { req, res, response };
+}
+
+describe("artifact promotion route", () => {
+  it.skipIf(runsAsRoot)(
+    "reports an unexpected failure once, by errno code and never by path",
+    async () => {
+      const row = fixture();
+      process.env.OPENCLAW_WORKSPACE_DIR = row.workspace;
+      process.env.MAGISTER_AGENT_TOOL_UID = String(process.getuid?.() ?? 501);
+      const tmpRoot = path.join(row.workspace, ".magister", "tmp");
+      fs.chmodSync(tmpRoot, 0o000);
+      const { req, res, response } = fakeExchange(request(row));
+      try {
+        await handleArtifactPromotion(req, res);
+      } finally {
+        fs.chmodSync(tmpRoot, 0o755);
+      }
+
+      expect(response.status).toBe(500);
+      expect(JSON.parse(response.body)).toEqual({
+        error: "promotion_rejected",
+        message: "promotion failed",
+      });
+      const failures = diagnostics.filter((event) => event.type === "http.request.error");
+      expect(failures).toEqual([
+        expect.objectContaining({
+          type: "http.request.error",
+          surface: "plugin_http",
+          failureKind: "handler_exception",
+          toolName: "magister_artifact_promotion",
+          reasonCode: "eacces",
+        }),
+      ]);
+      expect(JSON.stringify(diagnostics)).not.toContain(row.workspace);
+    },
+  );
+
+  it("keeps expected rejections quiet", async () => {
+    const row = fixture();
+    process.env.OPENCLAW_WORKSPACE_DIR = row.workspace;
+    process.env.MAGISTER_AGENT_TOOL_UID = String(process.getuid?.() ?? 501);
+    const { req, res, response } = fakeExchange({
+      ...request(row),
+      destination_path: "AGENTS.md",
+    });
+
+    await handleArtifactPromotion(req, res);
+
+    expect(response.status).toBe(403);
+    expect(diagnostics.some((event) => event.type === "http.request.error")).toBe(false);
   });
 });
