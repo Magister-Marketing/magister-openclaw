@@ -33,7 +33,7 @@ export type DraftVerificationReceipt = {
     | "repair_failed"
     | "excluded";
   checks: DraftCheck[];
-  repair_attempts: 0 | 1;
+  repair_attempts: 0 | 1 | 2;
   stop_reason: DraftStopReason | null;
   ceiling_retried: null;
   skill_reads: null;

@@ -799,10 +799,12 @@ describe("figures grounded on pasted-data turns", () => {
       .fn<StreamFn>()
       .mockImplementationOnce(() => completed(original).stream)
       .mockImplementationOnce(() => completed(better).stream)
+      .mockImplementationOnce(() => completed(message("[]")).stream)
       .mockImplementationOnce(() => completed(message("[]")).stream);
     const verification = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
     verification.hadToolActivity = true;
     const result = await collect(await verification.wrap(inner)(model, toolTurnContext));
+    expect(inner).toHaveBeenCalledTimes(4);
     expect(result.result.content).toEqual([
       {
         type: "text",
@@ -811,13 +813,66 @@ describe("figures grounded on pasted-data turns", () => {
     ]);
     expect(verification.receipt).toMatchObject({
       outcome: "improved",
-      repair_attempts: 1,
+      repair_attempts: 2,
       checks: [
         { kind: "figures_grounded", status: "fail" },
         { kind: "figures_labelled", status: "pass" },
       ],
     });
     expect(verification.takeAdditionalUsage()?.output).toBeGreaterThanOrEqual(better.usage.output);
+  });
+
+  it("a second round grounds what the first correction left, then the label pass runs", async () => {
+    const original = message(
+      "pb-video spent $1,758.80 in 28 days: about $251 per day, with 112 refunds in the window. Pause it and reallocate.",
+    );
+    const roundOne = message(
+      '[{"find": "about $251 per day", "replace": "$62.81 per day (script output)"}]',
+    );
+    const roundTwo = message('[{"find": "with 112 refunds", "replace": "with 98 refunds"}]');
+    const inner = vi
+      .fn<StreamFn>()
+      .mockImplementationOnce(() => completed(original).stream)
+      .mockImplementationOnce(() => completed(roundOne).stream)
+      .mockImplementationOnce(() => completed(roundTwo).stream)
+      .mockImplementationOnce(() => completed(message("[]")).stream);
+    const verification = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
+    verification.hadToolActivity = true;
+    const result = await collect(await verification.wrap(inner)(model, toolTurnContext));
+    expect(inner).toHaveBeenCalledTimes(4);
+    const secondInstruction = inner.mock.calls[2][1].messages.at(-1);
+    expect(String(secondInstruction?.content)).toContain(
+      "neither a tool output nor the request: 112",
+    );
+    expect(result.result.content).toEqual([
+      {
+        type: "text",
+        text: "pb-video spent $1,758.80 in 28 days: $62.81 per day (script output), with 98 refunds in the window. Pause it and reallocate.",
+      },
+    ]);
+    expect(verification.receipt).toMatchObject({
+      outcome: "repaired",
+      repair_attempts: 2,
+      checks: [
+        { kind: "figures_grounded", status: "pass" },
+        { kind: "figures_labelled", status: "pass" },
+      ],
+    });
+
+    // A second round that helps nothing leaves the first round's answer, still improved.
+    const inner2 = vi
+      .fn<StreamFn>()
+      .mockImplementationOnce(() => completed(original).stream)
+      .mockImplementationOnce(() => completed(roundOne).stream)
+      .mockImplementationOnce(() => completed(message("Nothing more to change.")).stream)
+      .mockImplementationOnce(() => completed(message("[]")).stream);
+    const verification2 = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
+    verification2.hadToolActivity = true;
+    const result2 = await collect(await verification2.wrap(inner2)(model, toolTurnContext));
+    expect(result2.result.content[0]).toMatchObject({
+      text: expect.stringContaining("$62.81 per day (script output), with 112 refunds"),
+    });
+    expect(verification2.receipt).toMatchObject({ outcome: "improved", repair_attempts: 2 });
   });
 
   it("keeps the original when the edits drop the deliverable or are not a list of edits", async () => {

@@ -644,6 +644,66 @@ export class DraftVerificationStream {
                 remaining: remaining.slice(0, 24),
                 stopReason: candidate.stopReason,
               });
+              // A correction that grounded some figures but not all gets one
+              // more round for the rest (2026-10-06: the critical misses left
+              // were on drafts that shipped "improved"). Same budget, same
+              // edit-list form, only when time remains.
+              const secondMs = Math.min(
+                MAX_FIGURES_REPAIR_MS,
+                this.options.maxRepairMs ?? MAX_FIGURES_REPAIR_MS,
+                override.maxRepairMs ?? MAX_FIGURES_REPAIR_MS,
+                this.options.deadline - Date.now(),
+              );
+              if (
+                this.receipt.outcome === "improved" &&
+                remaining.length > 0 &&
+                !parentAborted() &&
+                Number.isFinite(secondMs) &&
+                secondMs > 5_000
+              ) {
+                this.receipt.repair_attempts = 2;
+                const roundOneText = boundedText(original) ?? "";
+                let second: AssistantMessage | undefined;
+                try {
+                  second = await toolFreeCall(
+                    original,
+                    figuresRepairInstruction(remaining),
+                    MAX_FIGURES_REPAIR_TOKENS,
+                    secondMs,
+                  );
+                } catch {
+                  // No observed terminal: the first round's answer stands.
+                }
+                let after = remaining.length;
+                if (second) {
+                  this.additionalUsage = addUsage(this.additionalUsage, second.usage);
+                  const edits2 =
+                    second.stopReason === "stop" && !parentAborted()
+                      ? parseFigureEdits(boundedText(second) ?? "")
+                      : undefined;
+                  const patched2 = edits2 ? applyFigureEdits(roundOneText, edits2) : undefined;
+                  if (patched2) {
+                    const checks2 = checkDraft(this.contract, patched2, evidence);
+                    const remaining2 = ungroundedFigures(patched2, evidence);
+                    const others2 = checks2.every(
+                      (check) => check.kind === "figures_grounded" || check.status === "pass",
+                    );
+                    if (checks2.length > 0 && others2 && remaining2.length < remaining.length) {
+                      original = withText(original, patched2);
+                      this.receipt.checks = checks2;
+                      after = remaining2.length;
+                      if (checks2.every((check) => check.status === "pass")) {
+                        this.receipt.outcome = "repaired";
+                      }
+                    }
+                  }
+                }
+                draftLogger.warn("figures second round finished", {
+                  outcome: this.receipt.outcome,
+                  before: remaining.length,
+                  after,
+                });
+              }
             } else {
               const checks = checkDraft(this.contract, boundedText(candidate) ?? "", evidence);
               if (

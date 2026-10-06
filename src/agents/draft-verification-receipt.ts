@@ -31,7 +31,7 @@ const receiptSchema = z
           .strict(),
       )
       .max(6),
-    repair_attempts: z.union([z.literal(0), z.literal(1)]),
+    repair_attempts: z.union([z.literal(0), z.literal(1), z.literal(2)]),
     stop_reason: z.enum(DRAFT_STOP_REASONS).nullable(),
     ceiling_retried: z.null(),
     skill_reads: z.null(),
