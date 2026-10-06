@@ -125,7 +125,7 @@ describe("prependInboundPasteNote", () => {
 
   it("prefixes the body with the note when a paste was written", () => {
     expect(prependInboundPasteNote("Review the quarter.", [paste])).toBe(
-      "[pasted data saved: inbox/ads_daily-3f2a9c1e.csv (785 lines, 54.2 KB); the same content is inline below; first read the SKILL.md that covers this task, then compute from the file rather than from the chat text]\n\nReview the quarter.",
+      "[pasted data saved: inbox/ads_daily-3f2a9c1e.csv (785 lines, 54.2 KB); the same content is inline below; first read the SKILL.md that covers this task, then compute from the file rather than from the chat text; the write-up refers to the data as supplied and names no file, folder, or other export]\n\nReview the quarter.",
     );
   });
 

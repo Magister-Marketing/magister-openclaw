@@ -587,10 +587,7 @@ export function checkDraft(
   return checks;
 }
 
-export function draftRepairInstruction(
-  contract: DraftContract,
-  ungrounded: readonly string[] = [],
-): string {
+export function draftRepairInstruction(contract: DraftContract): string {
   const constraints: string[] = [];
   if (contract.jsonOnly) {
     constraints.push("Return only valid JSON, without markdown fences or surrounding prose.");
@@ -603,14 +600,94 @@ export function draftRepairInstruction(
       `The allocation table must contain exactly ${contract.allocation.count} categories totaling ${contract.allocation.currency}${(contract.allocation.cents / 100).toFixed(2)}; do not count the total row as a category.`,
     );
   }
-  if (contract.figuresGrounded && ungrounded.length > 0) {
-    constraints.push(
-      `These figures appear in neither a tool output nor the request: ${ungrounded.join(", ")}. For each one, either replace it with the figure your script printed that it comes from, exactly and with its window and unit, or keep it and show the arithmetic that produces it from printed figures right where it appears, as numbers and the symbols + − × ÷ with an equals sign (for example "$1,758.80 ÷ 28 = $62.81" or "$400 + $300 + $630 = $1,330"); every operand must be a printed figure or a round constant such as a day count. Keep every figure the request asks for; a figure you can neither quote nor show is removed.`,
-    );
-  }
   return [
     "Revise only your preceding draft to satisfy these explicit requirements from the current user's request:",
     ...constraints.map((constraint) => `- ${constraint}`),
     "Preserve supported facts and the rest of the request. Do not invent evidence, execute actions, or claim any file or external resource changed. Tools are unavailable. Return the complete corrected answer, not a description of the correction.",
   ].join("\n");
+}
+
+// ------------------------------------------------------- figure edits
+
+export type FigureEdit = { find: string; replace: string };
+export const MAX_FIGURE_EDITS = 40;
+const MAX_FIGURE_EDIT_FIND_CHARS = 1_500;
+const MAX_FIGURE_EDIT_GROWTH_CHARS = 600;
+/** A patch that removes this share of the draft removed content, not figures. */
+const MIN_PATCHED_LENGTH_RATIO = 0.7;
+
+/**
+ * A pasted-data deliverable runs to tens of thousands of characters, so the
+ * correction is a list of edits, not a rewrite: a rewrite does not fit a
+ * correction's token budget (2026-10-06: the two corrections that failed
+ * were the two longest drafts) and a rewrite drops content a patch keeps.
+ */
+export function figuresRepairInstruction(ungrounded: readonly string[]): string {
+  return [
+    `These figures in your draft appear in neither a tool output nor the request: ${ungrounded.join(", ")}.`,
+    "Return only a JSON array of edits to your draft, no prose and no code fence, one edit per sentence or table cell that states one of them:",
+    '[{"find": "<the exact sentence or table row from the draft, copied character for character>", "replace": "<that text corrected>"}]',
+    'In each replacement either put the figure your script printed in place of the unprinted one, exactly and with its window and unit, or keep the figure and show the arithmetic that produces it from printed figures right there, as numbers and the symbols + − × ÷ with an equals sign (for example "$1,758.80 ÷ 28 = $62.81" or "$400 + $300 + $630 = $1,330"); every operand is a printed figure or a round constant such as a day count. Keep every figure the request asks for; a figure you can neither quote nor show is removed from its sentence. Change nothing else. Tools are unavailable.',
+  ].join("\n");
+}
+
+function stripFence(text: string): string {
+  const trimmed = text.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
+  return fenced ? fenced[1] : trimmed;
+}
+
+/** The edits a correction returned, or undefined when it is not a well-formed list. */
+export function parseFigureEdits(text: string): FigureEdit[] | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stripFence(text));
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0 || parsed.length > MAX_FIGURE_EDITS) {
+    return undefined;
+  }
+  const edits: FigureEdit[] = [];
+  for (const item of parsed) {
+    if (
+      !item ||
+      typeof item !== "object" ||
+      typeof (item as FigureEdit).find !== "string" ||
+      typeof (item as FigureEdit).replace !== "string"
+    ) {
+      return undefined;
+    }
+    const { find, replace } = item as FigureEdit;
+    if (
+      find.trim().length === 0 ||
+      find.length > MAX_FIGURE_EDIT_FIND_CHARS ||
+      replace.length > find.length + MAX_FIGURE_EDIT_GROWTH_CHARS
+    ) {
+      return undefined;
+    }
+    edits.push({ find, replace });
+  }
+  return edits;
+}
+
+/**
+ * The draft with every edit whose ``find`` occurs in it applied (all
+ * occurrences; the same sentence twice is the same correction twice), or
+ * undefined when no edit applied or the result lost too much of the text.
+ */
+export function applyFigureEdits(draft: string, edits: readonly FigureEdit[]): string | undefined {
+  let patched = draft;
+  let applied = 0;
+  for (const edit of edits) {
+    if (!patched.includes(edit.find)) {
+      continue;
+    }
+    patched = patched.split(edit.find).join(edit.replace);
+    applied += 1;
+  }
+  if (applied === 0 || patched.length < MIN_PATCHED_LENGTH_RATIO * draft.length) {
+    return undefined;
+  }
+  return patched;
 }

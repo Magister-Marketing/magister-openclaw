@@ -1000,7 +1000,7 @@ describe("agentCommand paste materialization", () => {
 
       const prompt = String(getLastEmbeddedCall()?.prompt);
       const match =
-        /^\[pasted data saved: (inbox\/ads_daily-[a-z0-9]{8}\.csv) \(121 lines, [0-9.]+ KB\); the same content is inline below; first read the SKILL.md that covers this task, then compute from the file rather than from the chat text\]\n\n/.exec(
+        /^\[pasted data saved: (inbox\/ads_daily-[a-z0-9]{8}\.csv) \(121 lines, [0-9.]+ KB\); the same content is inline below; first read the SKILL.md that covers this task, then compute from the file rather than from the chat text; the write-up refers to the data as supplied and names no file, folder, or other export\]\n\n/.exec(
           prompt,
         );
       expect(match).not.toBeNull();

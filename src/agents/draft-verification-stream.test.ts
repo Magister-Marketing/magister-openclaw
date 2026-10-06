@@ -621,9 +621,11 @@ describe("figures grounded on pasted-data turns", () => {
       10,
     );
     const correction = message(
-      "pb-video spent $1,758.80 in 28 days: $62.81 per day (script output). Pause it.",
+      '[{"find": "about $251 per day", "replace": "$62.81 per day (script output)"}]',
       6,
     );
+    const corrected =
+      "pb-video spent $1,758.80 in 28 days: $62.81 per day (script output). Pause it.";
     const inner = vi
       .fn<StreamFn>()
       .mockImplementationOnce(() => completed(exec).stream)
@@ -636,7 +638,12 @@ describe("figures grounded on pasted-data turns", () => {
     );
     expect(first.result).toBe(exec);
     const result = await collect(await wrapped(model, toolTurnContext, { maxTokens: 16_000 }));
-    expect(result.result).toBe(correction);
+    // The draft with the edits applied ships, with the draft's own usage; the
+    // correction call's usage is reported separately.
+    expect(result.result).not.toBe(correction);
+    expect(result.result.content).toEqual([{ type: "text", text: corrected }]);
+    expect(result.result.usage).toBe(original.usage);
+    expect(verification.takeAdditionalUsage()).toBe(correction.usage);
     expect(verification.receipt).toMatchObject({
       outcome: "repaired",
       repair_attempts: 1,
@@ -657,10 +664,11 @@ describe("figures grounded on pasted-data turns", () => {
     const instruction = repairContext.messages.at(-1);
     expect(instruction?.role).toBe("user");
     expect(String(instruction?.content)).toContain("neither a tool output nor the request: $251");
+    expect(String(instruction?.content)).toContain("Return only a JSON array of edits");
     expect(repairOptions).toMatchObject({
       toolChoice: "none",
-      maxTokens: 12_000,
-      timeoutMs: 150_000,
+      maxTokens: 4_000,
+      timeoutMs: 90_000,
     });
     expect(toolTurnContext.messages).toHaveLength(3);
   });
@@ -702,7 +710,7 @@ describe("figures grounded on pasted-data turns", () => {
       "pb-video spent $1,758.80 in 28 days: about $251 per day, with 112 refunds in the window. Pause it and reallocate.",
     );
     const better = message(
-      "pb-video spent $1,758.80 in 28 days: $62.81 per day (script output), with 112 refunds in the window. Pause it and reallocate.",
+      '[{"find": "about $251 per day", "replace": "$62.81 per day (script output)"}]',
     );
     const inner = vi
       .fn<StreamFn>()
@@ -711,20 +719,24 @@ describe("figures grounded on pasted-data turns", () => {
     const verification = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
     verification.hadToolActivity = true;
     const result = await collect(await verification.wrap(inner)(model, toolTurnContext));
-    expect(result.result).toBe(better);
+    expect(result.result.content).toEqual([
+      {
+        type: "text",
+        text: "pb-video spent $1,758.80 in 28 days: $62.81 per day (script output), with 112 refunds in the window. Pause it and reallocate.",
+      },
+    ]);
     expect(verification.receipt).toMatchObject({
       outcome: "improved",
       repair_attempts: 1,
       checks: [{ kind: "figures_grounded", status: "fail" }],
     });
-    expect(verification.takeAdditionalUsage()).toBe(original.usage);
+    expect(verification.takeAdditionalUsage()).toBe(better.usage);
   });
 
-  it("keeps the original when the correction grounds a figure by dropping the deliverable", async () => {
-    const original = message(
-      `About $251 per day with 112 refunds. ${"The recommendation and its rationale continue at length here. ".repeat(6)}`,
-    );
-    const truncated = message("About $62.81 per day with 112 refunds.");
+  it("keeps the original when the edits drop the deliverable or are not a list of edits", async () => {
+    const tail = "The recommendation and its rationale continue at length here. ".repeat(6);
+    const original = message(`About $251 per day with 112 refunds. ${tail}`);
+    const truncated = message(`[{"find": ${JSON.stringify(tail)}, "replace": ""}]`);
     const inner = vi
       .fn<StreamFn>()
       .mockImplementationOnce(() => completed(original).stream)
@@ -734,6 +746,17 @@ describe("figures grounded on pasted-data turns", () => {
     const result = await collect(await verification.wrap(inner)(model, toolTurnContext));
     expect(result.result).toBe(original);
     expect(verification.receipt).toMatchObject({ outcome: "repair_failed", repair_attempts: 1 });
+
+    const prose = message("Here is the corrected draft: about $62.81 per day with 112 refunds.");
+    const inner2 = vi
+      .fn<StreamFn>()
+      .mockImplementationOnce(() => completed(original).stream)
+      .mockImplementationOnce(() => completed(prose).stream);
+    const verification2 = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
+    verification2.hadToolActivity = true;
+    const result2 = await collect(await verification2.wrap(inner2)(model, toolTurnContext));
+    expect(result2.result).toBe(original);
+    expect(verification2.receipt).toMatchObject({ outcome: "repair_failed", repair_attempts: 1 });
   });
 
   it("stays shadow-only without a model call when the mode is shadow", async () => {

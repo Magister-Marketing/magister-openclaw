@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyFigureEdits,
   checkDraft,
   deriveDraftContract,
   draftRepairInstruction,
+  figuresRepairInstruction,
+  parseFigureEdits,
   MAX_DRAFT_CHARS,
   MAX_DRAFT_REQUEST_CHARS,
   PASTE_NOTE_MARKER,
@@ -222,12 +225,32 @@ describe("figures grounded in tool output", () => {
     );
   });
 
-  it("names the ungrounded figures in the repair instruction and forbids new arithmetic", () => {
-    const instruction = draftRepairInstruction({ figuresGrounded: true }, ["$251", "112"]);
+  it("asks for edits that quote or show arithmetic, and applies well-formed ones", () => {
+    const instruction = figuresRepairInstruction(["$251", "112"]);
     expect(instruction).toContain("neither a tool output nor the request: $251, 112");
-    expect(instruction).toContain("show the arithmetic that produces it from printed figures");
+    expect(instruction).toContain("Return only a JSON array of edits");
     expect(instruction).toContain('"$1,758.80 ÷ 28 = $62.81"');
     expect(instruction).toContain("Keep every figure the request asks for");
-    expect(instruction).toContain("Tools are unavailable");
+    // A request-side correction is still a rewrite instruction.
+    expect(draftRepairInstruction({ jsonOnly: true })).toContain(
+      "Return the complete corrected answer",
+    );
+
+    const draft = "Spend was about $251 per day. Refunds: 112 in the window. Pause it.";
+    const edits = parseFigureEdits(
+      '```json\n[{"find": "about $251 per day", "replace": "$62.81 per day ($1,758.80 ÷ 28)"}, {"find": "not in the draft", "replace": "x"}]\n```',
+    );
+    expect(edits).toHaveLength(2);
+    expect(applyFigureEdits(draft, edits!)).toBe(
+      "Spend was $62.81 per day ($1,758.80 ÷ 28). Refunds: 112 in the window. Pause it.",
+    );
+    // Not a list of edits, an empty list, an edit that is not text, or one that pads the draft.
+    expect(parseFigureEdits("Here is the corrected draft: ...")).toBeUndefined();
+    expect(parseFigureEdits("[]")).toBeUndefined();
+    expect(parseFigureEdits('[{"find": 3, "replace": "x"}]')).toBeUndefined();
+    expect(parseFigureEdits(`[{"find": "a", "replace": "${"x".repeat(700)}"}]`)).toBeUndefined();
+    // No edit applied, or the patch removed most of the draft: no candidate.
+    expect(applyFigureEdits(draft, [{ find: "missing", replace: "" }])).toBeUndefined();
+    expect(applyFigureEdits(draft, [{ find: draft.slice(0, 50), replace: "" }])).toBeUndefined();
   });
 });

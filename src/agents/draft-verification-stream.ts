@@ -9,13 +9,16 @@ import { parseReplyDirectives } from "../auto-reply/reply/reply-directives.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveAssistantMessagePhase } from "../shared/chat-message-content.js";
 import {
+  applyFigureEdits,
   checkDraft,
   deriveDraftContract,
   draftRepairInstruction,
   draftStopReason,
+  figuresRepairInstruction,
   hasDraftChecks,
   MAX_DRAFT_CHARS,
   MAX_EVIDENCE_CHARS,
+  parseFigureEdits,
   ungroundedFigures,
   type DraftVerificationReceipt,
 } from "./draft-verification.js";
@@ -36,17 +39,14 @@ const HTTP_APIS = new Set(["openai-completions", "openai-responses", "anthropic-
 const MAX_REPAIR_MS = 30_000;
 const MAX_REPAIR_TOKENS = 2_048;
 // A pasted-data analysis is a long deliverable (the benchmark's ledger
-// reviews run 9k–16k output tokens), so its correction needs the room a
-// request-side fix never does. The Gateway's silence watchdog bounds it.
-const MAX_FIGURES_REPAIR_MS = 150_000;
-const MAX_FIGURES_REPAIR_TOKENS = 12_000;
+// reviews run 9k–28k output tokens), so its correction is a list of edits
+// to the draft, not a rewrite: a few thousand tokens, applied here. The
+// Gateway's silence watchdog bounds the wait.
+const MAX_FIGURES_REPAIR_MS = 90_000;
+const MAX_FIGURES_REPAIR_TOKENS = 4_000;
 // A tool output in the correction context keeps its tail, where a script
 // prints its figures table.
 const MAX_EVIDENCE_IN_REPAIR_CHARS = 20_000;
-// A correction that still states ungrounded figures replaces the draft only
-// when it grounds some of them and keeps the deliverable: a rewrite that
-// lost this much of the text dropped content, not just figures.
-const MIN_IMPROVED_LENGTH_RATIO = 0.7;
 
 const draftLogger = createSubsystemLogger("draft-verification");
 
@@ -546,7 +546,9 @@ export class DraftVerificationStream {
                     : [...context.messages, original]),
                   {
                     role: "user" as const,
-                    content: draftRepairInstruction(this.contract, ungrounded),
+                    content: figuresRepair
+                      ? figuresRepairInstruction(ungrounded)
+                      : draftRepairInstruction(this.contract),
                     timestamp: Date.now(),
                   },
                 ],
@@ -566,44 +568,60 @@ export class DraftVerificationStream {
           this.receipt.stop_reason = null; // No observed terminal means no invented provider stop/usage.
         }
         if (candidate) {
-          const candidateText = boundedText(candidate) ?? "";
-          const checks = checkDraft(this.contract, candidateText, evidence);
-          const remaining = figuresRepair ? ungroundedFigures(candidateText, evidence) : [];
           const deliverable =
             !parentAborted() &&
             (!this.hadToolActivity || this.toolTurnChecks) &&
-            candidate.stopReason === "stop" &&
-            checks.length > 0;
-          if (deliverable && checks.every((check) => check.status === "pass")) {
-            this.additionalUsage = original.usage;
-            original = candidate;
-            this.receipt.checks = checks;
-            this.receipt.outcome = "repaired";
-          } else if (
-            deliverable &&
-            figuresRepair &&
-            checks.every((check) => check.kind === "figures_grounded" || check.status === "pass") &&
-            remaining.length < ungrounded.length &&
-            candidateText.length >= MIN_IMPROVED_LENGTH_RATIO * originalText.length
-          ) {
-            this.additionalUsage = original.usage;
-            original = candidate;
-            this.receipt.checks = checks;
-            this.receipt.outcome = "improved";
-          } else {
-            this.additionalUsage = candidate.usage;
-          }
+            candidate.stopReason === "stop";
           if (figuresRepair) {
+            // The correction is a list of edits; the draft with them applied
+            // is the candidate answer, and it ships when every figure is
+            // grounded or when strictly fewer are not.
+            const edits = parseFigureEdits(boundedText(candidate) ?? "");
+            const patchedText = edits ? applyFigureEdits(originalText, edits) : undefined;
+            const checks = patchedText ? checkDraft(this.contract, patchedText, evidence) : [];
+            const remaining = patchedText ? ungroundedFigures(patchedText, evidence) : ungrounded;
+            const otherChecksPass = checks.every(
+              (check) => check.kind === "figures_grounded" || check.status === "pass",
+            );
+            if (deliverable && patchedText && checks.length > 0 && otherChecksPass) {
+              if (checks.every((check) => check.status === "pass")) {
+                this.receipt.outcome = "repaired";
+              } else if (remaining.length < ungrounded.length) {
+                this.receipt.outcome = "improved";
+              }
+            }
+            this.additionalUsage = candidate.usage;
+            if (this.receipt.outcome === "repaired" || this.receipt.outcome === "improved") {
+              original = {
+                ...original,
+                content: original.content.map((block) =>
+                  block.type === "text" ? { ...block, text: patchedText! } : block,
+                ),
+              };
+              this.receipt.checks = checks;
+            }
             draftLogger.warn("figures correction finished", {
               outcome: this.receipt.outcome,
+              edits: edits?.length ?? null,
               before: ungrounded.length,
               after: remaining.length,
               remaining: remaining.slice(0, 24),
               stopReason: candidate.stopReason,
-              lengthRatio: originalText.length
-                ? Number((candidateText.length / originalText.length).toFixed(2))
-                : null,
             });
+          } else {
+            const checks = checkDraft(this.contract, boundedText(candidate) ?? "", evidence);
+            if (
+              deliverable &&
+              checks.length > 0 &&
+              checks.every((check) => check.status === "pass")
+            ) {
+              this.additionalUsage = original.usage;
+              original = candidate;
+              this.receipt.checks = checks;
+              this.receipt.outcome = "repaired";
+            } else {
+              this.additionalUsage = candidate.usage;
+            }
           }
         } else if (figuresRepair) {
           draftLogger.warn("figures correction produced no candidate", {
