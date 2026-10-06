@@ -69,6 +69,45 @@ describe("paste note plumbing", () => {
     expect(bodies.prefixedCommandBody).toBe("hi");
   });
 
+  it("puts the brief note on a long message that saved no paste, and keeps it out of the transcript", () => {
+    const brief =
+      `Respond to the attached brief.\n${"Hard numbers below; treat every one as stated. ".repeat(40)}`.trimEnd();
+    const sessionCtx = finalizeInboundContext({ Body: brief, BodyForAgent: brief });
+    const bodies = buildReplyPromptBodies({
+      ctx: sessionCtx,
+      sessionCtx,
+      effectiveBaseBody: brief,
+      prefixedBody: brief,
+    });
+    expect(bodies.briefNote).toMatch(
+      /^\[long message: [\d,]+ chars of supplied material inline below;/,
+    );
+    expect(bodies.briefNote).toContain("read the SKILL.md that covers it");
+    for (const prompt of [bodies.prefixedCommandBody, bodies.queuedBody]) {
+      expect(prompt.indexOf("[long message:")).toBe(0);
+      expect(prompt.endsWith(brief)).toBe(true);
+    }
+    expect(bodies.transcriptCommandBody).toBe(brief);
+  });
+
+  it("prefers the paste note when a file was saved from the long message", () => {
+    const long = `Review the quarter.\n${"date,spend,clicks\n2026-03-01,100.00,12\n".repeat(60)}`;
+    const sessionCtx = finalizeInboundContext({
+      Body: long,
+      BodyForAgent: long,
+      PasteFiles: [paste],
+    });
+    const bodies = buildReplyPromptBodies({
+      ctx: sessionCtx,
+      sessionCtx,
+      effectiveBaseBody: long,
+      prefixedBody: long,
+    });
+    expect(bodies.pasteNote).toBeDefined();
+    expect(bodies.briefNote).toBeUndefined();
+    expect(bodies.prefixedCommandBody).not.toContain("[long message:");
+  });
+
   it("formats sizes the way a person reads them", () => {
     expect(formatPasteSize(512)).toBe("512 B");
     expect(formatPasteSize(55_500)).toBe("54.2 KB");

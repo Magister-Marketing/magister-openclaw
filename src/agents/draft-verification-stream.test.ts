@@ -697,6 +697,45 @@ describe("figures grounded on pasted-data turns", () => {
     expect(verification.takeAdditionalUsage()).toBe(stillWrong.usage);
   });
 
+  it("ships a correction that grounds some figures and keeps the deliverable, as improved", async () => {
+    const original = message(
+      "pb-video spent $1,758.80 in 28 days: about $251 per day, with 112 refunds in the window. Pause it and reallocate.",
+    );
+    const better = message(
+      "pb-video spent $1,758.80 in 28 days: $62.81 per day (script output), with 112 refunds in the window. Pause it and reallocate.",
+    );
+    const inner = vi
+      .fn<StreamFn>()
+      .mockImplementationOnce(() => completed(original).stream)
+      .mockImplementationOnce(() => completed(better).stream);
+    const verification = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
+    verification.hadToolActivity = true;
+    const result = await collect(await verification.wrap(inner)(model, toolTurnContext));
+    expect(result.result).toBe(better);
+    expect(verification.receipt).toMatchObject({
+      outcome: "improved",
+      repair_attempts: 1,
+      checks: [{ kind: "figures_grounded", status: "fail" }],
+    });
+    expect(verification.takeAdditionalUsage()).toBe(original.usage);
+  });
+
+  it("keeps the original when the correction grounds a figure by dropping the deliverable", async () => {
+    const original = message(
+      `About $251 per day with 112 refunds. ${"The recommendation and its rationale continue at length here. ".repeat(6)}`,
+    );
+    const truncated = message("About $62.81 per day with 112 refunds.");
+    const inner = vi
+      .fn<StreamFn>()
+      .mockImplementationOnce(() => completed(original).stream)
+      .mockImplementationOnce(() => completed(truncated).stream);
+    const verification = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
+    verification.hadToolActivity = true;
+    const result = await collect(await verification.wrap(inner)(model, toolTurnContext));
+    expect(result.result).toBe(original);
+    expect(verification.receipt).toMatchObject({ outcome: "repair_failed", repair_attempts: 1 });
+  });
+
   it("stays shadow-only without a model call when the mode is shadow", async () => {
     const original = message("About $251 per day.");
     const inner = vi.fn<StreamFn>(() => completed(original).stream);

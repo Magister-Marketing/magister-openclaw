@@ -6,6 +6,7 @@ import {
   type Usage,
 } from "@mariozechner/pi-ai";
 import { parseReplyDirectives } from "../auto-reply/reply/reply-directives.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveAssistantMessagePhase } from "../shared/chat-message-content.js";
 import {
   checkDraft,
@@ -42,6 +43,12 @@ const MAX_FIGURES_REPAIR_TOKENS = 12_000;
 // A tool output in the correction context keeps its tail, where a script
 // prints its figures table.
 const MAX_EVIDENCE_IN_REPAIR_CHARS = 20_000;
+// A correction that still states ungrounded figures replaces the draft only
+// when it grounds some of them and keeps the deliverable: a rewrite that
+// lost this much of the text dropped content, not just figures.
+const MIN_IMPROVED_LENGTH_RATIO = 0.7;
+
+const draftLogger = createSubsystemLogger("draft-verification");
 
 type ContextMessage = Parameters<StreamFn>[1]["messages"][number];
 
@@ -504,6 +511,14 @@ export class DraftVerificationStream {
 
         this.receipt.repair_attempts = 1;
         this.receipt.outcome = "repair_failed";
+        const originalText = boundedText(original) ?? "";
+        const ungrounded = figuresRepair ? ungroundedFigures(originalText, evidence) : [];
+        if (figuresRepair) {
+          draftLogger.warn("draft states figures no tool output or request holds", {
+            count: ungrounded.length,
+            figures: ungrounded.slice(0, 24),
+          });
+        }
         let candidate: AssistantMessage | undefined;
         try {
           candidate = await boundedOperation(
@@ -522,9 +537,6 @@ export class DraftVerificationStream {
                 timeoutMs: repairMs,
                 onPayload: toolFreePayloadGuard(options, model.api, maxTokens),
               };
-              const ungrounded = figuresRepair
-                ? ungroundedFigures(boundedText(original) ?? "", evidence)
-                : [];
               const repairContext = {
                 ...context,
                 tools: [],
@@ -554,21 +566,49 @@ export class DraftVerificationStream {
           this.receipt.stop_reason = null; // No observed terminal means no invented provider stop/usage.
         }
         if (candidate) {
-          const checks = checkDraft(this.contract, boundedText(candidate) ?? "", evidence);
-          if (
+          const candidateText = boundedText(candidate) ?? "";
+          const checks = checkDraft(this.contract, candidateText, evidence);
+          const remaining = figuresRepair ? ungroundedFigures(candidateText, evidence) : [];
+          const deliverable =
             !parentAborted() &&
             (!this.hadToolActivity || this.toolTurnChecks) &&
             candidate.stopReason === "stop" &&
-            checks.length > 0 &&
-            checks.every((check) => check.status === "pass")
-          ) {
+            checks.length > 0;
+          if (deliverable && checks.every((check) => check.status === "pass")) {
             this.additionalUsage = original.usage;
             original = candidate;
             this.receipt.checks = checks;
             this.receipt.outcome = "repaired";
+          } else if (
+            deliverable &&
+            figuresRepair &&
+            checks.every((check) => check.kind === "figures_grounded" || check.status === "pass") &&
+            remaining.length < ungrounded.length &&
+            candidateText.length >= MIN_IMPROVED_LENGTH_RATIO * originalText.length
+          ) {
+            this.additionalUsage = original.usage;
+            original = candidate;
+            this.receipt.checks = checks;
+            this.receipt.outcome = "improved";
           } else {
             this.additionalUsage = candidate.usage;
           }
+          if (figuresRepair) {
+            draftLogger.warn("figures correction finished", {
+              outcome: this.receipt.outcome,
+              before: ungrounded.length,
+              after: remaining.length,
+              remaining: remaining.slice(0, 24),
+              stopReason: candidate.stopReason,
+              lengthRatio: originalText.length
+                ? Number((candidateText.length / originalText.length).toFixed(2))
+                : null,
+            });
+          }
+        } else if (figuresRepair) {
+          draftLogger.warn("figures correction produced no candidate", {
+            before: ungrounded.length,
+          });
         }
         if (parentAborted()) {
           this.receipt.stop_reason = "aborted";

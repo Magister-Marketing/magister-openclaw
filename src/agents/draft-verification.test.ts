@@ -165,7 +165,8 @@ describe("figures grounded in tool output", () => {
   });
 
   it("grounds a figure the draft derives with correct arithmetic from grounded figures", () => {
-    const channels = "channel,last_touch_revenue,spend\nmeta,400,600\npaid_search,300,600\nemail,630,600";
+    const channels =
+      "channel,last_touch_revenue,spend\nmeta,400,600\npaid_search,300,600\nemail,630,600";
     const draft =
       "Last-touch paid subtotal: $400 + $300 + $630 = $1,330. Email ROAS 630 ÷ 600 = 1.05. " +
       "Refunds 31 / 116 = 26.7%. Weekly spend $1,758.80 / 4 = $439.70.";
@@ -174,7 +175,35 @@ describe("figures grounded in tool output", () => {
     expect(ungroundedFigures("Email ROAS 630 ÷ 600 = 1.15.", [channels])).toEqual(["1.15"]);
     expect(ungroundedFigures("Total 999 + 400 = $1,399.", [channels])).toEqual(["999", "$1,399"]);
     // A figure stated without its arithmetic is still ungrounded.
-    expect(ungroundedFigures("Last-touch paid subtotal is $1,330.", [channels])).toEqual(["$1,330"]);
+    expect(ungroundedFigures("Last-touch paid subtotal is $1,330.", [channels])).toEqual([
+      "$1,330",
+    ]);
+  });
+
+  it("reads arithmetic the way a report writes it: units, words, result first, rounding", () => {
+    const channels =
+      "channel,last_touch_revenue,spend\nmeta,400,600\npaid_search,300,600\nemail,630,600";
+    const evidence = [channels, output];
+    for (const line of [
+      "Daily spend: $1,758.80 ÷ 28 days = $62.81 per day.",
+      "Daily spend was $62.81/day ($1,758.80 ÷ 28).",
+      "Daily spend: $1,758.80 over 28 days comes to $62.81.",
+      "Paid subtotal: $400 + $300 + $630 = $1,330, or $400 plus $300 plus $630 equals $1,330.",
+      "Refund share 31 out of 116 conversions = 26.7%; 26.7% × 116 = 31 refunds.",
+      "Email ROAS: 630 revenue / 600 spend = 1.05x.",
+      "Rounded: $1,758.80 ÷ 28 = $62.82 (one cent of rounding).",
+    ]) {
+      expect(ungroundedFigures(line, evidence), line).toEqual([]);
+    }
+    // Conjunctions are not operators and a unit word is not an operand.
+    expect(ungroundedFigures("Between 4 and 7 campaigns, $1,331 total.", evidence)).toEqual([
+      "$1,331",
+    ]);
+    // Wrong arithmetic in the tolerant forms grounds nothing either.
+    expect(ungroundedFigures("$1,758.80 over 28 days comes to $72.81.", evidence)).toEqual([
+      "$72.81",
+    ]);
+    expect(ungroundedFigures("$72.81/day ($1,758.80 ÷ 28).", evidence)).toEqual(["$72.81"]);
   });
 
   it("checks the draft against evidence and stays unknown without any", () => {
@@ -197,6 +226,7 @@ describe("figures grounded in tool output", () => {
     const instruction = draftRepairInstruction({ figuresGrounded: true }, ["$251", "112"]);
     expect(instruction).toContain("neither a tool output nor the request: $251, 112");
     expect(instruction).toContain("show the arithmetic that produces it from printed figures");
+    expect(instruction).toContain('"$1,758.80 ÷ 28 = $62.81"');
     expect(instruction).toContain("Keep every figure the request asks for");
     expect(instruction).toContain("Tools are unavailable");
   });

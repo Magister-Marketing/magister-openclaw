@@ -5,7 +5,15 @@ const receiptSchema = z
   .object({
     version: z.literal(1),
     mode: z.enum(["off", "shadow", "repair"]),
-    outcome: z.enum(["unchecked", "passed", "failed", "repaired", "repair_failed", "excluded"]),
+    outcome: z.enum([
+      "unchecked",
+      "passed",
+      "failed",
+      "repaired",
+      "improved",
+      "repair_failed",
+      "excluded",
+    ]),
     checks: z
       .array(
         z

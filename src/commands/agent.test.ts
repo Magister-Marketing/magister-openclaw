@@ -1009,6 +1009,28 @@ describe("agentCommand paste materialization", () => {
     });
   });
 
+  it("prefixes a long message without a data file with the brief note, sent body only", async () => {
+    await withTempHome(async (home) => {
+      const store = path.join(home, "sessions.json");
+      const cfg = mockConfig(home, store);
+      fs.mkdirSync(cfg.agents!.defaults!.workspace!, { recursive: true });
+      const brief = `Respond to the attached brief.\n\n## Supplied source: cmo-brief.md\n\n${"Budget cap $12,000; minimums already promised. ".repeat(40)}`;
+      expect(brief.length).toBeGreaterThan(1_500);
+
+      await agentCommandFromIngress(
+        { message: brief, to: "+1222", senderIsOwner: true, allowModelOverride: false },
+        runtime,
+      );
+
+      const prompt = String(getLastEmbeddedCall()?.prompt);
+      expect(prompt).toMatch(
+        /^\[long message: [\d,]+ chars of supplied material inline below; before the deliverable, read the SKILL\.md that covers it; .*never assumed\]\n\n/,
+      );
+      expect(prompt.endsWith(brief)).toBe(true);
+      expect(prompt).not.toContain("[pasted data saved:");
+    });
+  });
+
   it("leaves a short message and the heartbeat run untouched", async () => {
     await withTempHome(async (home) => {
       const store = path.join(home, "sessions.json");
