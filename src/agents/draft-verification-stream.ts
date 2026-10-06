@@ -583,9 +583,6 @@ export class DraftVerificationStream {
           }
         };
 
-        // Set when the correction call also carried the label check; the
-        // separate label pass then has nothing left to do.
-        let mergedLabelStatus: DraftCheck["status"] | undefined;
         if (this.receipt.outcome === "failed" && repairable) {
           this.receipt.repair_attempts = 1;
           this.receipt.outcome = "repair_failed";
@@ -602,9 +599,7 @@ export class DraftVerificationStream {
             candidate = await toolFreeCall(
               original,
               figuresRepair
-                ? figuresRepairInstruction(ungrounded, {
-                    withLabels: this.options.mode === "repair",
-                  })
+                ? figuresRepairInstruction(ungrounded)
                 : draftRepairInstruction(this.contract),
               figuresRepair ? MAX_FIGURES_REPAIR_TOKENS : MAX_REPAIR_TOKENS,
               repairMs,
@@ -640,11 +635,6 @@ export class DraftVerificationStream {
               if (this.receipt.outcome === "repaired" || this.receipt.outcome === "improved") {
                 original = withText(original, patchedText!);
                 this.receipt.checks = checks;
-                // An edit that names none of the flagged figures is a label fix.
-                const labelEdits = (edits ?? []).filter(
-                  (edit) => !ungrounded.some((figure) => edit.find.includes(figure)),
-                );
-                mergedLabelStatus = labelEdits.length > 0 ? "fail" : "pass";
               }
               draftLogger.warn("figures correction finished", {
                 outcome: this.receipt.outcome,
@@ -687,12 +677,7 @@ export class DraftVerificationStream {
           override.maxRepairMs ?? MAX_LABEL_PASS_MS,
           this.options.deadline - Date.now(),
         );
-        if (mergedLabelStatus !== undefined) {
-          this.receipt.checks = [
-            ...this.receipt.checks.filter((check) => check.kind !== "figures_labelled"),
-            { kind: "figures_labelled", status: mergedLabelStatus },
-          ];
-        } else if (
+        if (
           this.toolTurnChecks &&
           this.options.mode === "repair" &&
           repairable &&

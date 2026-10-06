@@ -623,26 +623,13 @@ const MIN_PATCHED_LENGTH_RATIO = 0.7;
  * correction's token budget (2026-10-06: the two corrections that failed
  * were the two longest drafts) and a rewrite drops content a patch keeps.
  */
-export function figuresRepairInstruction(
-  ungrounded: readonly string[],
-  options: { withLabels?: boolean } = {},
-): string {
-  const lines = [
+export function figuresRepairInstruction(ungrounded: readonly string[]): string {
+  return [
     `These figures in your draft appear in neither a tool output nor the request: ${ungrounded.join(", ")}.`,
     "Return only a JSON array of edits to your draft, no prose and no code fence, one edit per sentence or table cell that states one of them:",
     '[{"find": "<the exact sentence or table row from the draft, copied character for character>", "replace": "<that text corrected>"}]',
-    'In each replacement either put the figure your script printed in place of the unprinted one, exactly and with its window and unit, or keep the figure and show the arithmetic that produces it from printed figures right there, as numbers and the symbols + − × ÷ with an equals sign (for example "$1,758.80 ÷ 28 = $62.81" or "$400 + $300 + $630 = $1,330"); every operand is a printed figure or a round constant such as a day count. Keep every figure the request asks for; a figure you can neither quote nor show is removed from its sentence.',
-  ];
-  if (options.withLabels) {
-    // One call does both jobs on a turn that needs a correction anyway: the
-    // label check (figuresLabelInstruction) rides along instead of costing a
-    // second call and another 20 s of buffered wait.
-    lines.push(
-      "In the same array, also include an edit for any sentence or table row where a printed figure is stated against the wrong label, base, window, or set (a share of the campaign total stated as a share of one ad set's spend, a final-28-day rate stated as the full-period rate, a range that one member of the set is outside, a week label with the wrong start date), correcting the figure or the referent from the tool output.",
-    );
-  }
-  lines.push("Change nothing else. Tools are unavailable.");
-  return lines.join("\n");
+    'In each replacement either put the figure your script printed in place of the unprinted one, exactly and with its window and unit, or keep the figure and show the arithmetic that produces it from printed figures right there, as numbers and the symbols + − × ÷ with an equals sign (for example "$1,758.80 ÷ 28 = $62.81" or "$400 + $300 + $630 = $1,330"); every operand is a printed figure or a round constant such as a day count. Keep every figure the request asks for; a figure you can neither quote nor show is removed from its sentence. Change nothing else. Tools are unavailable.',
+  ].join("\n");
 }
 
 /**

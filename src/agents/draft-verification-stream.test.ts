@@ -626,11 +626,13 @@ describe("figures grounded on pasted-data turns", () => {
     );
     const corrected =
       "pb-video spent $1,758.80 in 28 days: $62.81 per day (script output). Pause it.";
+    const noLabelEdits = message("[]", 2);
     const inner = vi
       .fn<StreamFn>()
       .mockImplementationOnce(() => completed(exec).stream)
       .mockImplementationOnce(() => completed(original).stream)
-      .mockImplementationOnce(() => completed(correction).stream);
+      .mockImplementationOnce(() => completed(correction).stream)
+      .mockImplementationOnce(() => completed(noLabelEdits).stream);
     const verification = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
     const wrapped = verification.wrap(inner);
     const first = await collect(
@@ -643,9 +645,10 @@ describe("figures grounded on pasted-data turns", () => {
     expect(result.result).not.toBe(correction);
     expect(result.result.content).toEqual([{ type: "text", text: corrected }]);
     expect(result.result.usage).toBe(original.usage);
-    // The correction call carried the label check, so no second call was made.
-    expect(inner).toHaveBeenCalledTimes(3);
-    expect(verification.takeAdditionalUsage()).toBe(correction.usage);
+    // Both tool-free calls (the correction and the label pass) are reported separately.
+    expect(verification.takeAdditionalUsage()?.output).toBe(
+      correction.usage.output + noLabelEdits.usage.output,
+    );
     expect(verification.receipt).toMatchObject({
       outcome: "repaired",
       repair_attempts: 1,
@@ -676,37 +679,8 @@ describe("figures grounded on pasted-data turns", () => {
       timeoutMs: 90_000,
     });
     expect(toolTurnContext.messages).toHaveLength(3);
-    expect(String(instruction?.content)).toContain("wrong label, base, window, or set");
-  });
-
-  it("a correction that also relabels a printed figure records the label check as failed", async () => {
-    const original = message(
-      "pb-video spent $1,758.80 in 28 days: about $251 per day, and $439.70 a day in the last week. Pause it.",
-    );
-    const correction = message(
-      '[{"find": "about $251 per day", "replace": "$62.81 per day (script output)"}, {"find": "$439.70 a day in the last week", "replace": "$439.70 a week"}]',
-    );
-    const inner = vi
-      .fn<StreamFn>()
-      .mockImplementationOnce(() => completed(original).stream)
-      .mockImplementationOnce(() => completed(correction).stream);
-    const verification = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
-    verification.hadToolActivity = true;
-    const result = await collect(await verification.wrap(inner)(model, toolTurnContext));
-    expect(inner).toHaveBeenCalledTimes(2);
-    expect(result.result.content).toEqual([
-      {
-        type: "text",
-        text: "pb-video spent $1,758.80 in 28 days: $62.81 per day (script output), and $439.70 a week. Pause it.",
-      },
-    ]);
-    expect(verification.receipt).toMatchObject({
-      outcome: "repaired",
-      checks: [
-        { kind: "figures_grounded", status: "pass" },
-        { kind: "figures_labelled", status: "fail" },
-      ],
-    });
+    const labelInstruction = inner.mock.calls[3][1].messages.at(-1);
+    expect(String(labelInstruction?.content)).toContain("wrong label, base, window, or set");
   });
 
   it("passes a draft that quotes the script's figures: no correction, one label pass", async () => {
@@ -824,7 +798,8 @@ describe("figures grounded on pasted-data turns", () => {
     const inner = vi
       .fn<StreamFn>()
       .mockImplementationOnce(() => completed(original).stream)
-      .mockImplementationOnce(() => completed(better).stream);
+      .mockImplementationOnce(() => completed(better).stream)
+      .mockImplementationOnce(() => completed(message("[]")).stream);
     const verification = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
     verification.hadToolActivity = true;
     const result = await collect(await verification.wrap(inner)(model, toolTurnContext));
@@ -842,8 +817,7 @@ describe("figures grounded on pasted-data turns", () => {
         { kind: "figures_labelled", status: "pass" },
       ],
     });
-    expect(inner).toHaveBeenCalledTimes(2);
-    expect(verification.takeAdditionalUsage()).toBe(better.usage);
+    expect(verification.takeAdditionalUsage()?.output).toBeGreaterThanOrEqual(better.usage.output);
   });
 
   it("keeps the original when the edits drop the deliverable or are not a list of edits", async () => {
