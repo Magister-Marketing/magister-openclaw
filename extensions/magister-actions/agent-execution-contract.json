@@ -2569,28 +2569,6 @@
       "transport_modes": ["json_v1"]
     },
     {
-      "capability_id": "context_dev",
-      "connection_slug": null,
-      "delegation_safe_tools": [],
-      "hosted_agent_tools": [
-        {
-          "action": "integration_read",
-          "approval_policy": "none",
-          "idempotency_policy": "safe_retry",
-          "side_effect": "none",
-          "tool_name": "magister_integration_read"
-        }
-      ],
-      "mcp_tool_actions": ["proxy:context_dev"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
-      "proxy_services": ["context_dev"],
-      "remediation": null,
-      "rollout_service": null,
-      "skill_name": "magister-web-context",
-      "status": "typed",
-      "transport_modes": ["json_v1"]
-    },
-    {
       "capability_id": "creatify",
       "connection_slug": "creatify",
       "delegation_safe_tools": [],
@@ -3223,28 +3201,6 @@
       "remediation": null,
       "rollout_service": null,
       "skill_name": "magister-social-research",
-      "status": "typed",
-      "transport_modes": ["json_v1"]
-    },
-    {
-      "capability_id": "supadata",
-      "connection_slug": null,
-      "delegation_safe_tools": [],
-      "hosted_agent_tools": [
-        {
-          "action": "integration_read",
-          "approval_policy": "none",
-          "idempotency_policy": "safe_retry",
-          "side_effect": "none",
-          "tool_name": "magister_integration_read"
-        }
-      ],
-      "mcp_tool_actions": ["proxy:supadata", "call_integration_api"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
-      "proxy_services": ["supadata"],
-      "remediation": null,
-      "rollout_service": null,
-      "skill_name": "magister-supadata",
       "status": "typed",
       "transport_modes": ["json_v1"]
     },
@@ -4043,6 +3999,6 @@
     }
   ],
   "native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
-  "registry_revision": "76e5767e542bd601320a12cd55c31e1b4c9a5ceb7d265580eacbb89b0798f3d8",
+  "registry_revision": "13d4ef2a7c27be82e8c7eb1b2ad78bcf7d266d10580894a1574428472d7af816",
   "schema_version": 1
 }
