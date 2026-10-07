@@ -828,7 +828,11 @@ export async function sweepExpiredCheckouts(now = Date.now()): Promise<{ removed
         if (error instanceof CheckoutError && error.statusCode === 409) {
           continue;
         }
-        throw error;
+        // Every checkout runs this sweep first, so one expired checkout that
+        // cannot be removed must not fail them all: an EACCES here broke
+        // every checkout on a machine for days (2026-10-02..06).
+        console.warn(`[repo-checkout] could not sweep an expired checkout: ${errnoCode(error)}`);
+        continue;
       }
       await pruneEmptyAncestors(path.dirname(repoDir));
       removed.push(repoDir);
@@ -1264,6 +1268,28 @@ async function fetchRef(
 
 function describeRef(ref: { ref: string; isSha: boolean } | null): string {
   return ref ? ref.ref : "the default branch";
+}
+
+function errnoCode(error: unknown): string {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  if (typeof code === "string" && /^[A-Z][A-Z0-9_]{1,31}$/.test(code)) {
+    return code;
+  }
+  return error instanceof Error ? error.name : "unknown";
+}
+
+const INSTALL_NOISE_LINE = /^\s*(?:npm (?:warn|WARN)\b|WARN\s+deprecated\b)/;
+
+/** The end of an install's output, minus deprecation warnings: package
+ *  managers print warnings first and the error last, so the head was all
+ *  warnings and never the cause (EMFILE, EFBIG, a failing script). */
+function installFailureTail(value: string, limit: number): string {
+  const kept = value
+    .split("\n")
+    .filter((line) => !INSTALL_NOISE_LINE.test(line))
+    .join("\n");
+  const collapsed = (kept.trim() ? kept : value).replace(/\s+/g, " ").trim();
+  return collapsed.length > limit ? `…${collapsed.slice(collapsed.length - limit)}` : collapsed;
 }
 
 function truncate(value: string, limit = 400): string {
@@ -2116,8 +2142,8 @@ async function runInstall(
         finished_at: new Date().toISOString(),
         error:
           fetched.code === 124
-            ? `The install exceeded ${INSTALL_TIMEOUT_SECONDS}s. ${truncate(fetched.output, 1_000)}`
-            : truncate(fetched.output, 1_200),
+            ? `The install exceeded ${INSTALL_TIMEOUT_SECONDS}s. ${installFailureTail(fetched.output, 1_000)}`
+            : installFailureTail(fetched.output, 1_200),
       });
       return;
     }
@@ -2130,7 +2156,7 @@ async function runInstall(
       rebuild = { ran: true, exit_code: rebuilt.code };
       if (rebuilt.code !== 0) {
         warnings.push(
-          `Lifecycle scripts exited ${rebuilt.code}. A package that downloads during install cannot here, because the sandbox has no network: ${truncate(rebuilt.output, 300)}`,
+          `Lifecycle scripts exited ${rebuilt.code}. A package that downloads during install cannot here, because the sandbox has no network: ${installFailureTail(rebuilt.output, 300)}`,
         );
       }
     }
@@ -2417,7 +2443,13 @@ async function handleBrokeredPost<Request extends { token?: string }, Receipt>(
     sendJson(res, 200, await operation.execute(request));
   } catch (error) {
     const status = error instanceof CheckoutError ? error.statusCode : 500;
-    const raw = error instanceof CheckoutError ? error.message : operation.failure;
+    if (!(error instanceof CheckoutError)) {
+      // Unexpected: say what it was. A bare "checkout failed" hid an EACCES
+      // that failed every checkout on one machine for four days.
+      console.warn(`[repo-checkout] ${operation.failure}: ${errnoCode(error)}`);
+    }
+    const raw =
+      error instanceof CheckoutError ? error.message : `${operation.failure} (${errnoCode(error)})`;
     const userAction = error instanceof CheckoutError ? error.userAction : undefined;
     sendJson(res, status, {
       error: operation.errorCode,
