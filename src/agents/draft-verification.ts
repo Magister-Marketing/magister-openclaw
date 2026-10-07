@@ -644,9 +644,10 @@ export function figuresRepairInstruction(ungrounded: readonly string[]): string 
 export function figuresLabelInstruction(): string {
   return [
     'Check every figure in your draft against the tool output it comes from: the label it is stated under, the base of every share or rate, the window or period it covers, and the set a range or "every other" statement covers.',
-    "Return only a JSON array of edits, no prose and no code fence, for the sentences or table rows where a figure is stated against the wrong label, base, window, or set:",
-    '[{"find": "<the exact sentence or table row from the draft, copied character for character>", "replace": "<that text corrected: the printed figure for the stated referent, or the referent the figure belongs to>"}]',
-    "Return [] when every figure is stated against its own referent. Do not add figures the tool output does not print. Change nothing else. Tools are unavailable.",
+    "Also check every sentence that names a cause: where the tool output shows only a movement (frequency up, reach down, a rate falling) and the sentence states the cause as fact (the audience is exhausted, the creative is fatigued, the same people are seeing the ad more often), the sentence must state the observation and label the cause a hypothesis.",
+    "Return only a JSON array of edits, no prose and no code fence, for the sentences or table rows where a figure is stated against the wrong label, base, window, or set, or a cause is stated as fact:",
+    '[{"find": "<the exact sentence or table row from the draft, copied character for character>", "replace": "<that text corrected: the printed figure for the stated referent, the referent the figure belongs to, or the observation with the cause labelled a hypothesis>"}]',
+    "Return [] when every figure is stated against its own referent and every cause is labelled. Do not add figures the tool output does not print. Change nothing else. Tools are unavailable.",
   ].join("\n");
 }
 

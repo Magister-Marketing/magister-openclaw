@@ -4,6 +4,7 @@ import {
   checkDraft,
   deriveDraftContract,
   draftRepairInstruction,
+  figuresLabelInstruction,
   figuresRepairInstruction,
   parseFigureEdits,
   MAX_DRAFT_CHARS,
@@ -229,6 +230,10 @@ describe("figures grounded in tool output", () => {
     const instruction = figuresRepairInstruction(["$251", "112"]);
     expect(instruction).toContain("neither a tool output nor the request: $251, 112");
     expect(instruction).toContain("Return only a JSON array of edits");
+    expect(figuresLabelInstruction()).toContain("label the cause a hypothesis");
+    expect(figuresLabelInstruction()).toContain(
+      "Return [] when every figure is stated against its own referent and every cause is labelled",
+    );
     expect(instruction).toContain('"$1,758.80 ÷ 28 = $62.81"');
     expect(instruction).toContain("Keep every figure the request asks for");
     // A request-side correction is still a rewrite instruction.
