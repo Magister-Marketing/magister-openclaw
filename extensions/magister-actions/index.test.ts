@@ -195,6 +195,46 @@ describe("typed gateway execution", () => {
     expect(requestBody(request?.init)).toEqual({ arguments: {} });
   });
 
+  it("forwards the bare workflow key when cron prefixes the agent id", async () => {
+    // A check-back fired in a workflow chat runs as
+    // agent:<id>:workflow_run:<uuid>; dropping it left the actions unbound.
+    process.env.GATEWAY_TOKEN = "secret-machine-token";
+    let request: { init?: RequestInit } | undefined;
+    const tool = createMagisterActionTool(
+      api(),
+      action,
+      async (_input, init) => {
+        request = { init };
+        return new Response(JSON.stringify(envelope()), { status: 200 });
+      },
+      { sessionKey: "agent:marketing:workflow_run:00000000-0000-4000-8000-000000000001" },
+    );
+
+    await tool.execute("call-workflow-cron", {});
+    expect(request?.init?.headers).toMatchObject({
+      "x-magister-session-key": "workflow_run:00000000-0000-4000-8000-000000000001",
+    });
+  });
+
+  it("still drops a workflow-looking key with anything else around it", async () => {
+    process.env.GATEWAY_TOKEN = "secret-machine-token";
+    let request: { init?: RequestInit } | undefined;
+    const tool = createMagisterActionTool(
+      api(),
+      action,
+      async (_input, init) => {
+        request = { init };
+        return new Response(JSON.stringify(envelope()), { status: 200 });
+      },
+      { sessionKey: "agent:marketing:workflow_run:00000000-0000-4000-8000-000000000001:extra" },
+    );
+
+    await tool.execute("call-workflow-bad", {});
+    expect(
+      (request?.init?.headers as Record<string, string> | undefined)?.["x-magister-session-key"],
+    ).toBeUndefined();
+  });
+
   it("forwards only canonical web chat session keys", async () => {
     process.env.GATEWAY_TOKEN = "secret-machine-token";
     let request: { init?: RequestInit } | undefined;

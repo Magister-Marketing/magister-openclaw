@@ -57,8 +57,12 @@ const SOCIAL_MEDIA_CONTENT_TYPES = new Map([
   [".webm", "video/webm"],
   [".webp", "image/webp"],
 ]);
+// OpenClaw cron prefixes the agent id onto a scheduled session key, so a
+// check-back fired in a workflow chat arrives as
+// `agent:marketing:workflow_run:<uuid>`. Matching only the bare form dropped
+// the header and its actions ran unbound (2026-09-26).
 const WORKFLOW_SESSION_RE =
-  /^workflow_run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  /^(?:agent:[a-z0-9_-]{1,80}:)?(workflow_run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
 const SLACK_SESSION_RE =
   /^(?:agent:[^:]+:)?slack:(?:(?:direct|group|channel):[a-z0-9_-]+(?::thread:[0-9]+\.[0-9]+)?|[a-z0-9_-]+:[a-z0-9_-]+)$/i;
 const WEBCHAT_SESSION_RE =
@@ -311,11 +315,12 @@ function trustedRuntimeSessionKey(context: OpenClawPluginToolContext): string | 
   if (!sessionKey) {
     return undefined;
   }
-  if (
-    WORKFLOW_SESSION_RE.test(sessionKey) ||
-    SLACK_SESSION_RE.test(sessionKey) ||
-    WEBCHAT_SESSION_RE.test(sessionKey)
-  ) {
+  const workflow = WORKFLOW_SESSION_RE.exec(sessionKey);
+  if (workflow) {
+    // The Gateway resolves the bare `workflow_run:<uuid>` form.
+    return workflow[1];
+  }
+  if (SLACK_SESSION_RE.test(sessionKey) || WEBCHAT_SESSION_RE.test(sessionKey)) {
     return sessionKey;
   }
   return undefined;

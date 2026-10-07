@@ -151,6 +151,27 @@ async function removePromotedStaging(staged: string, attemptRoot: string): Promi
   }
 }
 
+// Cleanup after the destination is committed is housekeeping, not part of
+// the promotion. A subfolder the sandbox created under promote/ is not
+// removable by the host, so a throw here reported a promotion that had landed
+// as "promotion failed", and every retry took the same path (2026-10). The
+// attempt-root reclaim removes what is left once its TTL passes.
+async function removePromotedStagingBestEffort(staged: string, attemptRoot: string): Promise<void> {
+  try {
+    await removePromotedStaging(staged, attemptRoot);
+  } catch (error) {
+    console.warn(`[artifact-promotion] staging cleanup skipped: ${errorCode(error)}`);
+  }
+}
+
+function errorCode(error: unknown): string {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  if (typeof code === "string" && /^[A-Z][A-Z0-9_]{1,31}$/.test(code)) {
+    return code;
+  }
+  return error instanceof Error ? error.name : "unknown";
+}
+
 async function assertComponents(
   root: string,
   relative: string,
@@ -176,7 +197,13 @@ async function assertComponents(
       if (!final && options.createParents) {
         await fs.promises.mkdir(current, { mode: 0o700 });
       } else if (!final) {
-        throw new ArtifactPromotionError("staged artifact parent is missing", 404);
+        throw new ArtifactPromotionError(
+          "staged artifact parent is missing. attempt_id must be the " +
+            "$MAGISTER_ATTEMPT_ID printed by the same command that wrote and " +
+            "hashed the file; staging is kept only when that command exits 0, " +
+            "for one hour, and is removed after a promotion.",
+          404,
+        );
       }
     }
     // Destination parents only (`createParents`): the staging tree under
@@ -304,7 +331,7 @@ export async function promoteArtifact(
     if (initialState === "current") {
       await mirrorReadBits(destination);
       observation?.finish("promoted");
-      await removePromotedStaging(staged, attemptRoot);
+      await removePromotedStagingBestEffort(staged, attemptRoot);
       return {
         status: "already_current",
         destination_path: request.destination_path,
@@ -367,7 +394,7 @@ export async function promoteArtifact(
       commitAttested = false;
     }
     observation?.finish("promoted");
-    await removePromotedStaging(staged, attemptRoot);
+    await removePromotedStagingBestEffort(staged, attemptRoot);
     return {
       status: "promoted",
       destination_path: request.destination_path,
@@ -411,7 +438,11 @@ export async function handleArtifactPromotion(
     sendJson(res, 200, await promoteArtifact(await readJsonBody(req)));
   } catch (error) {
     const status = error instanceof ArtifactPromotionError ? error.statusCode : 500;
-    const message = error instanceof ArtifactPromotionError ? error.message : "promotion failed";
+    // The code names the cause (EACCES, ENOSPC, ...) without echoing paths.
+    const message =
+      error instanceof ArtifactPromotionError
+        ? error.message
+        : `promotion failed (${errorCode(error)})`;
     sendJson(res, status, { error: "promotion_rejected", message });
   }
   return true;

@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CHECKOUT_TTL_MS,
   CheckoutError,
@@ -475,6 +475,30 @@ describe("TTL sweeping", () => {
     // Once it is idle again the same sweep does collect it.
     const after = await sweepExpiredCheckouts(Date.now() + CHECKOUT_TTL_MS * 2);
     expect(after.removed).toContain(repoDir);
+  });
+
+  it("skips an expired checkout it cannot lock instead of failing the sweep", async () => {
+    // The supervisor creates .work/<owner> as root; when the host could not
+    // create the lock under it, the sweep threw, and every checkout (which
+    // sweeps first) failed with a bare "checkout failed" for days.
+    const { repoDir, root } = upstreamAndCheckout();
+    const stale = new Date(Date.now() - CHECKOUT_TTL_MS - 60_000).toISOString();
+    fs.writeFileSync(
+      path.join(repoDir, ".git", "magister-checkout.json"),
+      JSON.stringify({ last_used_at: stale, repo: "acme/site" }),
+    );
+    const owner = path.join(root, ".work", "acme");
+    fs.mkdirSync(owner, { recursive: true });
+    fs.chmodSync(owner, 0o555);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const swept = await sweepExpiredCheckouts();
+      expect(swept.removed).not.toContain(repoDir);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("EACCES"));
+    } finally {
+      fs.chmodSync(owner, 0o755);
+      warn.mockRestore();
+    }
   });
 
   it("removes a staging tree orphaned by a crashed clone", async () => {

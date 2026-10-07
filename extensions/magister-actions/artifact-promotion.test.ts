@@ -124,6 +124,42 @@ describe("artifact promotion", () => {
     expect(mode(stagingRoot)).toBe(0o700);
   });
 
+  it("reports a landed promotion as promoted when staging cleanup is refused", async () => {
+    // A subfolder the sandbox created under promote/ is not removable by the
+    // host; the throw used to turn a committed promotion into "promotion
+    // failed", and every retry repeated it.
+    const row = fixture();
+    process.env.MAGISTER_LOCAL_MUTATION_ENFORCEMENT = "1";
+    const refused = Object.assign(new Error("permission denied"), { code: "EACCES" });
+    const rm = vi.spyOn(fs.promises, "rm").mockRejectedValueOnce(refused);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = await promoteArtifact(request(row), {
+        workspace: row.workspace,
+        agentToolUid: process.getuid?.() ?? 501,
+      });
+      expect(result).toMatchObject({ status: "promoted", sha256: row.sha256 });
+      expect(fs.readFileSync(path.join(row.workspace, "deliverables", "report.txt"), "utf8")).toBe(
+        "bounded artifact",
+      );
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("EACCES"));
+    } finally {
+      rm.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it("says how to get a valid attempt id when the staging is gone", async () => {
+    const row = fixture();
+    process.env.MAGISTER_LOCAL_MUTATION_ENFORCEMENT = "1";
+    const rejection = promoteArtifact(
+      { ...request(row), attempt_id: "attempt-that-wrote-nothing" },
+      { workspace: row.workspace, agentToolUid: process.getuid?.() ?? 501 },
+    );
+    await expect(rejection).rejects.toMatchObject({ statusCode: 404 });
+    await expect(rejection).rejects.toThrow(/MAGISTER_ATTEMPT_ID printed by the same command/);
+  });
+
   it("heals an artifact an earlier promotion left owner-only", async () => {
     const row = fixture();
     process.env.MAGISTER_LOCAL_MUTATION_ENFORCEMENT = "1";

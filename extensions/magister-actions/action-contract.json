@@ -3844,6 +3844,7 @@
         "additionalProperties": false,
         "properties": {
           "attempt_id": {
+            "description": "$MAGISTER_ATTEMPT_ID as printed by the same command that wrote and hashed the staged file. Every command gets a new id; staging is kept only when that command exits 0, for one hour.",
             "maxLength": 120,
             "minLength": 1,
             "pattern": "^[A-Za-z0-9._-]+$",
@@ -3889,6 +3890,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+  "registry_revision": "f5d46cb80c5bff03b56d8e15235db8b40d0eb325ed2ead4bb9a71b16ff1e7e12",
   "schema_version": 1
 }
