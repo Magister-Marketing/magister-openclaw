@@ -1,5 +1,9 @@
 import path from "node:path";
 import { loadExecApprovals, resolveExecApprovalsFromFile } from "../infra/exec-approvals.js";
+import {
+  MAGISTER_SANDBOX_EXEC_RULE,
+  magisterToolSandboxLauncher,
+} from "./bash-tools.magister-sandbox.js";
 
 /**
  * Show the exact approved token in hints. Absolute paths stay absolute so the
@@ -13,9 +17,16 @@ function deriveExecShortName(fullPath: string): string {
   return base.replace(/\.exe$/i, "") || base;
 }
 
-export function describeExecTool(params?: { agentId?: string; hasCronTool?: boolean }): string {
+export function describeExecTool(params?: {
+  agentId?: string;
+  hasCronTool?: boolean;
+  /** Defaults to whether this process runs under the Magister tool sandbox. */
+  magisterSandbox?: boolean;
+}): string {
+  const magisterSandbox = params?.magisterSandbox ?? Boolean(magisterToolSandboxLauncher());
   const base = [
     "Execute shell commands with background continuation for work that starts now.",
+    magisterSandbox ? MAGISTER_SANDBOX_EXEC_RULE : undefined,
     "Use yieldMs/background to continue later via process tool.",
     "For long-running work started now, rely on automatic completion wake when it is enabled and the command emits output or fails; otherwise use process to confirm completion. Use process whenever you need logs, status, input, or intervention.",
     params?.hasCronTool
