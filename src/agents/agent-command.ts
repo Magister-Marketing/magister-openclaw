@@ -1,3 +1,4 @@
+import { prependInboundBriefNote } from "../auto-reply/brief-note.js";
 import { prependInboundPasteNote } from "../auto-reply/paste-note.js";
 import { materializeInlinePastesForTurn } from "../auto-reply/reply/paste-materializer.js";
 import {
@@ -419,7 +420,15 @@ async function prepareAgentCommandExecution(
     isRawModelRun || acpReady || opts.bootstrapContextRunKind === "heartbeat"
       ? []
       : await materializeInlinePastesForTurn({ cfg, body: message, workspaceDir, runId });
-  const body = prependInboundPasteNote(rawBody, pasteFiles);
+  // A long message with no data file is a brief: the same slot carries the
+  // skill step and the grounding rule for its supplied material.
+  const noteFree = isRawModelRun || acpReady || opts.bootstrapContextRunKind === "heartbeat";
+  const body = noteFree
+    ? rawBody
+    : prependInboundBriefNote(prependInboundPasteNote(rawBody, pasteFiles), {
+        message,
+        hasPasteNote: pasteFiles.length > 0,
+      });
   const transcriptBody =
     opts.transcriptMessage ?? resolveInternalEventTranscriptBody(message, opts.internalEvents);
 
