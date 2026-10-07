@@ -3133,6 +3133,42 @@
       "transport_modes": ["json_v1"]
     },
     {
+      "capability_id": "monid",
+      "connection_slug": "monid",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:monid"],
+      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "proxy_services": ["monid"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-monid",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
       "capability_id": "pipedrive",
       "connection_slug": "pipedrive",
       "delegation_safe_tools": [],
@@ -4043,6 +4079,6 @@
     }
   ],
   "native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
-  "registry_revision": "76e5767e542bd601320a12cd55c31e1b4c9a5ceb7d265580eacbb89b0798f3d8",
+  "registry_revision": "6c7d1334d851ad34e211dc8fefd159edb31342c4f22d0dddfac20e0d889bd5b6",
   "schema_version": 1
 }
