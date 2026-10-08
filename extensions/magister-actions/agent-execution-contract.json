@@ -6,7 +6,7 @@
       "delegation_safe_tools": [],
       "hosted_agent_tools": [],
       "mcp_tool_actions": ["llm"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": "Core model traffic is host-owned and is not a model-visible tool.",
       "rollout_service": null,
@@ -28,7 +28,7 @@
         }
       ],
       "mcp_tool_actions": ["web_search"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -50,7 +50,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:resend"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["resend"],
       "remediation": null,
       "rollout_service": null,
@@ -72,7 +72,7 @@
         }
       ],
       "mcp_tool_actions": ["dataforseo"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["dataforseo"],
       "remediation": null,
       "rollout_service": null,
@@ -140,7 +140,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -208,7 +208,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -276,7 +276,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -344,7 +344,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -412,7 +412,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -480,7 +480,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -548,7 +548,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -616,7 +616,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -684,7 +684,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -752,7 +752,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -820,7 +820,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -888,7 +888,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -924,7 +924,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:webflow"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["webflow"],
       "remediation": null,
       "rollout_service": null,
@@ -960,7 +960,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:wix"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["wix"],
       "remediation": null,
       "rollout_service": null,
@@ -1022,7 +1022,7 @@
         "update_blog_post",
         "publish_content"
       ],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["wordpress"],
       "remediation": null,
       "rollout_service": null,
@@ -1058,7 +1058,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:shopify"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["shopify"],
       "remediation": null,
       "rollout_service": null,
@@ -1094,7 +1094,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:posthog"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["posthog"],
       "remediation": null,
       "rollout_service": null,
@@ -1130,7 +1130,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:google_analytics"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["ga4", "ga4_admin"],
       "remediation": null,
       "rollout_service": null,
@@ -1152,7 +1152,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:google_search_console"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["search_console"],
       "remediation": null,
       "rollout_service": null,
@@ -1174,7 +1174,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:fathom"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["fathom"],
       "remediation": null,
       "rollout_service": null,
@@ -1210,7 +1210,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:mixpanel"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["mixpanel"],
       "remediation": null,
       "rollout_service": null,
@@ -1232,7 +1232,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:hotjar"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["hotjar"],
       "remediation": null,
       "rollout_service": null,
@@ -1254,7 +1254,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:ahrefs"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["ahrefs"],
       "remediation": null,
       "rollout_service": null,
@@ -1340,7 +1340,7 @@
         "open_pull_request",
         "merge_pull_request"
       ],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["github"],
       "remediation": null,
       "rollout_service": null,
@@ -1376,7 +1376,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:vercel"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["vercel"],
       "remediation": null,
       "rollout_service": null,
@@ -1390,7 +1390,7 @@
       "delegation_safe_tools": [],
       "hosted_agent_tools": [],
       "mcp_tool_actions": ["proxy:slack"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": "A purpose-built Hosted Agent action is not available yet.",
       "rollout_service": null,
@@ -1419,7 +1419,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:google_ads"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["google_ads"],
       "remediation": null,
       "rollout_service": null,
@@ -1487,7 +1487,7 @@
         "activate_ad_campaign",
         "pause_ad_campaign"
       ],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -1555,7 +1555,7 @@
         "activate_ad_campaign",
         "pause_ad_campaign"
       ],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -1623,7 +1623,7 @@
         "activate_ad_campaign",
         "pause_ad_campaign"
       ],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -1691,7 +1691,7 @@
         "activate_ad_campaign",
         "pause_ad_campaign"
       ],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -1759,7 +1759,7 @@
         "activate_ad_campaign",
         "pause_ad_campaign"
       ],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -1795,7 +1795,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:hubspot"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["hubspot"],
       "remediation": null,
       "rollout_service": null,
@@ -1831,7 +1831,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:apollo"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["apollo"],
       "remediation": null,
       "rollout_service": null,
@@ -1867,7 +1867,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:intercom"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["intercom"],
       "remediation": null,
       "rollout_service": null,
@@ -1903,7 +1903,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:instantly"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["instantly"],
       "remediation": null,
       "rollout_service": null,
@@ -1939,7 +1939,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:google_workspace"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [
         "google_drive",
         "google_sheets",
@@ -1967,7 +1967,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:gmail", "send_email"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -2003,7 +2003,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:notion"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["notion"],
       "remediation": null,
       "rollout_service": null,
@@ -2025,7 +2025,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:stripe"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["stripe"],
       "remediation": null,
       "rollout_service": null,
@@ -2061,7 +2061,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:zapier"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["zapier"],
       "remediation": null,
       "rollout_service": null,
@@ -2097,7 +2097,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:buffer"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["buffer"],
       "remediation": null,
       "rollout_service": null,
@@ -2133,7 +2133,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:typefully"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["typefully"],
       "remediation": null,
       "rollout_service": null,
@@ -2169,7 +2169,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:postbridge"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["postbridge"],
       "remediation": null,
       "rollout_service": null,
@@ -2205,7 +2205,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:kit"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["kit"],
       "remediation": null,
       "rollout_service": null,
@@ -2241,7 +2241,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:activecampaign"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["activecampaign"],
       "remediation": null,
       "rollout_service": null,
@@ -2263,7 +2263,7 @@
         }
       ],
       "mcp_tool_actions": ["route:email", "send_agent_email"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -2285,7 +2285,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:apify"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["apify"],
       "remediation": null,
       "rollout_service": null,
@@ -2321,7 +2321,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:attentive"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["attentive"],
       "remediation": null,
       "rollout_service": null,
@@ -2357,7 +2357,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:attio"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["attio"],
       "remediation": null,
       "rollout_service": null,
@@ -2393,7 +2393,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:beehiiv"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["beehiiv"],
       "remediation": null,
       "rollout_service": null,
@@ -2429,7 +2429,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:blotato"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["blotato"],
       "remediation": null,
       "rollout_service": null,
@@ -2488,7 +2488,7 @@
         "suggest_ai_visibility_prompts",
         "create_ai_visibility_set"
       ],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -2524,7 +2524,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:builderio"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["builderio"],
       "remediation": null,
       "rollout_service": null,
@@ -2560,7 +2560,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:canva"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["canva"],
       "remediation": null,
       "rollout_service": null,
@@ -2582,7 +2582,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:context_dev"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["context_dev"],
       "remediation": null,
       "rollout_service": null,
@@ -2618,7 +2618,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:creatify"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["creatify"],
       "remediation": null,
       "rollout_service": null,
@@ -2654,7 +2654,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:customerio"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["customerio", "customerio_app"],
       "remediation": null,
       "rollout_service": null,
@@ -2676,7 +2676,7 @@
         }
       ],
       "mcp_tool_actions": ["route:voice_proxy", "generate_elevenlabs_voice"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": "elevenlabs",
@@ -2698,7 +2698,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:exa"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["exa"],
       "remediation": null,
       "rollout_service": null,
@@ -2727,7 +2727,7 @@
         }
       ],
       "mcp_tool_actions": ["route:fal_proxy", "submit_fal_generation", "get_fal_generation"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": "fal",
@@ -2749,7 +2749,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:firecrawl", "call_integration_api"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["firecrawl"],
       "remediation": null,
       "rollout_service": null,
@@ -2771,7 +2771,7 @@
         }
       ],
       "mcp_tool_actions": ["route:firehose", "list_firehose_matches"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -2807,7 +2807,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:folk"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["folk"],
       "remediation": null,
       "rollout_service": null,
@@ -2829,7 +2829,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:formspree"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["formspree"],
       "remediation": null,
       "rollout_service": null,
@@ -2858,7 +2858,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:framer"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["framer"],
       "remediation": null,
       "rollout_service": null,
@@ -2880,7 +2880,7 @@
         }
       ],
       "mcp_tool_actions": ["route:gemini_proxy", "generate_gemini_image"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": "gemini",
@@ -2950,7 +2950,7 @@
         "push_repo_branch",
         "install_repo_dependencies"
       ],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["gitlab"],
       "remediation": null,
       "rollout_service": null,
@@ -2972,7 +2972,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:hunter"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["hunter"],
       "remediation": null,
       "rollout_service": null,
@@ -2994,7 +2994,7 @@
         }
       ],
       "mcp_tool_actions": ["route:image_proxy", "generate_ideogram_image"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": "ideogram",
@@ -3030,7 +3030,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:klaviyo"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["klaviyo"],
       "remediation": null,
       "rollout_service": null,
@@ -3066,7 +3066,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:loops"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["loops"],
       "remediation": null,
       "rollout_service": null,
@@ -3102,7 +3102,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:mailchimp"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["mailchimp"],
       "remediation": null,
       "rollout_service": null,
@@ -3124,7 +3124,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:moltsets", "call_integration_api"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["moltsets"],
       "remediation": null,
       "rollout_service": null,
@@ -3160,7 +3160,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:pipedrive"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["pipedrive"],
       "remediation": null,
       "rollout_service": null,
@@ -3196,7 +3196,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:postscript"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["postscript"],
       "remediation": null,
       "rollout_service": null,
@@ -3218,7 +3218,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:scrapecreators"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["scrapecreators"],
       "remediation": null,
       "rollout_service": null,
@@ -3240,7 +3240,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:supadata", "call_integration_api"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["supadata"],
       "remediation": null,
       "rollout_service": null,
@@ -3262,7 +3262,7 @@
         }
       ],
       "mcp_tool_actions": ["route:tabstack_proxy", "signed_out_browser_task"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": "tabstack",
@@ -3284,7 +3284,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:truelist"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["truelist"],
       "remediation": null,
       "rollout_service": null,
@@ -3306,7 +3306,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:pagespeed", "proxy:crux"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["pagespeed", "crux"],
       "remediation": null,
       "rollout_service": null,
@@ -3328,7 +3328,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:youtube"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["youtube"],
       "remediation": null,
       "rollout_service": null,
@@ -3364,7 +3364,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:zoho_crm"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["zoho_crm"],
       "remediation": null,
       "rollout_service": null,
@@ -3400,7 +3400,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:zoho_marketing_automation"],
-      "minimum_native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+      "minimum_native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
       "proxy_services": ["zoho_marketing_automation"],
       "remediation": null,
       "rollout_service": null,
@@ -3494,6 +3494,13 @@
       "idempotency_policy": "idempotency_key",
       "side_effect": "draft",
       "tool_name": "magister_create_blog_post"
+    },
+    {
+      "action": "create_campaign",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_create_campaign"
     },
     {
       "action": "create_product",
@@ -3748,6 +3755,13 @@
       "tool_name": "magister_list_assets"
     },
     {
+      "action": "list_campaigns",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_campaigns"
+    },
+    {
       "action": "list_firehose_matches",
       "approval_policy": "none",
       "idempotency_policy": "safe_retry",
@@ -3802,6 +3816,13 @@
       "idempotency_policy": "safe_retry",
       "side_effect": "none",
       "tool_name": "magister_list_suppressions"
+    },
+    {
+      "action": "list_touches",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_touches"
     },
     {
       "action": "list_trackers",
@@ -3886,6 +3907,13 @@
       "idempotency_policy": "natural",
       "side_effect": "draft",
       "tool_name": "magister_push_repo_branch"
+    },
+    {
+      "action": "queue_touches",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_queue_touches"
     },
     {
       "action": "read_analytics_breakdown",
@@ -4077,7 +4105,7 @@
       "tool_name": "web_search"
     }
   ],
-  "native_action_registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
-  "registry_revision": "07a7ec10d2c224cfac7e7dcf9d64190a99f6644572ca7cabaaf56e585994fd8f",
+  "native_action_registry_revision": "a0cb385f263fa697e50c58db716dfeff379d7ca471af2142a3de8125612ca3d4",
+  "registry_revision": "0a609610abde2d583ca98b362aca4788c8c8d9ad4357ff5f4c8e535b239c2976",
   "schema_version": 1
 }
