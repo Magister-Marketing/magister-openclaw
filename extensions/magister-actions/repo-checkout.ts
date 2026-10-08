@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
+import { reportHostRouteFailure, type HostRoute } from "./host-route-telemetry.js";
 import { mirrorReadBits } from "./tool-readable.js";
 
 /**
@@ -1199,7 +1200,7 @@ async function shadowedTrackedFiles(
       }
     }
   }
-  return found.sort((a, b) => a.path.localeCompare(b.path));
+  return found.toSorted((a, b) => a.path.localeCompare(b.path));
 }
 
 // ── Checkout ────────────────────────────────────────────────────────────
@@ -2401,6 +2402,7 @@ async function handleBrokeredPost<Request extends { token?: string }, Receipt>(
   operation: {
     parse: (body: unknown) => Request;
     execute: (request: Request) => Promise<Receipt>;
+    route: HostRoute;
     errorCode: string;
     failure: string;
   },
@@ -2416,6 +2418,11 @@ async function handleBrokeredPost<Request extends { token?: string }, Receipt>(
     token = request.token ?? "";
     sendJson(res, 200, await operation.execute(request));
   } catch (error) {
+    if (!(error instanceof CheckoutError)) {
+      // Name and code only: the message can carry git output, and git output
+      // can carry the remote URL the credential rides on.
+      reportHostRouteFailure(operation.route, error);
+    }
     const status = error instanceof CheckoutError ? error.statusCode : 500;
     const raw = error instanceof CheckoutError ? error.message : operation.failure;
     const userAction = error instanceof CheckoutError ? error.userAction : undefined;
@@ -2432,6 +2439,7 @@ export function handleRepoCheckout(req: IncomingMessage, res: ServerResponse): P
   return handleBrokeredPost(req, res, {
     parse: parseRequest,
     execute: checkoutRepository,
+    route: "magister_repo_checkout",
     errorCode: "checkout_rejected",
     failure: "checkout failed",
   });
@@ -2441,6 +2449,7 @@ export function handleRepoPrepare(req: IncomingMessage, res: ServerResponse): Pr
   return handleBrokeredPost(req, res, {
     parse: parsePrepareRequest,
     execute: prepareRepoCommit,
+    route: "magister_repo_prepare",
     errorCode: "prepare_rejected",
     failure: "preparing the commit failed",
   });
@@ -2450,6 +2459,7 @@ export function handleRepoPush(req: IncomingMessage, res: ServerResponse): Promi
   return handleBrokeredPost(req, res, {
     parse: parsePushRequest,
     execute: pushRepoBranch,
+    route: "magister_repo_push",
     errorCode: "push_rejected",
     failure: "pushing the branch failed",
   });
@@ -2459,6 +2469,7 @@ export function handleRepoInstall(req: IncomingMessage, res: ServerResponse): Pr
   return handleBrokeredPost(req, res, {
     parse: parseInstallRequest,
     execute: installRepoDependencies,
+    route: "magister_repo_install",
     errorCode: "install_rejected",
     failure: "installing dependencies failed",
   });
