@@ -2783,6 +2783,259 @@
       "tool_name": "magister_integration_delete"
     },
     {
+      "action": "save_prospects",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "Save up to 100 outreach prospects with where you found them and why (signals). Deduplicated by email, else domain; a re-save merges new details and signals without changing status.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "$defs": {
+          "ProspectArgs": {
+            "additionalProperties": false,
+            "properties": {
+              "company": {
+                "maxLength": 200,
+                "type": "string"
+              },
+              "domain": {
+                "maxLength": 253,
+                "type": "string"
+              },
+              "email": {
+                "maxLength": 320,
+                "type": "string"
+              },
+              "location": {
+                "maxLength": 200,
+                "type": "string"
+              },
+              "name": {
+                "maxLength": 200,
+                "type": "string"
+              },
+              "notes": {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              "phone": {
+                "maxLength": 50,
+                "type": "string"
+              },
+              "signals": {
+                "items": {
+                  "$ref": "#/$defs/ProspectSignalArgs"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              "source": {
+                "description": "Where you found them: dataforseo, firehose, treg, apify, sheet, manual, \u2026",
+                "maxLength": 50,
+                "minLength": 1,
+                "type": "string"
+              },
+              "source_ref": {
+                "description": "The URL or record id it came from.",
+                "maxLength": 2048,
+                "type": "string"
+              },
+              "title": {
+                "maxLength": 200,
+                "type": "string"
+              },
+              "website": {
+                "maxLength": 2048,
+                "type": "string"
+              }
+            },
+            "required": ["source"],
+            "type": "object"
+          },
+          "ProspectSignalArgs": {
+            "additionalProperties": false,
+            "properties": {
+              "detail": {
+                "maxLength": 500,
+                "type": "string"
+              },
+              "kind": {
+                "description": "What happened, e.g. new_location, hiring, funding, review_gap, firehose_match.",
+                "maxLength": 50,
+                "minLength": 1,
+                "type": "string"
+              },
+              "observed_at": {
+                "description": "ISO date or timestamp.",
+                "maxLength": 40,
+                "type": "string"
+              },
+              "url": {
+                "maxLength": 2048,
+                "type": "string"
+              }
+            },
+            "required": ["kind"],
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "prospects": {
+            "items": {
+              "$ref": "#/$defs/ProspectArgs"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": ["prospects"],
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "side_effect": "internal_write",
+      "spend_limited": false,
+      "tool_name": "magister_save_prospects"
+    },
+    {
+      "action": "list_prospects",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "List this project's outreach prospects, newest first, optionally by status.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 50,
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "new",
+              "queued",
+              "contacted",
+              "replied",
+              "interested",
+              "not_interested",
+              "bounced",
+              "unsubscribed",
+              "do_not_contact"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "side_effect": "none",
+      "spend_limited": false,
+      "tool_name": "magister_list_prospects"
+    },
+    {
+      "action": "update_prospect",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "Set one prospect's status (new \u2192 queued \u2192 contacted \u2192 replied/interested/not_interested) or notes.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "notes": {
+            "maxLength": 4000,
+            "type": "string"
+          },
+          "prospect_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "status": {
+            "enum": ["new", "queued", "contacted", "replied", "interested", "not_interested"],
+            "type": "string"
+          }
+        },
+        "required": ["prospect_id"],
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "side_effect": "internal_write",
+      "spend_limited": false,
+      "tool_name": "magister_update_prospect"
+    },
+    {
+      "action": "add_suppression",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "Add an email address or a whole domain to this project's do-not-contact list. Drafts and sends to it are refused from then on. Use it for every unsubscribe, bounce, complaint or 'don't contact'.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "note": {
+            "maxLength": 1000,
+            "type": "string"
+          },
+          "reason": {
+            "enum": ["unsubscribed", "bounced", "complained", "do_not_contact", "other"],
+            "type": "string"
+          },
+          "value": {
+            "description": "An email address, or a domain to block everyone at it.",
+            "maxLength": 320,
+            "minLength": 3,
+            "type": "string"
+          }
+        },
+        "required": ["value", "reason"],
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "side_effect": "internal_write",
+      "spend_limited": false,
+      "tool_name": "magister_add_suppression"
+    },
+    {
+      "action": "list_suppressions",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "List this project's do-not-contact entries.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 100,
+            "maximum": 500,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "side_effect": "none",
+      "spend_limited": false,
+      "tool_name": "magister_list_suppressions"
+    },
+    {
       "action": "send_email",
       "approval_policy": "exact_payload",
       "async_status_adapter": "synchronous",
@@ -3889,6 +4142,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+  "registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
   "schema_version": 1
 }
