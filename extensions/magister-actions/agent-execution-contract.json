@@ -3271,6 +3271,28 @@
       "transport_modes": ["native_json"]
     },
     {
+      "capability_id": "treg",
+      "connection_slug": null,
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:treg", "call_integration_api"],
+      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "proxy_services": ["treg"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-treg",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
       "capability_id": "truelist",
       "connection_slug": null,
       "delegation_safe_tools": [],
@@ -4043,6 +4065,6 @@
     }
   ],
   "native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
-  "registry_revision": "76e5767e542bd601320a12cd55c31e1b4c9a5ceb7d265580eacbb89b0798f3d8",
+  "registry_revision": "f7e1e13c46503dffb0a81be80a06c8ef4264f4880e07a977b93d23752b6c285c",
   "schema_version": 1
 }
