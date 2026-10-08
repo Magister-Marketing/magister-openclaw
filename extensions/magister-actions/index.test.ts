@@ -138,17 +138,40 @@ describe("Magister action manifest contract", () => {
       throw new Error("not called");
     });
 
-    expect(tool.description).toContain('receipt.approval_presentation is "inline_web"');
-    expect(tool.description).toContain("do not print receipt.approval_url");
-    expect(tool.description).toContain('receipt.approval_presentation is "slack_card_scheduled"');
-    expect(tool.description).toContain("never call message(action=send)");
-    expect(tool.description).toContain('receipt.approval_presentation is "link_only"');
-    expect(tool.description).toContain("show receipt.approval_url once");
-    expect(tool.description).toContain("when the runtime holds this call open");
-    expect(tool.description).toContain(
+    expect(tool.sharedPromptGuidance).toContain('receipt.approval_presentation is "inline_web"');
+    expect(tool.sharedPromptGuidance).toContain("do not print receipt.approval_url");
+    expect(tool.sharedPromptGuidance).toContain(
+      'receipt.approval_presentation is "slack_card_scheduled"',
+    );
+    expect(tool.sharedPromptGuidance).toContain("never call message(action=send)");
+    expect(tool.sharedPromptGuidance).toContain('receipt.approval_presentation is "link_only"');
+    expect(tool.sharedPromptGuidance).toContain("show receipt.approval_url once");
+    expect(tool.sharedPromptGuidance).toContain("when the runtime holds this call open");
+    expect(tool.sharedPromptGuidance).toContain(
       "never re-request a denied action or pursue its outcome through another tool",
     );
+    expect(tool.description).toContain("Exact-action permission");
+    expect(tool.description).not.toContain("receipt.approval_presentation");
     expect(tool.sideEffect).toBe("external_write");
+  });
+
+  it("shares permission instructions without changing action schemas or tool availability", () => {
+    const tools = nativeActionContract.actions.map((row) => createMagisterActionTool(api(), row));
+    const approvalTools = tools.filter((tool) => tool.sharedPromptGuidance);
+    expect(approvalTools).toHaveLength(
+      nativeActionContract.actions.filter((row) => row.approval_policy === "exact_payload").length,
+    );
+    expect(new Set(approvalTools.map((tool) => tool.sharedPromptGuidance)).size).toBe(1);
+    tools.forEach((tool, i) => {
+      const row = nativeActionContract.actions[i];
+      expect(tool.name).toBe(row.tool_name);
+      expect(tool.parameters).toEqual(row.input_schema);
+      expect(tool.description).toContain(row.description);
+      expect(tool.sideEffect).toBe(row.side_effect);
+      if (row.approval_policy === "none") {
+        expect(tool.sharedPromptGuidance).toBeUndefined();
+      }
+    });
   });
 });
 

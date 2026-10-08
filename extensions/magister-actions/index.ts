@@ -969,6 +969,9 @@ export async function holdForApprovalDecision(options: {
   return null;
 }
 
+const MAGISTER_APPROVAL_GUIDANCE =
+  '## Magister action permissions\nFor tools marked "Exact-action permission": If the result says user permission is pending, briefly tell the user permission is needed and end this turn — when the runtime holds this call open, the decision returns as this call\'s result; treat it as the action\'s outcome, and never re-request a denied action or pursue its outcome through another tool. When receipt.approval_presentation is "inline_web", a trusted server-owned card is already in the conversation: do not print receipt.approval_url, emit another permission UI, ask for a synthetic confirmation message, or poll in this turn. When receipt.approval_presentation is "slack_card_scheduled", the trusted server-owned card is already being delivered to the originating Slack thread: give one normal final reply, never call message(action=send) or a Slack/proxy tool just to acknowledge it, and end this turn. When receipt.approval_presentation is "link_only", show receipt.approval_url once and do not render a synthetic Approve button. When receipt.permission_continuation is "automatic", Magister will resume this same session after the decision; when it is "manual", tell the user to return after deciding.';
+
 export function createMagisterActionTool(
   api: OpenClawPluginApi,
   action: ActionContract,
@@ -981,8 +984,11 @@ export function createMagisterActionTool(
     sideEffect: action.side_effect,
     description:
       action.approval_policy === "exact_payload"
-        ? `${action.description} If the result says user permission is pending, briefly tell the user permission is needed and end this turn — when the runtime holds this call open, the decision returns as this call's result; treat it as the action's outcome, and never re-request a denied action or pursue its outcome through another tool. When receipt.approval_presentation is "inline_web", a trusted server-owned card is already in the conversation: do not print receipt.approval_url, emit another permission UI, ask for a synthetic confirmation message, or poll in this turn. When receipt.approval_presentation is "slack_card_scheduled", the trusted server-owned card is already being delivered to the originating Slack thread: give one normal final reply, never call message(action=send) or a Slack/proxy tool just to acknowledge it, and end this turn. When receipt.approval_presentation is "link_only", show receipt.approval_url once and do not render a synthetic Approve button. When receipt.permission_continuation is "automatic", Magister will resume this same session after the decision; when it is "manual", tell the user to return after deciding.`
+        ? `${action.description} Exact-action permission: follow the shared Magister action permissions instructions.`
         : action.description,
+    ...(action.approval_policy === "exact_payload"
+      ? { sharedPromptGuidance: MAGISTER_APPROVAL_GUIDANCE }
+      : {}),
     parameters: action.input_schema as unknown as TSchema,
     async execute(
       callId: string,
