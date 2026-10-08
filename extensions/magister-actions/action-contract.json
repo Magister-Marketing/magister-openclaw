@@ -750,6 +750,92 @@
       "tool_name": "magister_list_firehose_matches"
     },
     {
+      "action": "list_firehose_rules",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "List this project's Firehose monitoring rules (rule_id, query, tag, paused).",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "side_effect": "none",
+      "spend_limited": false,
+      "tool_name": "magister_list_firehose_rules"
+    },
+    {
+      "action": "create_firehose_rule",
+      "approval_policy": "exact_payload",
+      "async_status_adapter": "synchronous",
+      "description": "Request approval to add one Firehose monitoring rule (a Lucene query). The query is validated first; matches then arrive within minutes.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "idempotency_key",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "description": "Use one fresh key for each new logical operation. Reuse that key only when retrying the exact same arguments; a later user request, even with identical content, needs a new key.",
+            "maxLength": 256,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "type": "string"
+          },
+          "tag": {
+            "description": "Short label for what this rule watches, shown with its matches.",
+            "maxLength": 100,
+            "type": "string"
+          },
+          "value": {
+            "description": "Lucene query matched against newly crawled pages, e.g. '\"now hiring\" AND \"marketing manager\" AND language:en AND recent:7d'. Keep it tight: Firehose bills per match.",
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": ["idempotency_key", "value"],
+        "type": "object"
+      },
+      "retry_policy": "read_after_timeout",
+      "side_effect": "external_write",
+      "spend_limited": false,
+      "tool_name": "magister_create_firehose_rule"
+    },
+    {
+      "action": "delete_firehose_rule",
+      "approval_policy": "exact_payload",
+      "async_status_adapter": "synchronous",
+      "description": "Request approval to delete one of this project's Firehose rules; its monitoring stops immediately.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "idempotency_key",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "description": "Use one fresh key for each new logical operation. Reuse that key only when retrying the exact same arguments; a later user request, even with identical content, needs a new key.",
+            "maxLength": 256,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "type": "string"
+          },
+          "rule_id": {
+            "description": "A rule_id from magister_list_firehose_rules.",
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": ["idempotency_key", "rule_id"],
+        "type": "object"
+      },
+      "retry_policy": "read_after_timeout",
+      "side_effect": "external_write",
+      "spend_limited": false,
+      "tool_name": "magister_delete_firehose_rule"
+    },
+    {
       "action": "check_back",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
@@ -3889,6 +3975,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+  "registry_revision": "3a280126c64ff2743720f05ce7faa7ab353afbe83275a58f13ed2d5de2394318",
   "schema_version": 1
 }
