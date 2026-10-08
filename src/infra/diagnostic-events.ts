@@ -78,6 +78,19 @@ export type DiagnosticHttpRequestErrorEvent = DiagnosticBaseEvent & {
   type: "http.request.error";
   surface: "plugin_http" | "gateway_http";
   failureKind: "handler_exception" | "unhandled_exception";
+  /** A plugin route that caught its own failure names what it serves. */
+  toolName?: string;
+  /** Lowercased errno code or error class name — never the message. */
+  reasonCode?: string;
+};
+
+/** Best-effort cleanup that failed after the operation itself succeeded. */
+export type DiagnosticPluginCleanupFailedEvent = DiagnosticBaseEvent & {
+  type: "plugin.cleanup.failed";
+  pluginId: string;
+  toolName?: string;
+  /** Lowercased errno code or error class name — never the message. */
+  reasonCode: string;
 };
 
 export type DiagnosticMessageQueuedEvent = DiagnosticBaseEvent & {
@@ -540,6 +553,7 @@ export type DiagnosticEventPayload =
   | DiagnosticWebhookErrorEvent
   | DiagnosticWebhookDeliveryDeadLetteredEvent
   | DiagnosticHttpRequestErrorEvent
+  | DiagnosticPluginCleanupFailedEvent
   | DiagnosticMessageQueuedEvent
   | DiagnosticMessageProcessedEvent
   | DiagnosticMessageDeliveryStartedEvent
