@@ -1,8 +1,15 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { Readable } from "node:stream";
+import {
+  onInternalDiagnosticEvent,
+  resetDiagnosticEventsForTest,
+  type DiagnosticEventPayload,
+} from "openclaw/plugin-sdk/diagnostic-runtime";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   CHECKOUT_TTL_MS,
   CheckoutError,
@@ -11,6 +18,7 @@ import {
   checkoutRepository,
   detectPackageManager,
   ensureRepoRoot,
+  handleRepoCheckout,
   INSTALL_POLL_SECONDS,
   installRepoDependencies,
   MAX_MANIFEST_PATH_CHARS,
@@ -1231,5 +1239,77 @@ describe("the work layer as evidence", () => {
     fs.mkdirSync(path.join(workLayer(repoDir).upper, "node_modules"), { recursive: true });
     await checkoutRepository(request({ discard_local_changes: true }));
     expect(fs.readFileSync(log, "utf8")).toContain("maintenance reset-work-layer");
+  });
+});
+
+describe("brokered checkout route", () => {
+  function fakeExchange(body: unknown) {
+    const req = Object.assign(Readable.from([Buffer.from(JSON.stringify(body))]), {
+      method: "POST",
+    }) as unknown as IncomingMessage;
+    const response = { status: 0, body: "" };
+    const res = {
+      set statusCode(value: number) {
+        response.status = value;
+      },
+      setHeader: () => undefined,
+      end: (chunk: string) => {
+        response.body = chunk;
+      },
+    } as unknown as ServerResponse;
+    return { req, res, response };
+  }
+
+  let diagnostics: DiagnosticEventPayload[] = [];
+  let stop: (() => void) | undefined;
+  beforeEach(() => {
+    resetDiagnosticEventsForTest();
+    diagnostics = [];
+    stop = onInternalDiagnosticEvent((event) => {
+      diagnostics.push(event);
+    });
+  });
+  afterEach(() => {
+    stop?.();
+    stop = undefined;
+  });
+
+  it("reports an unexpected failure once, by errno code, without the credential or path", async () => {
+    // A repository root that cannot be created fails below every CheckoutError
+    // check, which is the branch that answered a bare 500 and recorded nothing
+    // (MAGISTER-GATEWAY-C3).
+    const blocker = path.join(scratch("magister-blocked-"), "not-a-directory");
+    fs.writeFileSync(blocker, "");
+    process.env.MAGISTER_REPO_ROOT = path.join(blocker, "repos");
+    const { req, res, response } = fakeExchange({ repo: "acme/site", token: "ghu_secret_value" });
+
+    await handleRepoCheckout(req, res);
+
+    expect(response.status).toBe(500);
+    expect(JSON.parse(response.body)).toMatchObject({
+      error: "checkout_rejected",
+      message: "checkout failed",
+    });
+    const failures = diagnostics.filter((event) => event.type === "http.request.error");
+    expect(failures).toEqual([
+      expect.objectContaining({
+        surface: "plugin_http",
+        failureKind: "handler_exception",
+        toolName: "magister_repo_checkout",
+        reasonCode: "enotdir",
+      }),
+    ]);
+    const serialized = JSON.stringify(diagnostics);
+    expect(serialized).not.toContain("ghu_secret_value");
+    expect(serialized).not.toContain(blocker);
+  });
+
+  it("keeps a refused request quiet", async () => {
+    const { req, res, response } = fakeExchange({ repo: "acme/site" });
+
+    await handleRepoCheckout(req, res);
+
+    expect(response.status).toBe(401);
+    expect(diagnostics.some((event) => event.type === "http.request.error")).toBe(false);
   });
 });
