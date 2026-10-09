@@ -615,6 +615,182 @@ describe("figures grounded on pasted-data turns", () => {
     tools: [{ name: "exec", description: "Run a command", parameters: Type.Object({}) }],
   };
 
+  it("continues a buffered token-limited analysis once without replaying tools or replacing its prefix", async () => {
+    const text =
+      "This analysis preserves the earlier observations.\n\n".repeat(8) +
+      "The script reports $1,758.80 in spend.\n\nTest decision:\n- Pass if the result improves.\n- F";
+    const suffix = "ail otherwise.\n\nLimitation: revenue alone does not establish profit.";
+    const original = message(text, 10, "length");
+    const continuation = message(text.slice(-120) + suffix, 6);
+    const inner = vi
+      .fn<StreamFn>()
+      .mockImplementationOnce(() => completed(original).stream)
+      .mockImplementationOnce(() => completed(continuation).stream)
+      .mockImplementationOnce(() => completed(message("[]", 2)).stream);
+    const verification = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
+    verification.hadToolActivity = true;
+    const result = await collect(
+      await verification.wrap(inner)(model, toolTurnContext, { maxTokens: 16_000 }),
+    );
+    expect(result.result.content).toEqual([{ type: "text", text: text + suffix }]);
+    expect(result.result.stopReason).toBe("stop");
+    expect(result.result.usage).toBe(original.usage);
+    expect(verification.receipt).toMatchObject({ ceiling_retried: true, stop_reason: "stop" });
+    const [, continuationContext, continuationOptions] = inner.mock.calls[1];
+    expect(continuationContext.tools).toEqual([]);
+    expect(continuationContext.messages.some((m) => m.role === "toolResult")).toBe(false);
+    expect(continuationOptions).toMatchObject({
+      toolChoice: "none",
+      maxTokens: 16_000,
+      maxRetries: 0,
+    });
+    expect(verification.takeAdditionalUsage()?.output).toBe(continuation.usage.output + 4);
+    expect(toolTurnContext.messages).toHaveLength(3);
+  });
+
+  it.each(["length", "error", "aborted"] as const)(
+    "retains a partial draft when its one continuation ends with %s",
+    async (stopReason) => {
+      const text = "The script reports $1,758.80. Next, we should";
+      const original = message(text, 10, "length");
+      const continuation = message(`${text} test the hypothesis.`, 6, stopReason);
+      const inner = vi
+        .fn<StreamFn>()
+        .mockImplementationOnce(() => completed(original).stream)
+        .mockImplementationOnce(() => completed(continuation).stream);
+      const verification = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
+      const result = await collect(await verification.wrap(inner)(model, toolTurnContext));
+      expect(result.result).toBe(original);
+      expect(inner).toHaveBeenCalledTimes(2);
+      expect(verification.receipt).toMatchObject({ ceiling_retried: true, stop_reason: "length" });
+      expect(verification.takeAdditionalUsage()).toBe(continuation.usage);
+    },
+  );
+
+  it("rejects an unanchored continuation without claiming that the partial answer completed", async () => {
+    const original = message("The script reports $1,758.80. Next, we should", 10, "length");
+    const inner = vi
+      .fn<StreamFn>()
+      .mockImplementationOnce(() => completed(original).stream)
+      .mockImplementationOnce(() => completed(message("A replacement answer.")).stream);
+    const verification = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
+    const result = await collect(await verification.wrap(inner)(model, toolTurnContext));
+    expect(result.result).toBe(original);
+    expect(verification.receipt).toMatchObject({ ceiling_retried: true, stop_reason: "length" });
+  });
+
+  it("rejects a continuation that merely repeats a short partial draft", async () => {
+    const text = "The script reports $1,758.80. Next, we should";
+    const original = message(text, 10, "length");
+    const inner = vi
+      .fn<StreamFn>()
+      .mockImplementationOnce(() => completed(original).stream)
+      .mockImplementationOnce(() => completed(message(text + text)).stream);
+    const verification = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
+    const result = await collect(await verification.wrap(inner)(model, toolTurnContext));
+    expect(result.result).toBe(original);
+    expect(verification.receipt).toMatchObject({ ceiling_retried: true, stop_reason: "length" });
+    expect(inner).toHaveBeenCalledTimes(2);
+  });
+
+  it("spends at most one continuation across lower attempts", async () => {
+    const original = message("The script reports $1,758.80. Next, we should", 10, "length");
+    const inner = vi.fn<StreamFn>(() => completed(original).stream);
+    const verification = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
+    const wrapped = verification.wrap(inner);
+    await collect(await wrapped(model, toolTurnContext));
+    verification.beginAttempt();
+    await collect(await wrapped(model, toolTurnContext));
+    expect(inner).toHaveBeenCalledTimes(3);
+    expect(verification.receipt.ceiling_retried).toBe(true);
+  });
+
+  it("persists and emits the same continued answer through the real Pi Agent", async () => {
+    const text = "The data shows spend of $1,758.80.\n\nThe next step is";
+    const expected = `${text} to test the hypothesis.`;
+    const inner = vi
+      .fn<StreamFn>()
+      .mockImplementationOnce(() => completed(message(text, 10, "length")).stream)
+      .mockImplementationOnce(() => completed(message(expected, 6)).stream)
+      .mockImplementationOnce(() => completed(message("[]", 2)).stream);
+    const verification = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
+    const agent = new Agent({
+      initialState: { model, systemPrompt: context.systemPrompt },
+      streamFn: verification.wrap(inner),
+    });
+    const events: AgentEvent[] = [];
+    agent.subscribe((event) => events.push(event));
+    await agent.prompt(pastePrompt);
+    const persisted = agent.state.messages.filter((m) => m.role === "assistant");
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0]).toMatchObject({
+      content: [{ type: "text", text: expected }],
+      stopReason: "stop",
+    });
+    expect(
+      events.filter((e) => e.type === "message_end" && e.message.role === "assistant"),
+    ).toEqual([{ type: "message_end", message: persisted[0] }]);
+  });
+
+  it("does not execute a tool call returned by a continuation", async () => {
+    const original = message("The data shows spend of $1,758.80. Next", 10, "length");
+    const malicious = {
+      ...message(""),
+      stopReason: "toolUse" as const,
+      content: [{ type: "toolCall" as const, id: "bad", name: "publish", arguments: {} }],
+    };
+    const inner = vi
+      .fn<StreamFn>()
+      .mockImplementationOnce(() => completed(original).stream)
+      .mockImplementationOnce(() => completed(malicious).stream);
+    const execute = vi.fn(async () => ({ content: [], details: {} }));
+    const agent = new Agent({
+      initialState: { model, tools: [{ ...context.tools![0], label: "Publish", execute }] },
+      streamFn: state({ prompt: pastePrompt }).wrap(inner),
+    });
+    await agent.prompt(pastePrompt);
+    expect(execute).not.toHaveBeenCalled();
+    expect(agent.state.messages.filter((m) => m.role === "assistant")).toEqual([original]);
+    expect(inner).toHaveBeenCalledTimes(2);
+  });
+
+  it("bounds continuation even when its transport ignores abort", async () => {
+    vi.useFakeTimers();
+    const original = message("The data shows spend of $1,758.80. Next", 10, "length");
+    const inner = vi
+      .fn<StreamFn>()
+      .mockImplementationOnce(() => completed(original).stream)
+      .mockImplementationOnce(() => createAssistantMessageEventStream());
+    const verification = state({ prompt: pastePrompt, deadline: Date.now() + 7_000 });
+    const pending = collect(await verification.wrap(inner)(model, toolTurnContext));
+    await vi.advanceTimersByTimeAsync(7_001);
+    expect((await pending).result).toBe(original);
+    expect(inner.mock.calls[1][2]?.signal?.aborted).toBe(true);
+    expect(inner).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["off", "shadow"] as const)(
+    "does not add paid continuation calls in %s mode",
+    async (mode) => {
+      const original = message("The script reports $1,758.80. Next, we should", 10, "length");
+      const inner = vi.fn<StreamFn>(() => completed(original).stream);
+      const verification = state({ mode, prompt: pastePrompt, deadline: Date.now() + 600_000 });
+      const result = await collect(await verification.wrap(inner)(model, toolTurnContext));
+      expect(result.result).toBe(original);
+      expect(inner).toHaveBeenCalledTimes(1);
+      expect(verification.receipt.ceiling_retried).toBeNull();
+    },
+  );
+
+  it("does not continue without enough remaining deadline", async () => {
+    const original = message("The script reports $1,758.80. Next, we should", 10, "length");
+    const inner = vi.fn<StreamFn>(() => completed(original).stream);
+    const verification = state({ prompt: pastePrompt, deadline: Date.now() + 4_000 });
+    const result = await collect(await verification.wrap(inner)(model, toolTurnContext));
+    expect(result.result).toBe(original);
+    expect(inner).toHaveBeenCalledTimes(1);
+  });
+
   it("repairs a figure divided in prose on a turn that used tools, without tool blocks in the correction", async () => {
     const original = message(
       "pb-video spent $1,758.80 in 28 days: about $251 per day. Pause it.",

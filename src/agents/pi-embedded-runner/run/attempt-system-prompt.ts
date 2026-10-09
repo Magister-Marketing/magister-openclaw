@@ -1,6 +1,7 @@
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import type { ProviderTransformSystemPromptContext } from "../../../plugins/types.js";
 import { appendAgentBootstrapSystemPromptSupplement } from "../../system-prompt.js";
+import { appendToolPromptGuidance } from "../../tool-prompt-guidance.js";
 import { buildEmbeddedSystemPrompt, createSystemPromptOverride } from "../system-prompt.js";
 
 type EmbeddedSystemPromptParams = Parameters<typeof buildEmbeddedSystemPrompt>[0];
@@ -34,12 +35,15 @@ export function buildAttemptSystemPrompt(
   params: BuildAttemptSystemPromptParams,
 ): AttemptSystemPrompt {
   const baseSystemPrompt = params.systemPromptOverrideText
-    ? appendAgentBootstrapSystemPromptSupplement({
-        systemPrompt: params.systemPromptOverrideText,
-        bootstrapMode: params.embeddedSystemPrompt.bootstrapMode,
-        bootstrapTruncationNotice: params.embeddedSystemPrompt.bootstrapTruncationNotice,
-        contextFiles: params.embeddedSystemPrompt.contextFiles,
-      })
+    ? appendToolPromptGuidance(
+        appendAgentBootstrapSystemPromptSupplement({
+          systemPrompt: params.systemPromptOverrideText,
+          bootstrapMode: params.embeddedSystemPrompt.bootstrapMode,
+          bootstrapTruncationNotice: params.embeddedSystemPrompt.bootstrapTruncationNotice,
+          contextFiles: params.embeddedSystemPrompt.contextFiles,
+        }),
+        params.embeddedSystemPrompt.tools,
+      )
     : buildEmbeddedSystemPrompt(params.embeddedSystemPrompt);
 
   const systemPrompt = params.isRawModelRun

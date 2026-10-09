@@ -1,4 +1,3 @@
-import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
 import type { SourceReplyDeliveryMode } from "../../auto-reply/get-reply-options.types.js";
 import type { MemoryCitationsMode } from "../../config/types.memory.js";
@@ -8,6 +7,10 @@ import type { EmbeddedContextFile } from "../pi-embedded-helpers.js";
 import type { ProviderSystemPromptContribution } from "../system-prompt-contribution.js";
 import { buildAgentSystemPrompt } from "../system-prompt.js";
 import type { PromptMode, SilentReplyPromptMode } from "../system-prompt.types.js";
+import {
+  appendToolPromptGuidance,
+  type ToolWithSharedPromptGuidance,
+} from "../tool-prompt-guidance.js";
 import type { EmbeddedSandboxInfo } from "./types.js";
 import type { ReasoningLevel, ThinkLevel } from "./utils.js";
 
@@ -59,7 +62,7 @@ export function buildEmbeddedSystemPrompt(params: {
   };
   messageToolHints?: string[];
   sandboxInfo?: EmbeddedSandboxInfo;
-  tools: AgentTool[];
+  tools: ToolWithSharedPromptGuidance[];
   modelAliasLines: string[];
   userTimezone: string;
   userTime?: string;
@@ -71,7 +74,7 @@ export function buildEmbeddedSystemPrompt(params: {
   memoryCitationsMode?: MemoryCitationsMode;
   promptContribution?: ProviderSystemPromptContribution;
 }): string {
-  return buildAgentSystemPrompt({
+  const systemPrompt = buildAgentSystemPrompt({
     workspaceDir: params.workspaceDir,
     defaultThinkLevel: params.defaultThinkLevel,
     reasoningLevel: params.reasoningLevel,
@@ -109,6 +112,7 @@ export function buildEmbeddedSystemPrompt(params: {
     memoryCitationsMode: params.memoryCitationsMode,
     promptContribution: params.promptContribution,
   });
+  return appendToolPromptGuidance(systemPrompt, params.tools);
 }
 
 export function createSystemPromptOverride(

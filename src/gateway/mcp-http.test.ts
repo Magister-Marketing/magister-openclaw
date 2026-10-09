@@ -4,6 +4,7 @@ import { getFreePortBlockWithPermissionFallback } from "../test-utils/ports.js";
 type MockGatewayTool = {
   name: string;
   description: string;
+  sharedPromptGuidance?: string;
   parameters: Record<string, unknown>;
   ownerOnly?: boolean;
   execute: (...args: unknown[]) => Promise<{ content: Array<{ type: string; text: string }> }>;
@@ -119,6 +120,9 @@ afterEach(async () => {
 
 describe("mcp loopback server", () => {
   it("passes session, account, and message channel headers into shared tool resolution", async () => {
+    const resolved = resolveGatewayScopedToolsMock();
+    resolved.tools[0].sharedPromptGuidance = "Shared permission instructions.";
+    resolveGatewayScopedToolsMock.mockReturnValue(resolved);
     const port = await getFreePortBlockWithPermissionFallback({
       offsets: [0],
       fallbackBase: 53_000,
@@ -139,6 +143,12 @@ describe("mcp loopback server", () => {
     });
 
     expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      result: { tools: Array<{ description: string }> };
+    };
+    expect(payload.result.tools[0].description).toBe(
+      "send a message\n\nShared permission instructions.",
+    );
     expect(resolveGatewayScopedToolsMock).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionKey: "agent:main:telegram:group:chat123",

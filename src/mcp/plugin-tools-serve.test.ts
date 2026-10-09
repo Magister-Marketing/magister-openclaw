@@ -59,6 +59,23 @@ afterEach(() => {
 });
 
 describe("plugin tools MCP server", () => {
+  it("includes shared tool instructions for clients without an embedded system prompt", async () => {
+    const handlers = createPluginToolsMcpHandlers([
+      {
+        name: "publish",
+        label: "Publish",
+        description: "Publish content.",
+        sharedPromptGuidance: "Follow the complete approval procedure.",
+        parameters: { type: "object", properties: {} },
+        execute: vi.fn(),
+      },
+    ]);
+    const result = await handlers.listTools();
+    expect(result.tools[0]?.description).toBe(
+      "Publish content.\n\nFollow the complete approval procedure.",
+    );
+  });
+
   it("routes logs to stderr before resolving tools for stdio", async () => {
     const { servePluginToolsMcp } = await import("./plugin-tools-serve.js");
     resolvePluginToolsMock.mockReturnValue([

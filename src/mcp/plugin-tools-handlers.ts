@@ -38,7 +38,7 @@ export function createPluginToolsMcpHandlers(tools: AnyAgentTool[]) {
     listTools: async () => ({
       tools: wrappedTools.map((tool) => ({
         name: tool.name,
-        description: tool.description ?? "",
+        description: toolDescriptionWithSharedGuidance(tool) ?? "",
         inputSchema: resolveJsonSchemaForTool(tool),
       })),
     }),
@@ -70,3 +70,4 @@ export function createPluginToolsMcpHandlers(tools: AnyAgentTool[]) {
     },
   };
 }
+import { toolDescriptionWithSharedGuidance } from "../agents/tool-prompt-guidance.js";

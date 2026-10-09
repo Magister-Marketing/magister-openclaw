@@ -581,6 +581,9 @@ function createCachedDescriptorPluginTool(params: {
   if (params.descriptor.displaySummary) {
     tool.displaySummary = params.descriptor.displaySummary;
   }
+  if (params.descriptor.sharedPromptGuidance) {
+    tool.sharedPromptGuidance = params.descriptor.sharedPromptGuidance;
+  }
   if (params.descriptor.ownerOnly === true) {
     tool.ownerOnly = true;
   }
