@@ -10,6 +10,7 @@ Docs: https://docs.openclaw.ai
 
 ### Changes
 
+- Agents/data answers: allow one bounded tool-free continuation of a buffered response that reaches its output limit, preserving its original text and accounting for rejected calls; retain the selected answer's output-limit reason in streaming and nonstreaming HTTP responses.
 - Agents/draft verification: add default-off, request-grounded JSON, exact-list-count, and fixed-allocation checks with observation mode, one bounded tool-free correction for eligible text turns, and internal execution receipts. Unsupported semantic requirements remain unchecked; no benchmark-specific rules are included. Preserve attempt-specific evidence across retries and classify cancellation as aborted rather than successful completion.
 - Magister/reliability: expose authorized cloud Asset reads to hosted agents, preserve final HTTP chat payloads and terminal errors, resolve browser target aliases without weakening tab binding, and label cached plan context as unverified.
 

@@ -53,6 +53,11 @@ const MAX_EVIDENCE_IN_REPAIR_CHARS = 20_000;
 // mechanical stage, so it is bounded tighter than a correction.
 const MAX_LABEL_PASS_MS = 60_000;
 const MAX_LABEL_PASS_TOKENS = 4_000;
+// One continuation of a buffered data answer, within the ordinary per-call
+// allowance. It cannot execute tools or re-enter the agent's retry loop.
+const MAX_CONTINUATION_MS = 90_000;
+const MAX_CONTINUATION_TOKENS = 16_384;
+const CONTINUATION_ANCHOR_CHARS = 120;
 
 function addUsage(a: Usage | undefined, b: Usage): Usage {
   if (!a) {
@@ -509,23 +514,6 @@ export class DraftVerificationStream {
           this.receipt.stop_reason = "aborted";
           return;
         }
-        const figuresRepair =
-          this.toolTurnChecks &&
-          this.receipt.checks.some(
-            (check) => check.kind === "figures_grounded" && check.status === "fail",
-          );
-        const repairCeilingMs = figuresRepair ? MAX_FIGURES_REPAIR_MS : MAX_REPAIR_MS;
-        const repairMs = Math.min(
-          repairCeilingMs,
-          this.options.maxRepairMs ?? repairCeilingMs,
-          override.maxRepairMs ?? repairCeilingMs,
-          this.options.deadline - Date.now(),
-        );
-        const repairable =
-          original.stopReason === "stop" &&
-          !(this.hadToolActivity && !this.toolTurnChecks) &&
-          Number.isFinite(repairMs) &&
-          repairMs > 1_000;
         // One tool-free call on INNER (never this wrapper or AgentSession.prompt:
         // no mutation replay/retry loop), with the draft so far in its history.
         const toolFreeCall = async (
@@ -574,6 +562,78 @@ export class DraftVerificationStream {
             block.type === "text" ? { ...block, text } : block,
           ),
         });
+        const continuationMs = Math.min(
+          MAX_CONTINUATION_MS,
+          this.options.maxRepairMs ?? MAX_CONTINUATION_MS,
+          override.maxRepairMs ?? MAX_CONTINUATION_MS,
+          this.options.deadline - Date.now(),
+        );
+        const partialText = boundedText(original);
+        if (
+          this.toolTurnChecks &&
+          original.stopReason === "length" &&
+          this.receipt.ceiling_retried !== true &&
+          partialText?.trim() &&
+          Number.isFinite(continuationMs) &&
+          continuationMs > 5_000
+        ) {
+          this.receipt.ceiling_retried = true;
+          const anchor = partialText.slice(-CONTINUATION_ANCHOR_CHARS);
+          let continued = false;
+          try {
+            const continuation = await toolFreeCall(
+              original,
+              "Your draft reached its output limit. Finish the requested answer concisely using only the information already available. " +
+                "Do not restart, summarize, or repeat earlier sections. Tools are unavailable. " +
+                "Begin your response by copying the following exact final characters of the draft, then continue directly from its last character, finishing any partial word or sentence. " +
+                "Return the anchor and continuation only, without a preamble or code fence.\n\n" +
+                anchor,
+              MAX_CONTINUATION_TOKENS,
+              continuationMs,
+            );
+            this.additionalUsage = addUsage(this.additionalUsage, continuation.usage);
+            const text = boundedText(continuation);
+            if (
+              !parentAborted() &&
+              continuation.stopReason === "stop" &&
+              text?.startsWith(anchor)
+            ) {
+              const suffix = text.slice(anchor.length);
+              const repeatsStart = suffix.trimStart().startsWith(partialText.slice(0, 80));
+              if (
+                suffix.trim() &&
+                !repeatsStart &&
+                partialText.length + suffix.length <= MAX_DRAFT_CHARS
+              ) {
+                original = { ...withText(original, partialText + suffix), stopReason: "stop" };
+                this.observe(original, evidence);
+                continued = true;
+              }
+            }
+          } catch {
+            // Keep the partial draft and its actual terminal reason. Cancellation
+            // is handled by finish(); no recursive continuation is permitted.
+          }
+          draftLogger.warn("output-limit continuation finished", { continued });
+        }
+
+        const figuresRepair =
+          this.toolTurnChecks &&
+          this.receipt.checks.some(
+            (check) => check.kind === "figures_grounded" && check.status === "fail",
+          );
+        const repairCeilingMs = figuresRepair ? MAX_FIGURES_REPAIR_MS : MAX_REPAIR_MS;
+        const repairMs = Math.min(
+          repairCeilingMs,
+          this.options.maxRepairMs ?? repairCeilingMs,
+          override.maxRepairMs ?? repairCeilingMs,
+          this.options.deadline - Date.now(),
+        );
+        const repairable =
+          original.stopReason === "stop" &&
+          !(this.hadToolActivity && !this.toolTurnChecks) &&
+          Number.isFinite(repairMs) &&
+          repairMs > 1_000;
         const finish = () => {
           if (parentAborted()) {
             this.receipt.stop_reason = "aborted";
