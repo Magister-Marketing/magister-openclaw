@@ -6,6 +6,7 @@ describe("realtime tool declarations", () => {
   it("preserves shared instructions through schema normalization", () => {
     const tool = {
       name: "publish",
+      label: "Publish",
       description: "Publish content.",
       sharedPromptGuidance: "Shared approval instructions.",
       parameters: { type: "object", properties: {} },

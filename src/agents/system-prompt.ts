@@ -219,11 +219,11 @@ function buildSkillsCatalogSection(params: { skillsCatalogPrompt?: string; readT
   }
   return [
     "## Skills (mandatory)",
-    "Skills are how Magister does marketing work. Each SKILL.md holds the operating rules, checklists, and quality bar for one kind of task; <available_skills> below lists every installed skill with its description and location.",
+    "Skills are how Magister does marketing work. Each SKILL.md holds the operating rules, checklists, and quality bar for one kind of task; The catalog below lists every installed skill with its description and location.",
     `- Before producing any deliverable — copy, headlines, emails, landing pages, ads, plans, briefs, analyses, audits — read the SKILL.md of the skill that covers it with \`${params.readToolName}\`, then follow it. If several apply, read the one or two most specific (at most three).`,
     "- Read a partially relevant skill rather than skip it. Skip only when no skill is relevant: a quick factual answer, or a small edit to work you produced under that skill earlier in this session.",
     "- Integration skills (`magister-*`) also tell you how to operate a connected tool; read the skill before using the tool.",
-    "- You MUST use the exact <location> value from <available_skills>; never guess, fabricate, or hard-code a skill file path.",
+    "- You MUST use the exact location from the skill catalog; never guess, fabricate, or hard-code a skill file path.",
     "- When a skill drives external API writes, assume rate limits: prefer fewer larger writes, avoid tight one-item loops, serialize bursts when possible, and respect 429/Retry-After.",
     trimmed,
     "",

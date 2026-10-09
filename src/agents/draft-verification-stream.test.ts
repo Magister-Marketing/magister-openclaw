@@ -719,7 +719,9 @@ describe("figures grounded on pasted-data turns", () => {
       streamFn: verification.wrap(inner),
     });
     const events: AgentEvent[] = [];
-    agent.subscribe((event) => events.push(event));
+    agent.subscribe((event) => {
+      events.push(event);
+    });
     await agent.prompt(pastePrompt);
     const persisted = agent.state.messages.filter((m) => m.role === "assistant");
     expect(persisted).toHaveLength(1);
