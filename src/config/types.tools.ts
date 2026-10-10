@@ -187,6 +187,12 @@ export type ToolRuntimeResilienceConfig = {
 export type DraftVerificationConfig = {
   /** Request-grounded draft checks. Repair is one tool-free attempt; default: off. */
   mode?: "off" | "shadow" | "repair";
+  /**
+   * Mode for turns that carry a pasted-data file, where the figures check
+   * applies: every figure the reply states must appear in a tool output or
+   * the request. Default: `mode`.
+   */
+  pastedData?: "off" | "shadow" | "repair";
 };
 
 export type ToolLoopDetectionConfig = {

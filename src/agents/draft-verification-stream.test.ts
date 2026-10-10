@@ -9,7 +9,7 @@ import {
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DraftVerificationStream } from "./draft-verification-stream.js";
-import { MAX_DRAFT_CHARS } from "./draft-verification.js";
+import { MAX_DRAFT_CHARS, PASTE_NOTE_MARKER } from "./draft-verification.js";
 
 const model: Model<"openai-completions"> = {
   api: "openai-completions",
@@ -579,5 +579,134 @@ describe("pre-persistence draft stream selection", () => {
     });
     expect(verification.receipt.stop_reason).toBeNull();
     expect(verification.lastProviderUsage).toBeUndefined();
+  });
+});
+
+describe("figures grounded on pasted-data turns", () => {
+  const pastePrompt = `${PASTE_NOTE_MARKER} inbox/ledger.csv (300 lines, 21.0 KB); the same content is inline below]\n\nReview the ledger.\n\nadset,spend\npb-video,1758.80`;
+  const output = "adset,spend_28d,per_week,per_day\npb-video,1758.80,439.70,62.81\nrows,98";
+  const exec = {
+    ...message("Let me compute."),
+    stopReason: "toolUse" as const,
+    content: [
+      { type: "text" as const, text: "Let me compute." },
+      {
+        type: "toolCall" as const,
+        id: "call-1",
+        name: "exec",
+        arguments: { command: "python3 a.py" },
+      },
+    ],
+  };
+  const toolTurnContext: Context = {
+    systemPrompt: "Keep supported facts intact.",
+    messages: [
+      { role: "user", content: pastePrompt, timestamp: 1 },
+      exec,
+      {
+        role: "toolResult",
+        toolCallId: "call-1",
+        toolName: "exec",
+        content: [{ type: "text", text: output }],
+        isError: false,
+        timestamp: 3,
+      },
+    ],
+    tools: [{ name: "exec", description: "Run a command", parameters: Type.Object({}) }],
+  };
+
+  it("repairs a figure divided in prose on a turn that used tools, without tool blocks in the correction", async () => {
+    const original = message(
+      "pb-video spent $1,758.80 in 28 days: about $251 per day. Pause it.",
+      10,
+    );
+    const correction = message(
+      "pb-video spent $1,758.80 in 28 days: $62.81 per day (script output). Pause it.",
+      6,
+    );
+    const inner = vi
+      .fn<StreamFn>()
+      .mockImplementationOnce(() => completed(exec).stream)
+      .mockImplementationOnce(() => completed(original).stream)
+      .mockImplementationOnce(() => completed(correction).stream);
+    const verification = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
+    const wrapped = verification.wrap(inner);
+    const first = await collect(
+      await wrapped(model, { ...toolTurnContext, messages: toolTurnContext.messages.slice(0, 1) }),
+    );
+    expect(first.result).toBe(exec);
+    const result = await collect(await wrapped(model, toolTurnContext, { maxTokens: 16_000 }));
+    expect(result.result).toBe(correction);
+    expect(verification.receipt).toMatchObject({
+      outcome: "repaired",
+      repair_attempts: 1,
+      checks: [{ kind: "figures_grounded", status: "pass" }],
+    });
+    const [, repairContext, repairOptions] = inner.mock.calls[2];
+    expect(repairContext.tools).toEqual([]);
+    expect(repairContext.messages.some((m) => m.role === "toolResult")).toBe(false);
+    expect(
+      repairContext.messages.some(
+        (m) => m.role === "assistant" && m.content.some((block) => block.type === "toolCall"),
+      ),
+    ).toBe(false);
+    const asText = JSON.stringify(repairContext.messages);
+    expect(asText).toContain("[exec output]");
+    expect(asText).toContain("per_day");
+    expect(asText).toContain("(ran exec)");
+    const instruction = repairContext.messages.at(-1);
+    expect(instruction?.role).toBe("user");
+    expect(String(instruction?.content)).toContain("neither a tool output nor the request: $251");
+    expect(repairOptions).toMatchObject({
+      toolChoice: "none",
+      maxTokens: 12_000,
+      timeoutMs: 150_000,
+    });
+    expect(toolTurnContext.messages).toHaveLength(3);
+  });
+
+  it("passes a draft that quotes the script's figures and makes no correction call", async () => {
+    const original = message(
+      "pb-video spent $1,758.80 in 28 days, about $440 a week ($439.70). Pause it.",
+    );
+    const inner = vi.fn<StreamFn>(() => completed(original).stream);
+    const verification = state({ prompt: pastePrompt });
+    verification.hadToolActivity = true;
+    const result = await collect(await verification.wrap(inner)(model, toolTurnContext));
+    expect(result.result).toBe(original);
+    expect(inner).toHaveBeenCalledTimes(1);
+    expect(verification.receipt).toMatchObject({
+      outcome: "passed",
+      repair_attempts: 0,
+      checks: [{ kind: "figures_grounded", status: "pass" }],
+    });
+  });
+
+  it("releases the original when the correction still states an ungrounded figure", async () => {
+    const original = message("About $251 per day.");
+    const stillWrong = message("About $251 a day, or $1,759 a week.");
+    const inner = vi
+      .fn<StreamFn>()
+      .mockImplementationOnce(() => completed(original).stream)
+      .mockImplementationOnce(() => completed(stillWrong).stream);
+    const verification = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
+    verification.hadToolActivity = true;
+    const result = await collect(await verification.wrap(inner)(model, toolTurnContext));
+    expect(result.result).toBe(original);
+    expect(verification.receipt).toMatchObject({ outcome: "repair_failed", repair_attempts: 1 });
+    expect(verification.takeAdditionalUsage()).toBe(stillWrong.usage);
+  });
+
+  it("stays shadow-only without a model call when the mode is shadow", async () => {
+    const original = message("About $251 per day.");
+    const inner = vi.fn<StreamFn>(() => completed(original).stream);
+    const verification = state({ mode: "shadow", prompt: pastePrompt });
+    const result = await collect(await verification.wrap(inner)(model, toolTurnContext));
+    expect(result.result).toBe(original);
+    expect(inner).toHaveBeenCalledTimes(1);
+    expect(verification.receipt).toMatchObject({
+      outcome: "failed",
+      checks: [{ kind: "figures_grounded", status: "fail" }],
+    });
   });
 });

@@ -2776,7 +2776,10 @@ export async function runEmbeddedAttempt(
                 !shouldUseWebSocketTransport &&
                 !googlePromptCacheStreamFn &&
                 !effectiveAgentTransport.startsWith("websocket"),
-              maxRepairMs: idleTimeoutMs > 0 ? Math.min(30_000, idleTimeoutMs - 1_000) : 30_000,
+              // The wrapper caps each kind of correction itself (30 s for a
+              // request-side fix, longer for a pasted-data analysis); the idle
+              // watchdog is the only bound that belongs here.
+              maxRepairMs: idleTimeoutMs > 0 ? idleTimeoutMs - 1_000 : undefined,
             },
           );
         }

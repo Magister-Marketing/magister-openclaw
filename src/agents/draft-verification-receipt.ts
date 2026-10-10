@@ -10,12 +10,18 @@ const receiptSchema = z
       .array(
         z
           .object({
-            kind: z.enum(["json_only", "bullet_count", "allocation_count", "allocation_total"]),
+            kind: z.enum([
+              "json_only",
+              "bullet_count",
+              "allocation_count",
+              "allocation_total",
+              "figures_grounded",
+            ]),
             status: z.enum(["pass", "fail", "unknown"]),
           })
           .strict(),
       )
-      .max(4),
+      .max(5),
     repair_attempts: z.union([z.literal(0), z.literal(1)]),
     stop_reason: z.enum(DRAFT_STOP_REASONS).nullable(),
     ceiling_retried: z.null(),
