@@ -2576,28 +2576,6 @@
       "transport_modes": ["json_v1"]
     },
     {
-      "capability_id": "context_dev",
-      "connection_slug": null,
-      "delegation_safe_tools": [],
-      "hosted_agent_tools": [
-        {
-          "action": "integration_read",
-          "approval_policy": "none",
-          "idempotency_policy": "safe_retry",
-          "side_effect": "none",
-          "tool_name": "magister_integration_read"
-        }
-      ],
-      "mcp_tool_actions": ["proxy:context_dev"],
-      "minimum_native_action_registry_revision": "3d17fd6813b556eccc160d29aa775860434673e8d28dbc1480a7847725fa90ba",
-      "proxy_services": ["context_dev"],
-      "remediation": null,
-      "rollout_service": null,
-      "skill_name": "magister-web-context",
-      "status": "typed",
-      "transport_modes": ["json_v1"]
-    },
-    {
       "capability_id": "creatify",
       "connection_slug": "creatify",
       "delegation_safe_tools": [],
@@ -3140,6 +3118,42 @@
       "transport_modes": ["json_v1"]
     },
     {
+      "capability_id": "monid",
+      "connection_slug": "monid",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:monid"],
+      "minimum_native_action_registry_revision": "3d17fd6813b556eccc160d29aa775860434673e8d28dbc1480a7847725fa90ba",
+      "proxy_services": ["monid"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-monid",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
       "capability_id": "pipedrive",
       "connection_slug": "pipedrive",
       "delegation_safe_tools": [],
@@ -3230,28 +3244,6 @@
       "remediation": null,
       "rollout_service": null,
       "skill_name": "magister-social-research",
-      "status": "typed",
-      "transport_modes": ["json_v1"]
-    },
-    {
-      "capability_id": "supadata",
-      "connection_slug": null,
-      "delegation_safe_tools": [],
-      "hosted_agent_tools": [
-        {
-          "action": "integration_read",
-          "approval_policy": "none",
-          "idempotency_policy": "safe_retry",
-          "side_effect": "none",
-          "tool_name": "magister_integration_read"
-        }
-      ],
-      "mcp_tool_actions": ["proxy:supadata", "call_integration_api"],
-      "minimum_native_action_registry_revision": "3d17fd6813b556eccc160d29aa775860434673e8d28dbc1480a7847725fa90ba",
-      "proxy_services": ["supadata"],
-      "remediation": null,
-      "rollout_service": null,
-      "skill_name": "magister-supadata",
       "status": "typed",
       "transport_modes": ["json_v1"]
     },
@@ -4057,6 +4049,6 @@
     }
   ],
   "native_action_registry_revision": "3d17fd6813b556eccc160d29aa775860434673e8d28dbc1480a7847725fa90ba",
-  "registry_revision": "8afda0a856558f35abe31d50b90fffc02aa3d258c0505263ac136fb39c4daef7",
+  "registry_revision": "e312b3e3345e0bd0823a677eccffa829937660e6f055af853cb6c734721cc994",
   "schema_version": 1
 }
