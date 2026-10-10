@@ -31,7 +31,7 @@ describe("buildAttemptSystemPrompt", () => {
           node: "v22.0.0",
           model: "openai/gpt-5.5",
         },
-        tools: [],
+        tools: [{ name: "publish", sharedPromptGuidance: "Shared permission procedure." } as never],
         modelAliasLines: [],
         userTimezone: "UTC",
         bootstrapMode: "full",
@@ -51,6 +51,7 @@ describe("buildAttemptSystemPrompt", () => {
     });
 
     expect(result.systemPrompt).toContain("Custom override prompt.");
+    expect(result.systemPrompt).toContain("Shared permission procedure.");
     expect(result.systemPrompt).toContain("## Bootstrap Pending");
     expect(result.systemPrompt).toContain("BOOTSTRAP.md is included below in Project Context");
     expect(result.systemPrompt).toContain("## Bootstrap Context Notice");

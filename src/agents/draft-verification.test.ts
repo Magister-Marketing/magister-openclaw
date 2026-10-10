@@ -210,6 +210,48 @@ describe("figures grounded in tool output", () => {
     expect(ungroundedFigures("$72.81/day ($1,758.80 ÷ 28).", evidence)).toEqual(["$72.81"]);
   });
 
+  it("checks a hedged rate that compares measured figures, and leaves a hedged proposal alone", () => {
+    const evidence = [output, "rt-cart,1389.13,380,18"];
+    // 2026-10-06 ledger r1: the draft's ratio was 31%; $1,758.80 ÷ $1,389.13 is 127%.
+    const comparison =
+      "The $1,758.80 spent on pb-video would be about 31% on top of rt-cart's final-28-day spend ($1,389.13) if moved there.";
+    expect(ungroundedFigures(comparison, evidence)).toEqual(["31%"]);
+    // 116 is a conversion count in the output: a bare count grounds no rate.
+    expect(ungroundedFigures(comparison.replace("31%", "116%"), evidence)).toEqual(["116%"]);
+    // The right rate is a ratio of the sentence's own figures, shown or not.
+    expect(ungroundedFigures(comparison.replace("31%", "127%"), evidence)).toEqual([]);
+    expect(
+      ungroundedFigures(
+        "Moving pb-video's $1,758.80 to rt-cart would add about 127% ($1,758.80 ÷ $1,389.13) to its spend.",
+        evidence,
+      ),
+    ).toEqual([]);
+    // A hedged rate the script printed, rounded further, is grounded.
+    expect(
+      ungroundedFigures("rt-lookalike refunded roughly 22% of its 116 conversions.", evidence),
+    ).toEqual([]);
+    // A hedged proposal in a sentence with no measured figure is not a finding.
+    expect(
+      ungroundedFigures(
+        "Cut pb-interest by about 25% for 14 days and hold ROAS near 1.5x.",
+        evidence,
+      ),
+    ).toEqual([]);
+    // A whole-number rate the evidence itself marks as a rate grounds the
+    // hedged figure; the same digits as a bare count or a different rate do not.
+    const refunded = "Spend was $1,758.80 with about 22% refunded.";
+    expect(ungroundedFigures(refunded, ["spend,1758.80\nrefund rate 22%"])).toEqual([]);
+    expect(ungroundedFigures(refunded, ["spend,1758.80\nrefund rate 23%"])).toEqual(["22%"]);
+    expect(ungroundedFigures(refunded, ["spend,1758.80\nrefunds,22"])).toEqual(["22%"]);
+    expect(
+      ungroundedFigures("ROAS held near roughly 1.5x on $1,758.80.", ["spend,1758.80\nroas 1.5x"]),
+    ).toEqual([]);
+  });
+
+  it("asks the label pass to check sign and direction, not only labels", () => {
+    expect(figuresLabelInstruction()).toContain("sign and direction");
+  });
+
   it("checks the draft against evidence and stays unknown without any", () => {
     const contract = deriveDraftContract(request);
     expect(checkDraft(contract, "Spent $1,759.", [output])).toEqual([

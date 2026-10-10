@@ -35,7 +35,7 @@ export type DraftVerificationReceipt = {
   checks: DraftCheck[];
   repair_attempts: 0 | 1 | 2;
   stop_reason: DraftStopReason | null;
-  ceiling_retried: null;
+  ceiling_retried: boolean | null;
   skill_reads: null;
 };
 
@@ -252,6 +252,99 @@ function figuresIn(text: string): Figure[] {
   return figures;
 }
 
+// A hedged rate or multiplier: "about 31%", "roughly 1.3x", "≈ 27%".
+const HEDGED_RATE_RE =
+  /(?:\b(?:about|approximately|roughly|around|nearly|almost|close\s+to)\s+|[~≈]\s*)([$€£])?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(%|x)(?!\w|\.\d)/gi;
+
+/**
+ * Values the evidence prints as rates: a fraction (as itself and as the
+ * percentage it expresses), or a whole number the evidence itself marks with
+ * % or x ("refund rate 22%"). A count or a calendar day that happens to share
+ * two digits with a hedged rate is not one of them.
+ */
+function printedRateValues(evidence: readonly string[]): Set<string> {
+  const values = new Set<string>();
+  for (const text of evidence) {
+    for (const figure of figuresIn(text)) {
+      const marked = figure.percent || figure.text.endsWith("x");
+      if (figure.decimals === 0 && !marked) {
+        continue;
+      }
+      for (const value of marked ? [figure.value] : [figure.value, figure.value * 100]) {
+        for (let decimals = 0; decimals <= 4; decimals += 1) {
+          values.add(value.toFixed(decimals));
+        }
+      }
+    }
+  }
+  return values;
+}
+
+/** Whether ``rate`` is, at its own precision, a ratio of two of ``figures``. */
+function ratioOfSentenceFigures(rate: Figure, figures: readonly Figure[]): boolean {
+  const stated = rate.percent ? rate.value / 100 : rate.value;
+  const tolerance = 1.0001 * 10 ** -rate.decimals * (rate.percent ? 0.01 : 1);
+  for (let i = 0; i < figures.length; i += 1) {
+    for (let j = i + 1; j < figures.length; j += 1) {
+      const a = figures[i].value;
+      const b = figures[j].value;
+      if (a <= 0 || b <= 0) {
+        continue;
+      }
+      const candidates = [a / b, b / a, Math.abs(a - b) / a, Math.abs(a - b) / b, a / (a + b)];
+      if (candidates.some((value) => Math.abs(value - stated) <= tolerance)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * A rate a report hedges in a sentence that also states a measured figure is
+ * arithmetic it did in prose, not a round proposal, however few digits it
+ * carries: "the $1,758.80 spent on pb-video would be about 31% on top of
+ * rt-cart's $1,389.13" (2026-10-06; the ratio is 127%). Such a rate is
+ * grounded only by a rate the script printed, by arithmetic the draft shows,
+ * or by a ratio of the figures in its own sentence; matching a bare count
+ * somewhere in a 784-row export proves nothing. A hedged rate in a sentence
+ * with no measured figure ("cut spend by about 25%") stays a proposal, and a
+ * one-digit rate is too coarse to check. Returns the rates checked and, of
+ * those, the ones nothing grounds.
+ */
+function hedgedComparisonRates(
+  prose: string,
+  evidence: readonly string[],
+  derived: ReadonlySet<string>,
+): { checked: Set<string>; ungrounded: Set<string> } {
+  const checked = new Set<string>();
+  const ungrounded = new Set<string>();
+  let printed: Set<string> | undefined;
+  for (const sentence of prose.split(/(?<=[.!?])\s+|\n+/)) {
+    const measured = figuresIn(sentence).filter(isReportedFigure);
+    if (measured.length === 0) {
+      continue;
+    }
+    for (const match of sentence.matchAll(HEDGED_RATE_RE)) {
+      const [, currency = "", whole, fraction = "", suffix] = match;
+      const rate = figuresIn(`${currency}${whole}${fraction}${suffix}`)[0];
+      if (!rate || significantDigits(rate) < 2) {
+        continue;
+      }
+      checked.add(rate.text);
+      printed ??= printedRateValues(evidence);
+      if (
+        !statesValue(printed, rate.value, rate.decimals) &&
+        !statesValue(derived, rate.value, rate.decimals) &&
+        !ratioOfSentenceFigures(rate, measured)
+      ) {
+        ungrounded.add(rate.text);
+      }
+    }
+  }
+  return { checked, ungrounded };
+}
+
 /**
  * Every value the evidence states, at the precisions a report may round it
  * to; a ratio also counts as the percentage it expresses.
@@ -344,7 +437,7 @@ function evaluate(operands: number[], operators: string[]): number {
   return total;
 }
 
-function statesValue(known: Set<string>, value: number, decimals: number): boolean {
+function statesValue(known: ReadonlySet<string>, value: number, decimals: number): boolean {
   return known.has(value.toFixed(Math.min(decimals, 4)));
 }
 
@@ -434,15 +527,22 @@ function groundShownArithmetic(prose: string, known: Set<string>): void {
 export function ungroundedFigures(draft: string, evidence: readonly string[]): string[] {
   const known = evidenceValues(evidence);
   const prose = reportProse(draft);
+  const printed = new Set(known);
   groundShownArithmetic(prose, known);
+  const derived = new Set([...known].filter((value) => !printed.has(value)));
+  const hedged = hedgedComparisonRates(prose, evidence, derived);
   const flagged: string[] = [];
   const seen = new Set<string>();
   for (const figure of figuresIn(prose)) {
-    if (!isReportedFigure(figure) || seen.has(figure.text)) {
+    if ((!isReportedFigure(figure) && !hedged.checked.has(figure.text)) || seen.has(figure.text)) {
       continue;
     }
     seen.add(figure.text);
-    if (!statesValue(known, figure.value, figure.decimals)) {
+    if (hedged.checked.has(figure.text)) {
+      if (hedged.ungrounded.has(figure.text)) {
+        flagged.push(figure.text);
+      }
+    } else if (!statesValue(known, figure.value, figure.decimals)) {
       flagged.push(figure.text);
     }
   }
@@ -643,7 +743,7 @@ export function figuresRepairInstruction(ungrounded: readonly string[]): string 
  */
 export function figuresLabelInstruction(): string {
   return [
-    'Check every figure in your draft against the tool output it comes from: the label it is stated under, the base of every share or rate, the window or period it covers, and the set a range or "every other" statement covers.',
+    'Check every figure in your draft against the tool output it comes from: the label it is stated under, its sign and direction (a negative value or a decline is never a gain), the base of every share or rate, the window or period it covers, and the set a range or "every other" statement covers.',
     "Also check every sentence that names a cause: where the tool output shows only a movement (frequency up, reach down, a rate falling) and the sentence states the cause as fact (the audience is exhausted, the creative is fatigued, the same people are seeing the ad more often), the sentence must state the observation and label the cause a hypothesis.",
     "Return only a JSON array of edits, no prose and no code fence, for the sentences or table rows where a figure is stated against the wrong label, base, window, or set, or a cause is stated as fact:",
     '[{"find": "<the exact sentence or table row from the draft, copied character for character>", "replace": "<that text corrected: the printed figure for the stated referent, the referent the figure belongs to, or the observation with the cause labelled a hypothesis>"}]',

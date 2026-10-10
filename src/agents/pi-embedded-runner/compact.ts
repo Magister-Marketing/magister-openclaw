@@ -103,6 +103,7 @@ import {
   resolveSkillsPromptForRun,
 } from "../skills.js";
 import { resolveSystemPromptOverride } from "../system-prompt-override.js";
+import { appendToolPromptGuidance } from "../tool-prompt-guidance.js";
 import {
   classifyCompactionReason,
   formatUnknownCompactionReasonDetail,
@@ -854,48 +855,50 @@ async function compactEmbeddedPiSessionDirectOnce(
     const promptContribution =
       runtimePlan.prompt.resolveSystemPromptContribution(promptContributionContext);
     const buildSystemPromptOverride = (defaultThinkLevel: ThinkLevel) => {
+      const configuredSystemPrompt = resolveSystemPromptOverride({
+        config: params.config,
+        agentId: sessionAgentId,
+      });
       const builtSystemPrompt =
-        resolveSystemPromptOverride({
-          config: params.config,
-          agentId: sessionAgentId,
-        }) ??
-        buildEmbeddedSystemPrompt({
-          workspaceDir: effectiveWorkspace,
-          defaultThinkLevel,
-          reasoningLevel: params.reasoningLevel ?? "off",
-          extraSystemPrompt: params.extraSystemPrompt,
-          ownerNumbers: params.ownerNumbers,
-          ownerDisplay: ownerDisplay.ownerDisplay,
-          ownerDisplaySecret: ownerDisplay.ownerDisplaySecret,
-          reasoningTagHint,
-          heartbeatPrompt: resolveHeartbeatPromptForSystemPrompt({
-            config: params.config,
-            agentId: sessionAgentId,
-            defaultAgentId,
-          }),
-          skillsPrompt,
-          docsPath: openClawReferences.docsPath ?? undefined,
-          sourcePath: openClawReferences.sourcePath ?? undefined,
-          ttsHint,
-          promptMode,
-          sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
-          acpEnabled: isAcpRuntimeSpawnAvailable({
-            config: params.config,
-            sandboxed: sandboxInfo?.enabled === true,
-          }),
-          runtimeInfo,
-          reactionGuidance,
-          messageToolHints,
-          sandboxInfo,
-          tools: effectiveTools,
-          modelAliasLines: buildModelAliasLines(params.config),
-          userTimezone,
-          userTime,
-          userTimeFormat,
-          contextFiles,
-          memoryCitationsMode: params.config?.memory?.citations,
-          promptContribution,
-        });
+        configuredSystemPrompt != null
+          ? appendToolPromptGuidance(configuredSystemPrompt, effectiveTools)
+          : buildEmbeddedSystemPrompt({
+              workspaceDir: effectiveWorkspace,
+              defaultThinkLevel,
+              reasoningLevel: params.reasoningLevel ?? "off",
+              extraSystemPrompt: params.extraSystemPrompt,
+              ownerNumbers: params.ownerNumbers,
+              ownerDisplay: ownerDisplay.ownerDisplay,
+              ownerDisplaySecret: ownerDisplay.ownerDisplaySecret,
+              reasoningTagHint,
+              heartbeatPrompt: resolveHeartbeatPromptForSystemPrompt({
+                config: params.config,
+                agentId: sessionAgentId,
+                defaultAgentId,
+              }),
+              skillsPrompt,
+              docsPath: openClawReferences.docsPath ?? undefined,
+              sourcePath: openClawReferences.sourcePath ?? undefined,
+              ttsHint,
+              promptMode,
+              sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
+              acpEnabled: isAcpRuntimeSpawnAvailable({
+                config: params.config,
+                sandboxed: sandboxInfo?.enabled === true,
+              }),
+              runtimeInfo,
+              reactionGuidance,
+              messageToolHints,
+              sandboxInfo,
+              tools: effectiveTools,
+              modelAliasLines: buildModelAliasLines(params.config),
+              userTimezone,
+              userTime,
+              userTimeFormat,
+              contextFiles,
+              memoryCitationsMode: params.config?.memory?.citations,
+              promptContribution,
+            });
       return createSystemPromptOverride(
         transformProviderSystemPrompt({
           provider,

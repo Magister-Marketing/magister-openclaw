@@ -245,6 +245,14 @@ register(api) {
 }
 ```
 
+Tools can optionally set `sharedPromptGuidance` to instructions shared by a
+tool family. Use identical text on each applicable tool: the embedded runner
+includes it once in the stable system prompt, after filtering tool availability.
+Keep each tool's purpose and argument guidance in its `description`. Cached
+descriptors preserve the shared instructions; external MCP clients receive them
+in each tool's description because they do not receive the embedded prompt.
+This additive field is optional, so existing tools keep their current behavior.
+
 Every tool registered with `api.registerTool(...)` must also be declared in the
 plugin manifest:
 

@@ -90,6 +90,22 @@ describe("paste note plumbing", () => {
     expect(bodies.transcriptCommandBody).toBe(brief);
   });
 
+  it("leaves a long heartbeat prompt without the brief note", () => {
+    const heartbeat =
+      `Check the queues.\n${"Then review every scheduled item as configured. ".repeat(40)}`.trimEnd();
+    const sessionCtx = finalizeInboundContext({ Body: heartbeat, BodyForAgent: heartbeat });
+    const bodies = buildReplyPromptBodies({
+      ctx: sessionCtx,
+      sessionCtx,
+      effectiveBaseBody: heartbeat,
+      prefixedBody: heartbeat,
+      isHeartbeat: true,
+    });
+    expect(bodies.briefNote).toBeUndefined();
+    expect(bodies.prefixedCommandBody).toBe(heartbeat);
+    expect(bodies.queuedBody).toBe(heartbeat);
+  });
+
   it("prefers the paste note when a file was saved from the long message", () => {
     const long = `Review the quarter.\n${"date,spend,clicks\n2026-03-01,100.00,12\n".repeat(60)}`;
     const sessionCtx = finalizeInboundContext({

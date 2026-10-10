@@ -53,6 +53,11 @@ const MAX_EVIDENCE_IN_REPAIR_CHARS = 20_000;
 // mechanical stage, so it is bounded tighter than a correction.
 const MAX_LABEL_PASS_MS = 60_000;
 const MAX_LABEL_PASS_TOKENS = 4_000;
+// One continuation of a buffered data answer, within the ordinary per-call
+// allowance. It cannot execute tools or re-enter the agent's retry loop.
+const MAX_CONTINUATION_MS = 90_000;
+const MAX_CONTINUATION_TOKENS = 16_384;
+const CONTINUATION_ANCHOR_CHARS = 120;
 
 function addUsage(a: Usage | undefined, b: Usage): Usage {
   if (!a) {
@@ -80,12 +85,15 @@ type ContextMessage = Parameters<StreamFn>[1]["messages"][number];
 
 /**
  * What the figures check may ground a figure in: the request (the pasted
- * data is inline) and every tool output the model has seen, newest first
- * until the cap. The model's own earlier prose is not evidence.
+ * data is inline, however large it is) and every tool output the model has
+ * seen, newest first until the cap. The tool outputs have the cap to
+ * themselves: a paste that filled it would otherwise exclude the script
+ * output every correct total was quoted from, and the check would then call
+ * those totals unsupported. The model's own earlier prose is not evidence.
  */
 function collectEvidence(context: Parameters<StreamFn>[1], prompt: string): string[] {
   const evidence: string[] = [prompt];
-  let size = prompt.length;
+  let size = 0;
   for (let i = context.messages.length - 1; i >= 0 && size < MAX_EVIDENCE_CHARS; i -= 1) {
     const message = context.messages[i];
     if (message.role !== "toolResult" && message.role !== "user") {
@@ -155,7 +163,11 @@ function toolFreeMessages(messages: ContextMessage[]): ContextMessage[] {
   return result;
 }
 
-/** Do not retain a second copy of an oversized provider partial. */
+/**
+ * Do not retain a second copy of an oversized provider partial. The bound is
+ * on the answer's text: thinking is not checked, so a long reasoning block
+ * must not take a short visible answer out of the check.
+ */
 function boundedText(message: AssistantMessage): string | undefined {
   let size = 0;
   const text: string[] = [];
@@ -163,13 +175,14 @@ function boundedText(message: AssistantMessage): string | undefined {
     if (block.type === "toolCall") {
       return undefined;
     }
-    size += block.type === "text" ? block.text.length : block.thinking.length;
+    if (block.type !== "text") {
+      continue;
+    }
+    size += block.text.length;
     if (size > MAX_DRAFT_CHARS) {
       return undefined;
     }
-    if (block.type === "text") {
-      text.push(block.text);
-    }
+    text.push(block.text);
   }
   if (text.length !== 1 || resolveAssistantMessagePhase(message) === "commentary") {
     return undefined;
@@ -509,23 +522,6 @@ export class DraftVerificationStream {
           this.receipt.stop_reason = "aborted";
           return;
         }
-        const figuresRepair =
-          this.toolTurnChecks &&
-          this.receipt.checks.some(
-            (check) => check.kind === "figures_grounded" && check.status === "fail",
-          );
-        const repairCeilingMs = figuresRepair ? MAX_FIGURES_REPAIR_MS : MAX_REPAIR_MS;
-        const repairMs = Math.min(
-          repairCeilingMs,
-          this.options.maxRepairMs ?? repairCeilingMs,
-          override.maxRepairMs ?? repairCeilingMs,
-          this.options.deadline - Date.now(),
-        );
-        const repairable =
-          original.stopReason === "stop" &&
-          !(this.hadToolActivity && !this.toolTurnChecks) &&
-          Number.isFinite(repairMs) &&
-          repairMs > 1_000;
         // One tool-free call on INNER (never this wrapper or AgentSession.prompt:
         // no mutation replay/retry loop), with the draft so far in its history.
         const toolFreeCall = async (
@@ -574,6 +570,78 @@ export class DraftVerificationStream {
             block.type === "text" ? { ...block, text } : block,
           ),
         });
+        const continuationMs = Math.min(
+          MAX_CONTINUATION_MS,
+          this.options.maxRepairMs ?? MAX_CONTINUATION_MS,
+          override.maxRepairMs ?? MAX_CONTINUATION_MS,
+          this.options.deadline - Date.now(),
+        );
+        const partialText = boundedText(original);
+        if (
+          this.toolTurnChecks &&
+          original.stopReason === "length" &&
+          this.receipt.ceiling_retried !== true &&
+          partialText?.trim() &&
+          Number.isFinite(continuationMs) &&
+          continuationMs > 5_000
+        ) {
+          this.receipt.ceiling_retried = true;
+          const anchor = partialText.slice(-CONTINUATION_ANCHOR_CHARS);
+          let continued = false;
+          try {
+            const continuation = await toolFreeCall(
+              original,
+              "Your draft reached its output limit. Finish the requested answer concisely using only the information already available. " +
+                "Do not restart, summarize, or repeat earlier sections. Tools are unavailable. " +
+                "Begin your response by copying the following exact final characters of the draft, then continue directly from its last character, finishing any partial word or sentence. " +
+                "Return the anchor and continuation only, without a preamble or code fence.\n\n" +
+                anchor,
+              MAX_CONTINUATION_TOKENS,
+              continuationMs,
+            );
+            this.additionalUsage = addUsage(this.additionalUsage, continuation.usage);
+            const text = boundedText(continuation);
+            if (
+              !parentAborted() &&
+              continuation.stopReason === "stop" &&
+              text?.startsWith(anchor)
+            ) {
+              const suffix = text.slice(anchor.length);
+              const repeatsStart = suffix.trimStart().startsWith(partialText.slice(0, 80));
+              if (
+                suffix.trim() &&
+                !repeatsStart &&
+                partialText.length + suffix.length <= MAX_DRAFT_CHARS
+              ) {
+                original = { ...withText(original, partialText + suffix), stopReason: "stop" };
+                this.observe(original, evidence);
+                continued = true;
+              }
+            }
+          } catch {
+            // Keep the partial draft and its actual terminal reason. Cancellation
+            // is handled by finish(); no recursive continuation is permitted.
+          }
+          draftLogger.warn("output-limit continuation finished", { continued });
+        }
+
+        const figuresRepair =
+          this.toolTurnChecks &&
+          this.receipt.checks.some(
+            (check) => check.kind === "figures_grounded" && check.status === "fail",
+          );
+        const repairCeilingMs = figuresRepair ? MAX_FIGURES_REPAIR_MS : MAX_REPAIR_MS;
+        const repairMs = Math.min(
+          repairCeilingMs,
+          this.options.maxRepairMs ?? repairCeilingMs,
+          override.maxRepairMs ?? repairCeilingMs,
+          this.options.deadline - Date.now(),
+        );
+        const repairable =
+          original.stopReason === "stop" &&
+          !(this.hadToolActivity && !this.toolTurnChecks) &&
+          Number.isFinite(repairMs) &&
+          repairMs > 1_000;
         const finish = () => {
           if (parentAborted()) {
             this.receipt.stop_reason = "aborted";
@@ -748,7 +816,7 @@ export class DraftVerificationStream {
           labelMs > 5_000
         ) {
           const baseText = boundedText(original) ?? "";
-          const baseUngrounded = ungroundedFigures(baseText, evidence).length;
+          const baseUngrounded = new Set(ungroundedFigures(baseText, evidence));
           let status: DraftCheck["status"] = "unknown";
           let applied = 0;
           try {
@@ -764,11 +832,29 @@ export class DraftVerificationStream {
               if (edits && edits.length === 0) {
                 status = "pass";
               } else if (edits) {
+                // A relabel ships only when it adds no figure the evidence
+                // lacks (swapping one invented number for another keeps the
+                // count and used to pass) and breaks no request-side check
+                // (a quote inside a JSON-only answer). The patched answer's
+                // own checks become the receipt's.
                 const patched = applyFigureEdits(baseText, edits);
-                if (patched && ungroundedFigures(patched, evidence).length <= baseUngrounded) {
+                const checks = patched ? checkDraft(this.contract, patched, evidence) : [];
+                const introduced = patched
+                  ? ungroundedFigures(patched, evidence).filter(
+                      (figure) => !baseUngrounded.has(figure),
+                    )
+                  : [];
+                if (
+                  patched &&
+                  introduced.length === 0 &&
+                  checks.every(
+                    (check) => check.kind === "figures_grounded" || check.status === "pass",
+                  )
+                ) {
                   applied = edits.length;
                   status = "fail";
                   original = withText(original, patched);
+                  this.receipt.checks = checks;
                   if (this.receipt.outcome === "passed") {
                     this.receipt.outcome = "repaired";
                   } else if (this.receipt.outcome === "repair_failed") {

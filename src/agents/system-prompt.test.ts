@@ -648,7 +648,7 @@ describe("buildAgentSystemPrompt", () => {
     );
     expect(prompt).toContain("- Read a partially relevant skill rather than skip it.");
     expect(prompt).toContain(
-      "- You MUST use the exact <location> value from <available_skills>; never guess, fabricate, or hard-code a skill file path.",
+      "- You MUST use the exact location from the skill catalog; never guess, fabricate, or hard-code a skill file path.",
     );
     // The hedged upstream rules that let the model skip skills are gone.
     expect(prompt).not.toContain("If none clearly apply");

@@ -308,11 +308,36 @@ describe("applySkillsPromptLimits (via buildWorkspaceSkillsPrompt)", () => {
 describe("renderSkillsCatalogPrompt", () => {
   const longDesc = (n: number) => "d".repeat(n);
 
+  it("round-trips full fields, absolute paths and escaped text in stable order", () => {
+    const skills = [
+      makeSkill(
+        "z-last",
+        'Quoted "text"\nnext line & <tag> 😀',
+        "/data/.openclaw/skills/z last/SKILL.md",
+      ),
+      makeSkill("a-first", "", "/data/.openclaw/skills/a-first/SKILL.md"),
+    ];
+    const out = renderSkillsCatalogPrompt({ skills, maxChars: 80_000 });
+    const rows = out
+      .split("\n")
+      .filter((line) => line.startsWith("["))
+      .map((line) => JSON.parse(line));
+    expect(rows).toEqual([skills[1], skills[0]].map((s) => [s.name, s.description, s.filePath]));
+    expect(out).toBe(renderSkillsCatalogPrompt({ skills: skills.toReversed(), maxChars: 80_000 }));
+    expect(out).toContain("Before starting work a listed skill covers, read its SKILL.md");
+    expect(out).toContain("resolve it against the directory containing that skill's SKILL.md");
+  });
+
   it("renders full descriptions when the budget fits", () => {
     const skills = Array.from({ length: 5 }, (_, i) => makeSkill(`skill-${i}`, longDesc(200)));
     const out = renderSkillsCatalogPrompt({ skills, maxChars: 80_000 });
     for (const skill of skills) {
-      expect(out).toContain(`<name>${skill.name}</name>`);
+      expect(
+        out
+          .split("\n")
+          .filter((line) => line.startsWith("["))
+          .map((line) => JSON.parse(line)[0]),
+      ).toContain(skill.name);
     }
     expect(out).toContain(longDesc(200));
     expect(out).not.toContain("descriptions trimmed");
@@ -324,7 +349,12 @@ describe("renderSkillsCatalogPrompt", () => {
     const out = renderSkillsCatalogPrompt({ skills, maxChars: 9_000 });
     expect(out.length).toBeLessThanOrEqual(9_000);
     for (const skill of skills) {
-      expect(out).toContain(`<name>${skill.name}</name>`);
+      expect(
+        out
+          .split("\n")
+          .filter((line) => line.startsWith("["))
+          .map((line) => JSON.parse(line)[0]),
+      ).toContain(skill.name);
     }
     // Descriptions survive in trimmed form (ellipsis marker), not dropped.
     expect(out).toContain("…");
