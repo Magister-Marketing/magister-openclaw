@@ -724,6 +724,7 @@ export async function runPreparedReply(
       transcriptBody: transcriptBodyBase,
       threadContextNote,
       systemEventBlocks: drainedSystemEventBlocks,
+      isHeartbeat,
     });
   };
   const skillResult =

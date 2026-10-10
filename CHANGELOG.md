@@ -10,6 +10,7 @@ Docs: https://docs.openclaw.ai
 
 ### Changes
 
+- Agents/draft verification: a hedged rate is grounded by evidence that prints it as a rate ("refund rate 22%"), not only by a fraction; the label pass ships no edit that introduces an unsupported figure or breaks a request-side check such as JSON-only, and it is asked to check sign and direction; a heartbeat prompt carries no brief note; thinking does not count toward the checked-answer bound; a paste that fills the evidence cap no longer pushes tool output out of the evidence.
 - Agents/data answers: allow one bounded tool-free continuation of a buffered response that reaches its output limit, preserving its original text and accounting for rejected calls; retain the selected answer's output-limit reason in streaming and nonstreaming HTTP responses.
 - Agents/draft verification: add default-off, request-grounded JSON, exact-list-count, and fixed-allocation checks with observation mode, one bounded tool-free correction for eligible text turns, and internal execution receipts. Unsupported semantic requirements remain unchecked; no benchmark-specific rules are included. Preserve attempt-specific evidence across retries and classify cancellation as aborted rather than successful completion.
 - Magister/reliability: expose authorized cloud Asset reads to hosted agents, preserve final HTTP chat payloads and terminal errors, resolve browser target aliases without weakening tab binding, and label cached plan context as unverified.

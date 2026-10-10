@@ -237,6 +237,19 @@ describe("figures grounded in tool output", () => {
         evidence,
       ),
     ).toEqual([]);
+    // A whole-number rate the evidence itself marks as a rate grounds the
+    // hedged figure; the same digits as a bare count or a different rate do not.
+    const refunded = "Spend was $1,758.80 with about 22% refunded.";
+    expect(ungroundedFigures(refunded, ["spend,1758.80\nrefund rate 22%"])).toEqual([]);
+    expect(ungroundedFigures(refunded, ["spend,1758.80\nrefund rate 23%"])).toEqual(["22%"]);
+    expect(ungroundedFigures(refunded, ["spend,1758.80\nrefunds,22"])).toEqual(["22%"]);
+    expect(
+      ungroundedFigures("ROAS held near roughly 1.5x on $1,758.80.", ["spend,1758.80\nroas 1.5x"]),
+    ).toEqual([]);
+  });
+
+  it("asks the label pass to check sign and direction, not only labels", () => {
+    expect(figuresLabelInstruction()).toContain("sign and direction");
   });
 
   it("checks the draft against evidence and stays unknown without any", () => {

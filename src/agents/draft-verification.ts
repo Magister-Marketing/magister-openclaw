@@ -257,18 +257,20 @@ const HEDGED_RATE_RE =
   /(?:\b(?:about|approximately|roughly|around|nearly|almost|close\s+to)\s+|[~≈]\s*)([$€£])?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(%|x)(?!\w|\.\d)/gi;
 
 /**
- * Values the evidence prints with a fraction, as themselves and as percentages:
- * the rates and ratios a script computed. A count or a calendar day that
- * happens to share two digits with a hedged rate is not one of them.
+ * Values the evidence prints as rates: a fraction (as itself and as the
+ * percentage it expresses), or a whole number the evidence itself marks with
+ * % or x ("refund rate 22%"). A count or a calendar day that happens to share
+ * two digits with a hedged rate is not one of them.
  */
 function printedRateValues(evidence: readonly string[]): Set<string> {
   const values = new Set<string>();
   for (const text of evidence) {
     for (const figure of figuresIn(text)) {
-      if (figure.decimals === 0) {
+      const marked = figure.percent || figure.text.endsWith("x");
+      if (figure.decimals === 0 && !marked) {
         continue;
       }
-      for (const value of [figure.value, figure.value * 100]) {
+      for (const value of marked ? [figure.value] : [figure.value, figure.value * 100]) {
         for (let decimals = 0; decimals <= 4; decimals += 1) {
           values.add(value.toFixed(decimals));
         }
@@ -741,7 +743,7 @@ export function figuresRepairInstruction(ungrounded: readonly string[]): string 
  */
 export function figuresLabelInstruction(): string {
   return [
-    'Check every figure in your draft against the tool output it comes from: the label it is stated under, the base of every share or rate, the window or period it covers, and the set a range or "every other" statement covers.',
+    'Check every figure in your draft against the tool output it comes from: the label it is stated under, its sign and direction (a negative value or a decline is never a gain), the base of every share or rate, the window or period it covers, and the set a range or "every other" statement covers.',
     "Also check every sentence that names a cause: where the tool output shows only a movement (frequency up, reach down, a rate falling) and the sentence states the cause as fact (the audience is exhausted, the creative is fatigued, the same people are seeing the ad more often), the sentence must state the observation and label the cause a hypothesis.",
     "Return only a JSON array of edits, no prose and no code fence, for the sentences or table rows where a figure is stated against the wrong label, base, window, or set, or a cause is stated as fact:",
     '[{"find": "<the exact sentence or table row from the draft, copied character for character>", "replace": "<that text corrected: the printed figure for the stated referent, the referent the figure belongs to, or the observation with the cause labelled a hypothesis>"}]',

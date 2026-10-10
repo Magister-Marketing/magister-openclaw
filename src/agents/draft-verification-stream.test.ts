@@ -938,6 +938,144 @@ describe("figures grounded on pasted-data turns", () => {
     }
   });
 
+  it("the label pass never swaps one unsupported figure for another, and ships only a subset", async () => {
+    // $251 and 112 are both absent from the script output; the correction
+    // fails, so the answer reaches the label pass as repair_failed.
+    const original = message("About $251 per day with 112 refunds. Pause pb-video.");
+    const prose = message("Here is the corrected draft: about $62.81 per day.");
+    const swap = message('[{"find": "$251 per day", "replace": "$97.31 per day"}]');
+    const inner = vi
+      .fn<StreamFn>()
+      .mockImplementationOnce(() => completed(original).stream)
+      .mockImplementationOnce(() => completed(prose).stream)
+      .mockImplementationOnce(() => completed(swap).stream);
+    const verification = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
+    verification.hadToolActivity = true;
+    const result = await collect(await verification.wrap(inner)(model, toolTurnContext));
+    expect(inner).toHaveBeenCalledTimes(3);
+    expect(result.result).toBe(original);
+    expect(verification.receipt).toMatchObject({
+      outcome: "repair_failed",
+      repair_attempts: 1,
+      checks: [
+        { kind: "figures_grounded", status: "fail" },
+        { kind: "figures_labelled", status: "unknown" },
+      ],
+    });
+
+    // A relabel that only removes an unsupported figure is a real improvement.
+    const narrow = message('[{"find": "112 refunds", "replace": "98 refunds (one per row)"}]');
+    const inner2 = vi
+      .fn<StreamFn>()
+      .mockImplementationOnce(() => completed(original).stream)
+      .mockImplementationOnce(() => completed(prose).stream)
+      .mockImplementationOnce(() => completed(narrow).stream);
+    const verification2 = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
+    verification2.hadToolActivity = true;
+    const result2 = await collect(await verification2.wrap(inner2)(model, toolTurnContext));
+    expect(result2.result.content).toEqual([
+      { type: "text", text: "About $251 per day with 98 refunds (one per row). Pause pb-video." },
+    ]);
+    expect(verification2.receipt).toMatchObject({
+      outcome: "improved",
+      checks: [
+        { kind: "figures_grounded", status: "fail" },
+        { kind: "figures_labelled", status: "fail" },
+      ],
+    });
+  });
+
+  it("the label pass rechecks the request contract: a quote inside a JSON-only answer is refused", async () => {
+    const jsonPrompt = `${pastePrompt}\n\nReturn only valid JSON.`;
+    const original = message('{"spend": 1758.80, "note": "Audience exhausted."}');
+    const breaking = message(
+      JSON.stringify([
+        {
+          find: "Audience exhausted.",
+          replace: 'Frequency rose; "audience exhausted" is a hypothesis.',
+        },
+      ]),
+    );
+    const inner = vi
+      .fn<StreamFn>()
+      .mockImplementationOnce(() => completed(original).stream)
+      .mockImplementationOnce(() => completed(breaking).stream);
+    const verification = state({ prompt: jsonPrompt, deadline: Date.now() + 600_000 });
+    verification.hadToolActivity = true;
+    const context = {
+      ...toolTurnContext,
+      messages: [
+        { ...toolTurnContext.messages[0], content: jsonPrompt },
+        ...toolTurnContext.messages.slice(1),
+      ],
+    };
+    const result = await collect(await verification.wrap(inner)(model, context));
+    expect(inner).toHaveBeenCalledTimes(2);
+    expect(result.result).toBe(original);
+    expect(verification.receipt).toMatchObject({
+      outcome: "passed",
+      checks: [
+        { kind: "json_only", status: "pass" },
+        { kind: "figures_grounded", status: "pass" },
+        { kind: "figures_labelled", status: "unknown" },
+      ],
+    });
+  });
+
+  it("a long thinking block does not take a short answer out of the check", async () => {
+    const text = "pb-video spent $1,758.80 in 28 days, $439.70 a week. Pause it.";
+    const original: AssistantMessage = {
+      ...message(text),
+      content: [
+        { type: "thinking", thinking: "x".repeat(MAX_DRAFT_CHARS + 1) },
+        { type: "text", text },
+      ],
+    };
+    const inner = vi
+      .fn<StreamFn>()
+      .mockImplementationOnce(() => completed(original).stream)
+      .mockImplementationOnce(() => completed(message("[]")).stream);
+    const verification = state({ prompt: pastePrompt, deadline: Date.now() + 600_000 });
+    verification.hadToolActivity = true;
+    const result = await collect(await verification.wrap(inner)(model, toolTurnContext));
+    expect(result.result).toBe(original);
+    expect(verification.receipt).toMatchObject({
+      outcome: "passed",
+      checks: [
+        { kind: "figures_grounded", status: "pass" },
+        { kind: "figures_labelled", status: "pass" },
+      ],
+    });
+  });
+
+  it("a paste that fills the evidence cap does not push the script output out of the evidence", async () => {
+    const hugePrompt = `${pastePrompt}\n${"row,1\n".repeat(400_001)}`; // over MAX_EVIDENCE_CHARS
+    const original = message("pb-video costs $62.81 a day; pause it.");
+    const inner = vi
+      .fn<StreamFn>()
+      .mockImplementationOnce(() => completed(original).stream)
+      .mockImplementationOnce(() => completed(message("[]")).stream);
+    const verification = state({ prompt: hugePrompt, deadline: Date.now() + 600_000 });
+    verification.hadToolActivity = true;
+    const context = {
+      ...toolTurnContext,
+      messages: [
+        { ...toolTurnContext.messages[0], content: hugePrompt },
+        ...toolTurnContext.messages.slice(1),
+      ],
+    };
+    const result = await collect(await verification.wrap(inner)(model, context));
+    expect(inner).toHaveBeenCalledTimes(2);
+    expect(result.result).toBe(original);
+    expect(verification.receipt).toMatchObject({
+      outcome: "passed",
+      checks: [
+        { kind: "figures_grounded", status: "pass" },
+        { kind: "figures_labelled", status: "pass" },
+      ],
+    });
+  });
+
   it("stays shadow-only without a label pass when the mode is shadow", async () => {
     const original = message(
       "pb-video spent $1,758.80 in 28 days, about $440 a week ($439.70). Pause it.",
