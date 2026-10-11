@@ -7,7 +7,8 @@ export type DraftCheckKind =
   | "bullet_count"
   | "allocation_count"
   | "allocation_total"
-  | "figures_grounded";
+  | "figures_grounded"
+  | "figures_labelled";
 export type DraftCheck = { kind: DraftCheckKind; status: "pass" | "fail" | "unknown" };
 export type DraftContract = {
   jsonOnly?: true;
@@ -23,9 +24,16 @@ export const MAX_EVIDENCE_CHARS = 2_000_000;
 export type DraftVerificationReceipt = {
   version: 1;
   mode: "off" | "shadow" | "repair";
-  outcome: "unchecked" | "passed" | "failed" | "repaired" | "repair_failed" | "excluded";
+  outcome:
+    | "unchecked"
+    | "passed"
+    | "failed"
+    | "repaired"
+    | "improved"
+    | "repair_failed"
+    | "excluded";
   checks: DraftCheck[];
-  repair_attempts: 0 | 1;
+  repair_attempts: 0 | 1 | 2;
   stop_reason: DraftStopReason | null;
   ceiling_retried: null;
   skill_reads: null;
@@ -273,12 +281,23 @@ function evidenceValues(evidence: readonly string[]): Set<string> {
 }
 
 const NUMBER = "[$€£]?\\d[\\d,]*(?:\\.\\d+)?%?";
-const OPERATOR = "[+\\-−–×*÷/]";
-// "$400 + $300 + $630 = $1,330", "630 ÷ 600 = 1.05", "31 / 116 = 26.7%".
+// Up to two unit words may follow an operand ("28 days", "600 conversions");
+// conjunctions are not units, so "4 and 7" is two numbers, not arithmetic.
+const UNIT =
+  "(?:[ \\t]+(?!(?:and|or|to|vs|versus|the|of|at|in|on|for|from|per|over|across|times|plus|minus|less|x|divided|out|is|equals|comes|makes)\\b)[A-Za-z][A-Za-z-]*){0,2}";
+const WORD_OPERATOR = "divided\\s+by|out\\s+of|over|across|per|times|plus|minus|less|x";
+const OPERATOR = `(?:[+\\-−–×*÷/]|\\b(?:${WORD_OPERATOR})\\b)`;
+const OPERATOR_RE = new RegExp(`\\s*(${OPERATOR})\\s*`, "g");
+const EXPRESSION = `${NUMBER}${UNIT}(?:\\s*${OPERATOR}\\s*${NUMBER}${UNIT})+`;
+const RESULT = `(?:about\\s+|approximately\\s+|roughly\\s+|~\\s*)?(${NUMBER})`;
+// "$400 + $300 + $630 = $1,330", "630 ÷ 600 = 1.05", "31 / 116 = 26.7%",
+// "$1,758.80 ÷ 28 days = $62.81 per day".
 const ARITHMETIC_RE = new RegExp(
-  `(${NUMBER}(?:\\s*${OPERATOR}\\s*${NUMBER})+)\\s*(?:=|≈|→)\\s*(?:about\\s+|approximately\\s+|roughly\\s+|~\\s*)?(${NUMBER})`,
+  `(${EXPRESSION})\\s*(?:=|≈|→|equals|is|comes\\s+to|makes)\\s*${RESULT}`,
   "g",
 );
+// "$62.81 per day ($1,758.80 ÷ 28)": the result first, its arithmetic in parentheses.
+const PARENTHETICAL_RE = new RegExp(`(${NUMBER})[^()\\n]{0,40}\\(\\s*(${EXPRESSION})\\s*\\)`, "g");
 
 function numberValue(text: string): number {
   return Number(text.replace(/[$€£%,]/g, ""));
@@ -289,6 +308,20 @@ function decimalsOf(text: string): number {
   return fraction ? fraction[1].length : 0;
 }
 
+function operatorSymbol(text: string): string {
+  const operator = text.trim().toLowerCase().replace(/\s+/g, " ");
+  if (/^(?:[+]|plus)$/.test(operator)) {
+    return "+";
+  }
+  if (/^(?:[-−–]|minus|less)$/.test(operator)) {
+    return "-";
+  }
+  if (/^(?:[×*x]|times)$/.test(operator)) {
+    return "×";
+  }
+  return "÷";
+}
+
 /** Standard precedence over a flat "a op b op c" expression. */
 function evaluate(operands: number[], operators: string[]): number {
   const values = [operands[0]];
@@ -296,9 +329,9 @@ function evaluate(operands: number[], operators: string[]): number {
   for (let i = 0; i < operators.length; i += 1) {
     const operator = operators[i];
     const right = operands[i + 1];
-    if (/[×*÷/]/.test(operator)) {
+    if (/[×÷]/.test(operator)) {
       const left = values.pop() ?? Number.NaN;
-      values.push(/[×*]/.test(operator) ? left * right : left / right);
+      values.push(operator === "×" ? left * right : left / right);
     } else {
       values.push(right);
       pending.push(operator);
@@ -315,63 +348,78 @@ function statesValue(known: Set<string>, value: number, decimals: number): boole
   return known.has(value.toFixed(Math.min(decimals, 4)));
 }
 
+/** Right at the stated precision, allowing one unit in the last place for the rounding step. */
+function matchesStated(computed: number, stated: number, decimals: number): boolean {
+  return (
+    Number.isFinite(computed) &&
+    Math.abs(computed - stated) <= 1.0001 * 10 ** -Math.min(decimals, 4)
+  );
+}
+
+/**
+ * Whether ``expression`` (operands with optional unit words and operators)
+ * evaluates to ``result`` from grounded operands; if so, the result is known.
+ * A percent operand may stand for its ratio ("26.7% × 116" is 31), and a
+ * percent result may be the ratio times 100.
+ */
+function groundExpression(expression: string, result: string, known: Set<string>): void {
+  const operandTexts = expression.match(new RegExp(NUMBER, "g")) ?? [];
+  const operatorTexts = expression.replace(new RegExp(NUMBER, "g"), " ").match(OPERATOR_RE) ?? [];
+  if (operandTexts.length < 2 || operatorTexts.length !== operandTexts.length - 1) {
+    return;
+  }
+  const operands = operandTexts.map(numberValue);
+  // A reported operand must itself be grounded; a round constant (4 weeks,
+  // 28 days, 100) is the reader's arithmetic, not a figure.
+  const ungroundedOperand = operandTexts.some((text, index) => {
+    const value = operands[index];
+    if (!Number.isFinite(value)) {
+      return true;
+    }
+    const figure = figuresIn(text)[0];
+    return (
+      figure !== undefined &&
+      isReportedFigure(figure) &&
+      !statesValue(known, value, decimalsOf(text))
+    );
+  });
+  if (ungroundedOperand) {
+    return;
+  }
+  const operators = operatorTexts.map(operatorSymbol);
+  const stated = numberValue(result);
+  const decimals = decimalsOf(result);
+  const asRatios = operandTexts.map((text, index) =>
+    text.endsWith("%") ? operands[index] / 100 : operands[index],
+  );
+  const computed = [evaluate(operands, operators), evaluate(asRatios, operators)];
+  const candidates = result.endsWith("%")
+    ? computed.flatMap((value) => [value, value * 100])
+    : computed;
+  if (
+    Number.isFinite(stated) &&
+    candidates.some((value) => matchesStated(value, stated, decimals))
+  ) {
+    for (let k = 0; k <= 4; k += 1) {
+      known.add(stated.toFixed(k));
+    }
+  }
+}
+
 /**
  * Arithmetic a report shows inline grounds its result when every operand is
- * grounded and the result is right at the stated precision (a percentage
- * result may be the ratio times 100). Tasks ask for exactly this ("show the
- * arithmetic needed to audit every total"), and a correction that may only
- * quote or remove figures drops the subtotals and ratios a brief requires
- * (2026-10-03: "the last-touch paid subtotal is never summed to $1,330").
+ * grounded and the result is right at the stated precision. Tasks ask for
+ * exactly this ("show the arithmetic needed to audit every total"), and a
+ * correction that may only quote or remove figures drops the subtotals and
+ * ratios a brief requires (2026-10-03: "the last-touch paid subtotal is never
+ * summed to $1,330"). Both orders count: "a ÷ b = c" and "c (a ÷ b)".
  */
 function groundShownArithmetic(prose: string, known: Set<string>): void {
   for (const match of prose.matchAll(ARITHMETIC_RE)) {
-    const [, expression, result] = match;
-    const operandTexts = expression.match(new RegExp(NUMBER, "g")) ?? [];
-    const operators = expression.match(new RegExp(`\\s*(${OPERATOR})\\s*`, "g")) ?? [];
-    if (operandTexts.length < 2 || operators.length !== operandTexts.length - 1) {
-      continue;
-    }
-    const operands = operandTexts.map(numberValue);
-    // A reported operand must itself be grounded; a round constant (4 weeks,
-    // 28 days, 100) is the reader's arithmetic, not a figure.
-    const ungroundedOperand = operandTexts.some((text, index) => {
-      const value = operands[index];
-      if (!Number.isFinite(value)) {
-        return true;
-      }
-      const figure = figuresIn(text)[0];
-      return (
-        figure !== undefined &&
-        isReportedFigure(figure) &&
-        !statesValue(known, value, decimalsOf(text))
-      );
-    });
-    if (ungroundedOperand) {
-      continue;
-    }
-    const computed = evaluate(
-      operands,
-      operators.map((operator) =>
-        operator
-          .trim()
-          .replace(/[−–]/, "-")
-          .replace("*", "×")
-          .replace("/", "÷"),
-      ),
-    );
-    const stated = numberValue(result);
-    const decimals = decimalsOf(result);
-    const candidates = result.endsWith("%") ? [computed, computed * 100] : [computed];
-    if (
-      Number.isFinite(stated) &&
-      candidates.some(
-        (value) => Number.isFinite(value) && value.toFixed(decimals) === stated.toFixed(decimals),
-      )
-    ) {
-      for (let k = 0; k <= 4; k += 1) {
-        known.add(stated.toFixed(k));
-      }
-    }
+    groundExpression(match[1], match[2], known);
+  }
+  for (const match of prose.matchAll(PARENTHETICAL_RE)) {
+    groundExpression(match[2], match[1], known);
   }
 }
 
@@ -540,10 +588,7 @@ export function checkDraft(
   return checks;
 }
 
-export function draftRepairInstruction(
-  contract: DraftContract,
-  ungrounded: readonly string[] = [],
-): string {
+export function draftRepairInstruction(contract: DraftContract): string {
   const constraints: string[] = [];
   if (contract.jsonOnly) {
     constraints.push("Return only valid JSON, without markdown fences or surrounding prose.");
@@ -556,14 +601,120 @@ export function draftRepairInstruction(
       `The allocation table must contain exactly ${contract.allocation.count} categories totaling ${contract.allocation.currency}${(contract.allocation.cents / 100).toFixed(2)}; do not count the total row as a category.`,
     );
   }
-  if (contract.figuresGrounded && ungrounded.length > 0) {
-    constraints.push(
-      `These figures appear in neither a tool output nor the request: ${ungrounded.join(", ")}. For each one, either quote the figure your script printed that it comes from, exactly and with its window and unit, or show the arithmetic that produces it from printed figures inline (for example "$400 + $300 + $630 = $1,330" or "630 ÷ 600 = 1.05"). Keep every figure the request asks for; a figure you can neither quote nor show is removed.`,
-    );
-  }
   return [
     "Revise only your preceding draft to satisfy these explicit requirements from the current user's request:",
     ...constraints.map((constraint) => `- ${constraint}`),
     "Preserve supported facts and the rest of the request. Do not invent evidence, execute actions, or claim any file or external resource changed. Tools are unavailable. Return the complete corrected answer, not a description of the correction.",
   ].join("\n");
+}
+
+// ------------------------------------------------------- figure edits
+
+export type FigureEdit = { find: string; replace: string };
+export const MAX_FIGURE_EDITS = 40;
+const MAX_FIGURE_EDIT_FIND_CHARS = 1_500;
+const MAX_FIGURE_EDIT_GROWTH_CHARS = 600;
+/** A patch that removes this share of the draft removed content, not figures. */
+const MIN_PATCHED_LENGTH_RATIO = 0.7;
+
+/**
+ * A pasted-data deliverable runs to tens of thousands of characters, so the
+ * correction is a list of edits, not a rewrite: a rewrite does not fit a
+ * correction's token budget (2026-10-06: the two corrections that failed
+ * were the two longest drafts) and a rewrite drops content a patch keeps.
+ */
+export function figuresRepairInstruction(ungrounded: readonly string[]): string {
+  return [
+    `These figures in your draft appear in neither a tool output nor the request: ${ungrounded.join(", ")}.`,
+    "Return only a JSON array of edits to your draft, no prose and no code fence, one edit per sentence or table cell that states one of them:",
+    '[{"find": "<the exact sentence or table row from the draft, copied character for character>", "replace": "<that text corrected>"}]',
+    'In each replacement either put the figure your script printed in place of the unprinted one, exactly and with its window and unit, or keep the figure and show the arithmetic that produces it from printed figures right there, as numbers and the symbols + − × ÷ with an equals sign (for example "$1,758.80 ÷ 28 = $62.81" or "$400 + $300 + $630 = $1,330"); every operand is a printed figure or a round constant such as a day count. Keep every figure the request asks for; a figure you can neither quote nor show is removed from its sentence. Change nothing else. Tools are unavailable.',
+  ].join("\n");
+}
+
+/**
+ * The mechanical check proves each figure was printed; it cannot see a
+ * printed figure stated against the wrong referent (a share of the campaign
+ * total stated as a share of one ad set's spend, a final-28-day rate stated
+ * as the full-period rate, a range over a set that one member is outside, a
+ * week label with the wrong dates). Those were every critical data-fidelity
+ * miss left after rounds 5–9 (2026-10-06), and the judge finds them from
+ * the same tool output, so a tool-free self-check call can too.
+ */
+export function figuresLabelInstruction(): string {
+  return [
+    'Check every figure in your draft against the tool output it comes from: the label it is stated under, the base of every share or rate, the window or period it covers, and the set a range or "every other" statement covers.',
+    "Also check every sentence that names a cause: where the tool output shows only a movement (frequency up, reach down, a rate falling) and the sentence states the cause as fact (the audience is exhausted, the creative is fatigued, the same people are seeing the ad more often), the sentence must state the observation and label the cause a hypothesis.",
+    "Return only a JSON array of edits, no prose and no code fence, for the sentences or table rows where a figure is stated against the wrong label, base, window, or set, or a cause is stated as fact:",
+    '[{"find": "<the exact sentence or table row from the draft, copied character for character>", "replace": "<that text corrected: the printed figure for the stated referent, the referent the figure belongs to, or the observation with the cause labelled a hypothesis>"}]',
+    "Return [] when every figure is stated against its own referent and every cause is labelled. Do not add figures the tool output does not print. Change nothing else. Tools are unavailable.",
+  ].join("\n");
+}
+
+function stripFence(text: string): string {
+  const trimmed = text.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
+  return fenced ? fenced[1] : trimmed;
+}
+
+/** The edits a correction returned, or undefined when it is not a well-formed list. */
+export function parseFigureEdits(
+  text: string,
+  options: { allowEmpty?: boolean } = {},
+): FigureEdit[] | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stripFence(text));
+  } catch {
+    return undefined;
+  }
+  if (
+    !Array.isArray(parsed) ||
+    (parsed.length === 0 && !options.allowEmpty) ||
+    parsed.length > MAX_FIGURE_EDITS
+  ) {
+    return undefined;
+  }
+  const edits: FigureEdit[] = [];
+  for (const item of parsed) {
+    if (
+      !item ||
+      typeof item !== "object" ||
+      typeof (item as FigureEdit).find !== "string" ||
+      typeof (item as FigureEdit).replace !== "string"
+    ) {
+      return undefined;
+    }
+    const { find, replace } = item as FigureEdit;
+    if (
+      find.trim().length === 0 ||
+      find.length > MAX_FIGURE_EDIT_FIND_CHARS ||
+      replace.length > find.length + MAX_FIGURE_EDIT_GROWTH_CHARS
+    ) {
+      return undefined;
+    }
+    edits.push({ find, replace });
+  }
+  return edits;
+}
+
+/**
+ * The draft with every edit whose ``find`` occurs in it applied (all
+ * occurrences; the same sentence twice is the same correction twice), or
+ * undefined when no edit applied or the result lost too much of the text.
+ */
+export function applyFigureEdits(draft: string, edits: readonly FigureEdit[]): string | undefined {
+  let patched = draft;
+  let applied = 0;
+  for (const edit of edits) {
+    if (!patched.includes(edit.find)) {
+      continue;
+    }
+    patched = patched.split(edit.find).join(edit.replace);
+    applied += 1;
+  }
+  if (applied === 0 || patched.length < MIN_PATCHED_LENGTH_RATIO * draft.length) {
+    return undefined;
+  }
+  return patched;
 }

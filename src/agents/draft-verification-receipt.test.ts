@@ -19,7 +19,7 @@ describe("receipt export boundary", () => {
     { prompt: "secret" },
     { stop_reason: "private provider error" },
     { version: true },
-    { repair_attempts: 2 },
+    { repair_attempts: 3 },
     { ceiling_retried: false },
     { skill_reads: ["private/path"] },
     { checks: Array.from({ length: 5 }, () => receipt.checks[0]) },
