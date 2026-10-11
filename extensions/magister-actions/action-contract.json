@@ -3036,6 +3036,173 @@
       "tool_name": "magister_list_suppressions"
     },
     {
+      "action": "create_campaign",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "Create an outreach campaign to group drafted emails for review.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "idempotency_key",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "description": "Who it targets and the angle.",
+            "maxLength": 4000,
+            "type": "string"
+          },
+          "idempotency_key": {
+            "description": "Use one fresh key for each new logical operation. Reuse that key only when retrying the exact same arguments; a later user request, even with identical content, needs a new key.",
+            "maxLength": 256,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": ["idempotency_key", "name"],
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "side_effect": "internal_write",
+      "spend_limited": false,
+      "tool_name": "magister_create_campaign"
+    },
+    {
+      "action": "list_campaigns",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "List this project's outreach campaigns.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "side_effect": "none",
+      "spend_limited": false,
+      "tool_name": "magister_list_campaigns"
+    },
+    {
+      "action": "queue_touches",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "Queue up to 50 drafted emails (one per saved prospect) for a member to review, edit, and send from Magister's Outreach page. Nothing is sent by this. Prospects on the do-not-contact list or without an email are skipped and reported.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "$defs": {
+          "QueuedTouchArgs": {
+            "additionalProperties": false,
+            "properties": {
+              "body": {
+                "description": "Plain-text email body.",
+                "maxLength": 20000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "due_at": {
+                "description": "Earliest ISO time a member can send it; it is never sent automatically.",
+                "maxLength": 40,
+                "type": "string"
+              },
+              "prospect_id": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "step": {
+                "default": 1,
+                "description": "1 for the first email, 2+ for follow-ups.",
+                "maximum": 20,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "subject": {
+                "maxLength": 998,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": ["prospect_id", "subject", "body"],
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "campaign_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "touches": {
+            "items": {
+              "$ref": "#/$defs/QueuedTouchArgs"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": ["campaign_id", "touches"],
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "side_effect": "internal_write",
+      "spend_limited": false,
+      "tool_name": "magister_queue_touches"
+    },
+    {
+      "action": "list_touches",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "List queued and sent outreach emails, by campaign or status.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "campaign_id": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "limit": {
+            "default": 50,
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "pending_review",
+              "sending",
+              "sent",
+              "skipped",
+              "failed",
+              "replied",
+              "bounced"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "side_effect": "none",
+      "spend_limited": false,
+      "tool_name": "magister_list_touches"
+    },
+    {
       "action": "send_email",
       "approval_policy": "exact_payload",
       "async_status_adapter": "synchronous",
@@ -4142,6 +4309,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "3cb2f69cdb2e64a86c79ff591218c1df41ac0e5edca37b430993f3e6706d949e",
+  "registry_revision": "d6ee9e3fa66fc657d7ef46501a0c7206aad7ca01784aaa8c684788973d7e252b",
   "schema_version": 1
 }
