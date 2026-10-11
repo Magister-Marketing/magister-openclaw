@@ -14,6 +14,8 @@ import {
   draftStopReason,
   hasDraftChecks,
   MAX_DRAFT_CHARS,
+  MAX_EVIDENCE_CHARS,
+  ungroundedFigures,
   type DraftVerificationReceipt,
 } from "./draft-verification.js";
 
@@ -32,6 +34,93 @@ type Options = WrapOptions & {
 const HTTP_APIS = new Set(["openai-completions", "openai-responses", "anthropic-messages"]);
 const MAX_REPAIR_MS = 30_000;
 const MAX_REPAIR_TOKENS = 2_048;
+// A pasted-data analysis is a long deliverable (the benchmark's ledger
+// reviews run 9k–16k output tokens), so its correction needs the room a
+// request-side fix never does. The Gateway's silence watchdog bounds it.
+const MAX_FIGURES_REPAIR_MS = 150_000;
+const MAX_FIGURES_REPAIR_TOKENS = 12_000;
+// A tool output in the correction context keeps its tail, where a script
+// prints its figures table.
+const MAX_EVIDENCE_IN_REPAIR_CHARS = 20_000;
+
+type ContextMessage = Parameters<StreamFn>[1]["messages"][number];
+
+/**
+ * What the figures check may ground a figure in: the request (the pasted
+ * data is inline) and every tool output the model has seen, newest first
+ * until the cap. The model's own earlier prose is not evidence.
+ */
+function collectEvidence(context: Parameters<StreamFn>[1], prompt: string): string[] {
+  const evidence: string[] = [prompt];
+  let size = prompt.length;
+  for (let i = context.messages.length - 1; i >= 0 && size < MAX_EVIDENCE_CHARS; i -= 1) {
+    const message = context.messages[i];
+    if (message.role !== "toolResult" && message.role !== "user") {
+      continue;
+    }
+    const blocks = typeof message.content === "string" ? [message.content] : message.content;
+    for (const block of blocks) {
+      const text = typeof block === "string" ? block : block.type === "text" ? block.text : "";
+      if (text && text !== prompt) {
+        evidence.push(text);
+        size += text.length;
+      }
+    }
+  }
+  return evidence;
+}
+
+/**
+ * The correction call carries no tools, and a provider refuses tool blocks
+ * in a history without tool definitions. Prior tool calls become prose and
+ * tool outputs become user text, so the model still sees the figures its
+ * script printed; the correction is never persisted, so the real transcript
+ * keeps its tool messages.
+ */
+function toolFreeMessages(messages: ContextMessage[]): ContextMessage[] {
+  const result: ContextMessage[] = [];
+  const pushUser = (text: string, timestamp: number) => {
+    const previous = result.at(-1);
+    if (previous && previous.role === "user" && Array.isArray(previous.content)) {
+      previous.content.push({ type: "text", text });
+      return;
+    }
+    result.push({ role: "user", content: [{ type: "text", text }], timestamp });
+  };
+  for (const message of messages) {
+    if (message.role === "toolResult") {
+      const text = message.content
+        .flatMap((block) => (block.type === "text" ? [block.text] : []))
+        .join("\n");
+      pushUser(
+        `[${message.toolName} output]\n${text.length > MAX_EVIDENCE_IN_REPAIR_CHARS ? text.slice(-MAX_EVIDENCE_IN_REPAIR_CHARS) : text}`,
+        message.timestamp,
+      );
+    } else if (message.role === "assistant") {
+      const content = message.content.flatMap((block) =>
+        block.type === "text"
+          ? [block]
+          : block.type === "toolCall"
+            ? [{ type: "text" as const, text: `(ran ${block.name})` }]
+            : [],
+      );
+      if (content.length > 0) {
+        result.push({ ...message, content });
+      }
+    } else if (Array.isArray(message.content)) {
+      // Consecutive user turns merge, as a tool output followed by a request would otherwise stand alone.
+      const previous = result.at(-1);
+      if (previous && previous.role === "user" && Array.isArray(previous.content)) {
+        previous.content.push(...message.content);
+      } else {
+        result.push({ ...message, content: [...message.content] });
+      }
+    } else {
+      pushUser(message.content, message.timestamp);
+    }
+  }
+  return result;
+}
 
 /** Do not retain a second copy of an oversized provider partial. */
 function boundedText(message: AssistantMessage): string | undefined {
@@ -278,13 +367,18 @@ export class DraftVerificationStream {
     return usage;
   }
 
-  private observe(message: AssistantMessage): void {
+  /** The figures check verifies against tool output, so tool activity is its expected shape. */
+  private get toolTurnChecks(): boolean {
+    return this.contract.figuresGrounded === true;
+  }
+
+  private observe(message: AssistantMessage, evidence: readonly string[] = []): void {
     this.hadToolActivity ||= hasToolCall(message);
     this.receipt.stop_reason = draftStopReason(message.stopReason);
     if (this.options.mode === "off") {
       return;
     }
-    this.receipt.checks = checkDraft(this.contract, boundedText(message) ?? "");
+    this.receipt.checks = checkDraft(this.contract, boundedText(message) ?? "", evidence);
     this.receipt.outcome = this.receipt.checks.some((check) => check.status === "fail")
       ? "failed"
       : this.receipt.checks.length > 0 &&
@@ -303,11 +397,11 @@ export class DraftVerificationStream {
         hasDraftChecks(this.contract) &&
         this.options.repairAllowed &&
         override.repairAllowed !== false &&
-        !this.hadToolActivity &&
-        !this.releasedText &&
+        (this.toolTurnChecks || (!this.hadToolActivity && !this.releasedText)) &&
         this.receipt.repair_attempts === 0 &&
         HTTP_APIS.has(model.api) &&
         !nativeOrCachedOptions(options);
+      const evidence = this.toolTurnChecks ? collectEvidence(context, this.options.prompt) : [];
       let observed: AssistantMessage | undefined;
       const parentAborted = () => this.options.abortSignal?.aborted || options?.signal?.aborted;
       const release = (message: AssistantMessage) => {
@@ -339,7 +433,7 @@ export class DraftVerificationStream {
           }
           if (forward) {
             if (event.type === "done" || event.type === "error") {
-              this.observe(message);
+              this.observe(message, evidence);
               if (this.options.mode === "repair" && this.receipt.outcome === "failed") {
                 this.receipt.outcome = "excluded";
               }
@@ -362,7 +456,7 @@ export class DraftVerificationStream {
         if (!canBuffer) {
           // Do not suppress or reconstruct off/shadow/ineligible streaming events.
           const original = await consume(await callInner(model, context, options), true);
-          this.observe(original);
+          this.observe(original, evidence);
           if (this.options.mode === "repair" && this.receipt.outcome === "failed") {
             this.receipt.outcome = "excluded";
           }
@@ -376,22 +470,28 @@ export class DraftVerificationStream {
           [this.options.abortSignal, options?.signal],
           this.options.deadline,
         );
-        this.observe(original);
+        this.observe(original, evidence);
         if (parentAborted()) {
           release(failedMessage(model, true, original));
           this.receipt.stop_reason = "aborted";
           return;
         }
+        const figuresRepair =
+          this.toolTurnChecks &&
+          this.receipt.checks.some(
+            (check) => check.kind === "figures_grounded" && check.status === "fail",
+          );
+        const repairCeilingMs = figuresRepair ? MAX_FIGURES_REPAIR_MS : MAX_REPAIR_MS;
         const repairMs = Math.min(
-          MAX_REPAIR_MS,
-          this.options.maxRepairMs ?? MAX_REPAIR_MS,
-          override.maxRepairMs ?? MAX_REPAIR_MS,
+          repairCeilingMs,
+          this.options.maxRepairMs ?? repairCeilingMs,
+          override.maxRepairMs ?? repairCeilingMs,
           this.options.deadline - Date.now(),
         );
         if (
           this.receipt.outcome !== "failed" ||
           original.stopReason !== "stop" ||
-          this.hadToolActivity ||
+          (this.hadToolActivity && !this.toolTurnChecks) ||
           !Number.isFinite(repairMs) ||
           repairMs <= 1_000
         ) {
@@ -408,13 +508,10 @@ export class DraftVerificationStream {
         try {
           candidate = await boundedOperation(
             async (signal) => {
+              const tokenCeiling = figuresRepair ? MAX_FIGURES_REPAIR_TOKENS : MAX_REPAIR_TOKENS;
               const maxTokens = Math.max(
                 1,
-                Math.min(
-                  MAX_REPAIR_TOKENS,
-                  options?.maxTokens ?? MAX_REPAIR_TOKENS,
-                  model.maxTokens,
-                ),
+                Math.min(tokenCeiling, options?.maxTokens ?? tokenCeiling, model.maxTokens),
               );
               const repairOptions = {
                 ...options,
@@ -425,15 +522,19 @@ export class DraftVerificationStream {
                 timeoutMs: repairMs,
                 onPayload: toolFreePayloadGuard(options, model.api, maxTokens),
               };
+              const ungrounded = figuresRepair
+                ? ungroundedFigures(boundedText(original) ?? "", evidence)
+                : [];
               const repairContext = {
                 ...context,
                 tools: [],
                 messages: [
-                  ...context.messages,
-                  original,
+                  ...(this.hadToolActivity
+                    ? toolFreeMessages([...context.messages, original])
+                    : [...context.messages, original]),
                   {
                     role: "user" as const,
-                    content: draftRepairInstruction(this.contract),
+                    content: draftRepairInstruction(this.contract, ungrounded),
                     timestamp: Date.now(),
                   },
                 ],
@@ -453,10 +554,10 @@ export class DraftVerificationStream {
           this.receipt.stop_reason = null; // No observed terminal means no invented provider stop/usage.
         }
         if (candidate) {
-          const checks = checkDraft(this.contract, boundedText(candidate) ?? "");
+          const checks = checkDraft(this.contract, boundedText(candidate) ?? "", evidence);
           if (
             !parentAborted() &&
-            !this.hadToolActivity &&
+            (!this.hadToolActivity || this.toolTurnChecks) &&
             candidate.stopReason === "stop" &&
             checks.length > 0 &&
             checks.every((check) => check.status === "pass")
