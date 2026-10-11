@@ -324,6 +324,37 @@ describe("runEmbeddedAttempt context engine sessionKey forwarding", () => {
     );
   });
 
+  it("preserves shared tool instructions when a late hook replaces the system prompt", async () => {
+    hoisted.createOpenClawCodingToolsMock.mockImplementationOnce(() => [
+      {
+        name: "publish",
+        sharedPromptGuidance: "Shared approval instructions.",
+        execute: async () => "",
+      },
+    ]);
+    hoisted.getGlobalHookRunnerMock.mockReturnValue({
+      hasHooks: vi.fn((name: string) => name === "before_prompt_build"),
+      runBeforePromptBuild: vi.fn(async () => ({ systemPrompt: "Hook replacement." })),
+      runBeforeAgentStart: vi.fn(),
+    });
+    let seenSystemPrompt = "";
+    await createContextEngineAttemptRunner({
+      contextEngine: createContextEngineBootstrapAndAssemble(),
+      sessionKey,
+      tempPaths,
+      attemptOverrides: { prompt: "visible ask", transcriptPrompt: "visible ask" },
+      sessionPrompt: async (session) => {
+        seenSystemPrompt = session.agent.state.systemPrompt ?? "";
+        session.messages = [
+          ...session.messages,
+          { role: "assistant", content: "done", timestamp: 2 },
+        ];
+      },
+    });
+    expect(seenSystemPrompt).toContain("Hook replacement.");
+    expect(seenSystemPrompt.match(/Shared approval instructions\./g)).toHaveLength(1);
+  });
+
   it("keeps bootstrap truncation warnings out of WebChat runtime context", async () => {
     const seen: { prompt?: string; messages?: unknown[] } = {};
     hoisted.resolveBootstrapContextForRunMock.mockResolvedValueOnce({

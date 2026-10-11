@@ -16,6 +16,8 @@ export function buildReplyPromptBodies(params: {
   transcriptBody?: string;
   threadContextNote?: string;
   systemEventBlocks?: string[];
+  /** A heartbeat's configured prompt is scheduled work, not supplied material: no brief note. */
+  isHeartbeat?: boolean;
 }): {
   mediaNote?: string;
   mediaReplyHint?: string;
@@ -41,10 +43,12 @@ export function buildReplyPromptBodies(params: {
   const mediaReplyHint = mediaNote ? REPLY_MEDIA_HINT : undefined;
   const pasteNote = buildInboundPasteNote(params.ctx);
   // The brief note is a one-turn instruction: it goes to the model, not the transcript.
-  const briefNote = buildInboundBriefNote({
-    body: params.effectiveBaseBody,
-    hasPasteNote: Boolean(pasteNote),
-  });
+  const briefNote = params.isHeartbeat
+    ? undefined
+    : buildInboundBriefNote({
+        body: params.effectiveBaseBody,
+        hasPasteNote: Boolean(pasteNote),
+      });
   const hasNotes = Boolean(mediaNote || pasteNote || briefNote);
   const queuedBodyRaw = hasNotes
     ? [mediaNote, mediaReplyHint, pasteNote, briefNote, queueBodyBase]

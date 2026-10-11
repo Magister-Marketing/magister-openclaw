@@ -40,6 +40,10 @@ import {
 } from "./bash-process-registry.js";
 import { renderExecUpdateText } from "./bash-tools.exec-output.js";
 import {
+  magisterSandboxExitHint,
+  magisterToolSandboxLauncher,
+} from "./bash-tools.magister-sandbox.js";
+import {
   buildDockerExecArgs,
   chunkString,
   clampWithDefault,
@@ -494,6 +498,7 @@ export function buildExecExitOutcome(params: {
   aggregated: string;
   durationMs: number;
   timeoutSec: number | null | undefined;
+  env?: NodeJS.ProcessEnv;
 }): ExecProcessOutcome {
   const exitCode = params.exit.exitCode ?? 0;
   const isNormalExit = params.exit.reason === "exit";
@@ -502,12 +507,18 @@ export function buildExecExitOutcome(params: {
     isNormalExit && !isShellFailure ? "completed" : "failed";
   if (status === "completed") {
     const exitMsg = exitCode !== 0 ? `\n\n(Command exited with code ${exitCode})` : "";
+    // A sandbox-caused failure carries the rule that prevents the next one.
+    const hint = magisterSandboxExitHint({
+      aggregated: params.aggregated,
+      exitCode,
+      env: params.env,
+    });
     return {
       status: "completed",
       exitCode,
       exitSignal: params.exit.exitSignal,
       durationMs: params.durationMs,
-      aggregated: params.aggregated + exitMsg,
+      aggregated: params.aggregated + exitMsg + (hint ? `\n${hint}` : ""),
       timedOut: false,
     };
   }
@@ -551,15 +562,7 @@ export function buildExecRuntimeErrorOutcome(params: {
   };
 }
 
-const MAGISTER_TOOL_SANDBOX_LAUNCHER = "/usr/local/bin/magister-tool-sandbox";
-
-export function magisterToolSandboxLauncher(
-  env: NodeJS.ProcessEnv = process.env,
-): string | undefined {
-  return env.MAGISTER_TOOL_SANDBOX_LAUNCHER === MAGISTER_TOOL_SANDBOX_LAUNCHER
-    ? MAGISTER_TOOL_SANDBOX_LAUNCHER
-    : undefined;
-}
+export { magisterToolSandboxLauncher } from "./bash-tools.magister-sandbox.js";
 
 export function buildMagisterToolSandboxArgv(params: {
   launcher: string;

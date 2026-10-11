@@ -2697,9 +2697,9 @@ export async function runEmbeddedAttempt(
           }
           const legacySystemPrompt = normalizeOptionalString(hookResult?.systemPrompt) ?? "";
           if (legacySystemPrompt) {
-            applySystemPromptOverrideToSession(activeSession, legacySystemPrompt);
-            systemPromptText = legacySystemPrompt;
-            log.debug(`hooks: applied systemPrompt override (${legacySystemPrompt.length} chars)`);
+            systemPromptText = appendToolPromptGuidance(legacySystemPrompt, effectiveTools);
+            applySystemPromptOverrideToSession(activeSession, systemPromptText);
+            log.debug(`hooks: applied systemPrompt override (${systemPromptText.length} chars)`);
           }
           const prependedOrAppendedSystemPrompt = composeSystemPromptWithHookContext({
             baseSystemPrompt: systemPromptText,
@@ -3796,3 +3796,4 @@ export async function runEmbeddedAttempt(
     restoreSkillEnv?.();
   }
 }
+import { appendToolPromptGuidance } from "../../tool-prompt-guidance.js";
