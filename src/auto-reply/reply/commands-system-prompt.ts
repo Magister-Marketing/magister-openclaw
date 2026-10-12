@@ -12,6 +12,7 @@ import { buildWorkspaceSkillSnapshot } from "../../agents/skills.js";
 import { getSkillsSnapshotVersion } from "../../agents/skills/refresh-state.js";
 import { buildSystemPromptParams } from "../../agents/system-prompt-params.js";
 import { buildAgentSystemPrompt } from "../../agents/system-prompt.js";
+import { appendToolPromptGuidance } from "../../agents/tool-prompt-guidance.js";
 import type { WorkspaceBootstrapFile } from "../../agents/workspace.js";
 import { getRemoteSkillEligibility } from "../../infra/skills-remote.js";
 import { listRegisteredPluginAgentPromptGuidance } from "../../plugins/command-registry-state.js";
@@ -174,5 +175,12 @@ export async function resolveCommandsSystemPromptBundle(
     memoryCitationsMode: params.cfg?.memory?.citations,
   });
 
-  return { systemPrompt, tools, skillsPrompt, bootstrapFiles, injectedFiles, sandboxRuntime };
+  return {
+    systemPrompt: appendToolPromptGuidance(systemPrompt, tools),
+    tools,
+    skillsPrompt,
+    bootstrapFiles,
+    injectedFiles,
+    sandboxRuntime,
+  };
 }

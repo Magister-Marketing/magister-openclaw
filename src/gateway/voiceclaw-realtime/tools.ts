@@ -1,5 +1,6 @@
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import { normalizeToolParameters } from "../../agents/pi-tools.schema.js";
+import { toolDescriptionWithSharedGuidance } from "../../agents/tool-prompt-guidance.js";
 import type { AnyAgentTool } from "../../agents/tools/common.js";
 import type { VoiceClawRealtimeToolDeclaration } from "./types.js";
 
@@ -22,7 +23,7 @@ export function toGeminiToolDeclarations(
     return [
       {
         name: normalized.name,
-        description: normalized.description ?? "",
+        description: toolDescriptionWithSharedGuidance(normalized) ?? "",
         parameters,
       },
     ];

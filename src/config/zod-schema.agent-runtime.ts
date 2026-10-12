@@ -632,7 +632,10 @@ const CommonToolPolicyFields = {
 };
 
 const DraftVerificationSchema = z
-  .object({ mode: z.enum(["off", "shadow", "repair"]).optional() })
+  .object({
+    mode: z.enum(["off", "shadow", "repair"]).optional(),
+    pastedData: z.enum(["off", "shadow", "repair"]).optional(),
+  })
   .strict()
   .optional();
 

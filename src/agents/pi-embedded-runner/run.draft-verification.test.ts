@@ -204,4 +204,31 @@ describe("Pi draft stream integration", () => {
       }
     },
   );
+
+  it.each([
+    { pastedData: "repair", paste: true, expectedMode: "repair" },
+    { pastedData: "off", paste: true, expectedMode: undefined },
+    { pastedData: "repair", paste: false, expectedMode: "shadow" },
+  ] as const)(
+    "a pasted-data turn takes tools.draftVerification.pastedData ($pastedData, paste=$paste)",
+    async ({ pastedData, paste, expectedMode }) => {
+      let constructed: DraftVerificationStream | undefined;
+      mockedRunEmbeddedAttempt.mockImplementation(async (raw) => {
+        const params = raw as EmbeddedRunAttemptParams;
+        constructed = params.draftVerification;
+        return makeAttemptResult({ lastAssistant: message("done", 3), assistantTexts: ["done"] });
+      });
+      await runEmbeddedPiAgent({
+        ...overflowBaseRunParams,
+        prompt: paste
+          ? "[pasted data saved: inbox/a.csv (3 lines, 20 B); the same content is inline below]\n\nSum it.\n\na,b\n1,2"
+          : "Sum these: 1, 2.",
+        config: { tools: { draftVerification: { mode: "shadow", pastedData } } },
+      });
+      expect(constructed?.receipt.mode).toBe(expectedMode);
+      expect(constructed?.contract.figuresGrounded).toBe(
+        expectedMode === undefined || !paste ? undefined : true,
+      );
+    },
+  );
 });

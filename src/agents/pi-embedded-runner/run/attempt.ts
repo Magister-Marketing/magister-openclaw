@@ -2697,9 +2697,9 @@ export async function runEmbeddedAttempt(
           }
           const legacySystemPrompt = normalizeOptionalString(hookResult?.systemPrompt) ?? "";
           if (legacySystemPrompt) {
-            applySystemPromptOverrideToSession(activeSession, legacySystemPrompt);
-            systemPromptText = legacySystemPrompt;
-            log.debug(`hooks: applied systemPrompt override (${legacySystemPrompt.length} chars)`);
+            systemPromptText = appendToolPromptGuidance(legacySystemPrompt, effectiveTools);
+            applySystemPromptOverrideToSession(activeSession, systemPromptText);
+            log.debug(`hooks: applied systemPrompt override (${systemPromptText.length} chars)`);
           }
           const prependedOrAppendedSystemPrompt = composeSystemPromptWithHookContext({
             baseSystemPrompt: systemPromptText,
@@ -2776,7 +2776,10 @@ export async function runEmbeddedAttempt(
                 !shouldUseWebSocketTransport &&
                 !googlePromptCacheStreamFn &&
                 !effectiveAgentTransport.startsWith("websocket"),
-              maxRepairMs: idleTimeoutMs > 0 ? Math.min(30_000, idleTimeoutMs - 1_000) : 30_000,
+              // The wrapper caps each kind of correction itself (30 s for a
+              // request-side fix, longer for a pasted-data analysis); the idle
+              // watchdog is the only bound that belongs here.
+              maxRepairMs: idleTimeoutMs > 0 ? idleTimeoutMs - 1_000 : undefined,
             },
           );
         }
@@ -3793,3 +3796,4 @@ export async function runEmbeddedAttempt(
     restoreSkillEnv?.();
   }
 }
+import { appendToolPromptGuidance } from "../../tool-prompt-guidance.js";

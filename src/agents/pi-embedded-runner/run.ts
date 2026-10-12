@@ -43,7 +43,7 @@ import {
 } from "../command/session.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../defaults.js";
 import { DraftVerificationStream } from "../draft-verification-stream.js";
-import { draftStopReason } from "../draft-verification.js";
+import { draftStopReason, PASTE_NOTE_MARKER } from "../draft-verification.js";
 import { isStrictAgenticExecutionContractActive } from "../execution-contract.js";
 import {
   coerceToFailoverError,
@@ -523,13 +523,18 @@ export async function runEmbeddedPiAgent(
         agentHarnessId: params.agentHarnessId,
       });
       const pluginHarnessOwnsTransport = agentHarness.id !== "pi";
+      const agentDraftConfig = params.config
+        ? resolveAgentConfig(params.config, workspaceResolution.agentId)?.tools?.draftVerification
+        : undefined;
+      const globalDraftConfig = params.config?.tools?.draftVerification;
+      // A pasted-data turn takes its own mode: its figures check verifies a
+      // tool-using turn against the tool output, which the request-side
+      // checks never do.
+      const pastedDataMode = params.prompt.includes(PASTE_NOTE_MARKER)
+        ? (agentDraftConfig?.pastedData ?? globalDraftConfig?.pastedData)
+        : undefined;
       const draftMode =
-        (params.config
-          ? resolveAgentConfig(params.config, workspaceResolution.agentId)?.tools?.draftVerification
-              ?.mode
-          : undefined) ??
-        params.config?.tools?.draftVerification?.mode ??
-        "off";
+        pastedDataMode ?? agentDraftConfig?.mode ?? globalDraftConfig?.mode ?? "off";
       if (
         draftMode !== "off" &&
         !pluginHarnessOwnsTransport &&

@@ -1,4 +1,5 @@
 import { annotateInterSessionPromptText } from "../../sessions/input-provenance.js";
+import { buildInboundBriefNote } from "../brief-note.js";
 import { buildInboundMediaNote } from "../media-note.js";
 import { buildInboundPasteNote } from "../paste-note.js";
 import type { MsgContext, TemplateContext } from "../templating.js";
@@ -15,10 +16,13 @@ export function buildReplyPromptBodies(params: {
   transcriptBody?: string;
   threadContextNote?: string;
   systemEventBlocks?: string[];
+  /** A heartbeat's configured prompt is scheduled work, not supplied material: no brief note. */
+  isHeartbeat?: boolean;
 }): {
   mediaNote?: string;
   mediaReplyHint?: string;
   pasteNote?: string;
+  briefNote?: string;
   prefixedCommandBody: string;
   queuedBody: string;
   transcriptCommandBody: string;
@@ -38,21 +42,36 @@ export function buildReplyPromptBodies(params: {
   const mediaNote = buildInboundMediaNote(params.ctx);
   const mediaReplyHint = mediaNote ? REPLY_MEDIA_HINT : undefined;
   const pasteNote = buildInboundPasteNote(params.ctx);
-  const hasNotes = Boolean(mediaNote || pasteNote);
+  // The brief note is a one-turn instruction: it goes to the model, not the transcript.
+  const briefNote = params.isHeartbeat
+    ? undefined
+    : buildInboundBriefNote({
+        body: params.effectiveBaseBody,
+        hasPasteNote: Boolean(pasteNote),
+      });
+  const hasNotes = Boolean(mediaNote || pasteNote || briefNote);
   const queuedBodyRaw = hasNotes
-    ? [mediaNote, mediaReplyHint, pasteNote, queueBodyBase].filter(Boolean).join("\n").trim()
+    ? [mediaNote, mediaReplyHint, pasteNote, briefNote, queueBodyBase]
+        .filter(Boolean)
+        .join("\n")
+        .trim()
     : queueBodyBase;
   const prefixedCommandBodyRaw = hasNotes
-    ? [mediaNote, mediaReplyHint, pasteNote, prefixedBody].filter(Boolean).join("\n").trim()
+    ? [mediaNote, mediaReplyHint, pasteNote, briefNote, prefixedBody]
+        .filter(Boolean)
+        .join("\n")
+        .trim()
     : prefixedBody;
   const transcriptBody = params.transcriptBody ?? params.effectiveBaseBody;
-  const transcriptCommandBodyRaw = hasNotes
-    ? [mediaNote, pasteNote, transcriptBody].filter(Boolean).join("\n").trim()
-    : transcriptBody;
+  const transcriptCommandBodyRaw =
+    mediaNote || pasteNote
+      ? [mediaNote, pasteNote, transcriptBody].filter(Boolean).join("\n").trim()
+      : transcriptBody;
   return {
     mediaNote,
     mediaReplyHint,
     pasteNote,
+    briefNote,
     prefixedCommandBody: annotateInterSessionPromptText(
       prefixedCommandBodyRaw,
       params.sessionCtx.InputProvenance,
