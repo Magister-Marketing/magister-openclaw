@@ -1576,6 +1576,7 @@ describe("resolvePluginTools optional tools", () => {
       return {
         ...makeTool("cached_tool"),
         sideEffect: "external_write" as const,
+        sharedPromptGuidance: "Shared permission instructions.",
         async execute() {
           return { content: [{ type: "text", text: ctx.sessionId ?? "missing" }] };
         },
@@ -1608,6 +1609,8 @@ describe("resolvePluginTools optional tools", () => {
     expect(second[0]).not.toBe(first[0]);
     expect(first[0]?.sideEffect).toBe("external_write");
     expect(second[0]?.sideEffect).toBe("external_write");
+    expect(first[0]?.sharedPromptGuidance).toBe("Shared permission instructions.");
+    expect(second[0]?.sharedPromptGuidance).toBe("Shared permission instructions.");
     expect(loadOpenClawPluginsMock).not.toHaveBeenCalled();
 
     await expect(second[0]?.execute("call", {}, undefined)).resolves.toEqual({

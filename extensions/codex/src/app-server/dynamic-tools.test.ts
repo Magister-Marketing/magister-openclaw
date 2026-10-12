@@ -85,6 +85,16 @@ afterEach(() => {
 });
 
 describe("createCodexDynamicToolBridge", () => {
+  it("keeps shared instructions in dynamic tool descriptions", () => {
+    const bridge = createCodexDynamicToolBridge({
+      tools: [createTool({ sharedPromptGuidance: "Shared approval instructions." })],
+      signal: new AbortController().signal,
+    });
+    expect(bridge.specs[0].description).toBe(
+      "Convert text to speech.\n\nShared approval instructions.",
+    );
+  });
+
   it.each([
     { toolName: "tts", mediaUrl: "/tmp/reply.opus", audioAsVoice: true },
     { toolName: "image_generate", mediaUrl: "/tmp/generated.png" },

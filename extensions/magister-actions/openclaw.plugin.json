@@ -82,6 +82,7 @@
       "magister_queue_touches",
       "magister_list_touches",
       "magister_send_email",
+      "magister_create_gmail_draft",
       "magister_request_network_access",
       "magister_send_agent_email",
       "magister_create_social_draft",

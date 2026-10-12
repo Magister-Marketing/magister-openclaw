@@ -1000,12 +1000,34 @@ describe("agentCommand paste materialization", () => {
 
       const prompt = String(getLastEmbeddedCall()?.prompt);
       const match =
-        /^\[pasted data saved: (inbox\/ads_daily-[a-z0-9]{8}\.csv) \(121 lines, [0-9.]+ KB\); the same content is inline below; first read the SKILL.md that covers this task, then compute from the file rather than from the chat text\]\n\n/.exec(
+        /^\[pasted data saved: (inbox\/ads_daily-[a-z0-9]{8}\.csv) \(121 lines, [0-9.]+ KB\); the same content is inline below; first read the SKILL.md that covers this task, then compute from the file rather than from the chat text; the write-up refers to the data as supplied and names no file, folder, or other export\]\n\n/.exec(
           prompt,
         );
       expect(match).not.toBeNull();
       expect(prompt.endsWith(message)).toBe(true);
       expect(fs.readFileSync(path.join(workspaceDir, match![1]), "utf8")).toBe(`${csv}\n`);
+    });
+  });
+
+  it("prefixes a long message without a data file with the brief note, sent body only", async () => {
+    await withTempHome(async (home) => {
+      const store = path.join(home, "sessions.json");
+      const cfg = mockConfig(home, store);
+      fs.mkdirSync(cfg.agents!.defaults!.workspace!, { recursive: true });
+      const brief = `Respond to the attached brief.\n\n## Supplied source: cmo-brief.md\n\n${"Budget cap $12,000; minimums already promised. ".repeat(40)}`;
+      expect(brief.length).toBeGreaterThan(1_500);
+
+      await agentCommandFromIngress(
+        { message: brief, to: "+1222", senderIsOwner: true, allowModelOverride: false },
+        runtime,
+      );
+
+      const prompt = String(getLastEmbeddedCall()?.prompt);
+      expect(prompt).toMatch(
+        /^\[long message: [\d,]+ chars of supplied material inline below; before the deliverable, read the SKILL\.md that covers it, if one does; .*never assumed\]\n\n/,
+      );
+      expect(prompt.endsWith(brief)).toBe(true);
+      expect(prompt).not.toContain("[pasted data saved:");
     });
   });
 

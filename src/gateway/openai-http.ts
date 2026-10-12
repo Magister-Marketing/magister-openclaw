@@ -188,7 +188,17 @@ function writeAssistantContentChunk(
   });
 }
 
-function writeAssistantStopChunk(res: ServerResponse, params: { runId: string; model: string }) {
+function resolveChatCompletionFinishReason(result: unknown): "stop" | "length" {
+  const stopReason = (result as { meta?: { stopReason?: unknown } } | null)?.meta?.stopReason;
+  // The selected answer owns termination; a rejected correction can have a
+  // different stop reason in its verification receipt.
+  return stopReason === "length" || stopReason === "max_tokens" ? "length" : "stop";
+}
+
+function writeAssistantStopChunk(
+  res: ServerResponse,
+  params: { runId: string; model: string; finishReason: "stop" | "length" },
+) {
   writeSse(res, {
     id: params.runId,
     object: "chat.completion.chunk",
@@ -198,7 +208,7 @@ function writeAssistantStopChunk(res: ServerResponse, params: { runId: string; m
       {
         index: 0,
         delta: {},
-        finish_reason: "stop",
+        finish_reason: params.finishReason,
       },
     ],
   });
@@ -791,7 +801,7 @@ export async function handleOpenAiHttpRequest(
           {
             index: 0,
             message: { role: "assistant", content },
-            finish_reason: "stop",
+            finish_reason: resolveChatCompletionFinishReason(result),
           },
         ],
         usage,
@@ -829,6 +839,7 @@ export async function handleOpenAiHttpRequest(
     | undefined;
   let finalizeRequested = false;
   let commandSettled = false;
+  let finalFinishReason: "stop" | "length" = "stop";
   let terminalError = false;
   let closed = false;
   let terminalFrameWritten = false;
@@ -875,7 +886,7 @@ export async function handleOpenAiHttpRequest(
     stopWatchingDisconnect();
     unsubscribe();
     if (!wroteStopChunk) {
-      writeAssistantStopChunk(res, { runId, model });
+      writeAssistantStopChunk(res, { runId, model, finishReason: finalFinishReason });
       wroteStopChunk = true;
     }
     if (streamIncludeUsage && finalUsage) {
@@ -1039,6 +1050,7 @@ export async function handleOpenAiHttpRequest(
       }
 
       finalUsage = resolveChatCompletionUsage(result);
+      finalFinishReason = resolveChatCompletionFinishReason(result);
       commandSettled = true;
 
       const finalResult = result as {

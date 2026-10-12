@@ -1076,6 +1076,15 @@ function trimSkillDescription(description: string, cap: number): string {
   return `${description.slice(0, Math.max(0, cap - 1)).trimEnd()}…`;
 }
 
+/** Lossless catalog rows; keep the upstream XML formatter unchanged. */
+export function formatSkillsCatalogRows(skills: Skill[]): string {
+  return [
+    "When a skill references a relative path, resolve it against the directory containing that skill's SKILL.md.",
+    "Available skills: each JSON row is [name, description, location].",
+    ...skills.map((skill) => JSON.stringify([skill.name, skill.description ?? "", skill.filePath])),
+  ].join("\n");
+}
+
 /**
  * Render the COMPLETE skills catalog (every skill, name + description +
  * location) for the cache-stable system-prompt prefix. Unlike the legacy
@@ -1085,13 +1094,11 @@ function trimSkillDescription(description: string, cap: number): string {
  * compact, so descriptions survive as long as the budget allows.
  */
 export function renderSkillsCatalogPrompt(params: { skills: Skill[]; maxChars: number }): string {
-  const skills = compactSkillPaths(params.skills)
-    .slice()
-    .sort((a, b) => a.name.localeCompare(b.name, "en"));
+  const skills = params.skills.slice().sort((a, b) => a.name.localeCompare(b.name, "en"));
   if (skills.length === 0) {
     return "";
   }
-  const full = formatSkillsForPrompt(skills);
+  const full = formatSkillsCatalogRows(skills);
   if (full.length + SKILL_READ_NORM.length + 1 <= params.maxChars) {
     return [SKILL_READ_NORM, full].join("\n");
   }
@@ -1100,7 +1107,7 @@ export function renderSkillsCatalogPrompt(params: { skills: Skill[]; maxChars: n
       ...skill,
       description: trimSkillDescription(skill.description ?? "", cap),
     }));
-    const rendered = formatSkillsForPrompt(trimmed);
+    const rendered = formatSkillsCatalogRows(trimmed);
     if (
       rendered.length + SKILL_READ_NORM.length + CATALOG_TRIM_NOTE.length + 2 <=
       params.maxChars
