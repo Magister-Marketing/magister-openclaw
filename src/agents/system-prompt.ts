@@ -645,6 +645,8 @@ export function buildAgentSystemPrompt(params: {
   reasoningTagHint?: boolean;
   toolNames?: string[];
   toolSummaries?: Record<string, string>;
+  /** `- name: summary` lines for tools whose schema loads on demand (tool-schema-deferral.ts). */
+  deferredToolLines?: string[];
   modelAliasLines?: string[];
   userTimezone?: string;
   userTime?: string;
@@ -700,6 +702,8 @@ export function buildAgentSystemPrompt(params: {
   const sandboxedRuntime = params.sandboxInfo?.enabled === true;
   const acpSpawnRuntimeEnabled = acpEnabled && !sandboxedRuntime;
   const coreToolSummaries: Record<string, string> = {
+    tool_describe:
+      "Load a deferred-schema tool's full schema; the tool is then callable by its own name for the rest of the conversation",
     read: "Read file contents",
     write: "Create or overwrite files",
     edit: "Make precise edits to files",
@@ -804,6 +808,9 @@ export function buildAgentSystemPrompt(params: {
     const name = resolveToolName(tool);
     toolLines.push(summary ? `- ${name}: ${summary}` : `- ${name}`);
   }
+  const deferredToolLines = (params.deferredToolLines ?? [])
+    .map((line) => line.trim())
+    .filter(Boolean);
 
   const hasGateway = availableTools.has("gateway");
   const readToolName = resolveToolName("read");
@@ -924,6 +931,7 @@ export function buildAgentSystemPrompt(params: {
     workspaceDir: params.workspaceDir,
     promptMode,
     toolLines,
+    deferredToolLines,
     hasGateway,
     readToolName,
     execToolName,
@@ -978,6 +986,13 @@ export function buildAgentSystemPrompt(params: {
             "- subagents: list/steer/kill sub-agent runs",
             '- session_status: show usage/time/model state and answer "what model are we using?"',
           ].join("\n"),
+      ...(deferredToolLines.length > 0
+        ? [
+            "",
+            "Deferred-schema tools (listed by name; their schemas are not loaded). Before the first call to one of them in a conversation, call tool_describe with its exact name: that loads the schema, and the tool becomes callable by its own name for the rest of the conversation. Once per tool per conversation; a tool listed above needs no tool_describe. Permissions and results are unchanged.",
+            ...deferredToolLines,
+          ]
+        : []),
       "TOOLS.md does not control tool availability; it is user guidance for how to use external tools.",
       `For long waits, avoid rapid poll loops: use ${execToolName} with enough yieldMs or ${processToolName}(action=poll, timeout=<ms>).`,
       // Cron and subagent sessions (minimal mode) collect child results inside

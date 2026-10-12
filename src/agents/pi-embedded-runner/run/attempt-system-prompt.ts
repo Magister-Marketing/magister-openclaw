@@ -42,7 +42,10 @@ export function buildAttemptSystemPrompt(
           bootstrapTruncationNotice: params.embeddedSystemPrompt.bootstrapTruncationNotice,
           contextFiles: params.embeddedSystemPrompt.contextFiles,
         }),
-        params.embeddedSystemPrompt.tools,
+        [
+          ...params.embeddedSystemPrompt.tools,
+          ...(params.embeddedSystemPrompt.deferredTools ?? []),
+        ],
       )
     : buildEmbeddedSystemPrompt(params.embeddedSystemPrompt);
 

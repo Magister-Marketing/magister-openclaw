@@ -14,6 +14,7 @@ export type CachedPluginToolDescriptor = {
   sharedPromptGuidance?: string;
   ownerOnly?: boolean;
   sideEffect?: AnyAgentTool["sideEffect"];
+  schemaDelivery?: AnyAgentTool["schemaDelivery"];
   optional: boolean;
 };
 
@@ -177,6 +178,7 @@ export function capturePluginToolDescriptor(params: {
       : {}),
     ...(params.tool.ownerOnly === true ? { ownerOnly: true } : {}),
     ...(params.tool.sideEffect ? { sideEffect: params.tool.sideEffect } : {}),
+    ...(params.tool.schemaDelivery ? { schemaDelivery: params.tool.schemaDelivery } : {}),
     optional: params.optional,
     descriptor: {
       name: params.tool.name,

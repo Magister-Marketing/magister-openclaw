@@ -109,6 +109,8 @@ type ActionContract = {
   input_schema: Record<string, unknown>;
   side_effect: ActionEnvelope["side_effect"];
   approval_policy: "none" | "exact_payload";
+  /** Gateway-reviewed prompt composition (gateway/app/actions/schema_delivery.py). */
+  schema_delivery: "eager" | "deferred";
 };
 
 type Contract = {
@@ -982,6 +984,7 @@ export function createMagisterActionTool(
     name: action.tool_name,
     label: action.tool_name,
     sideEffect: action.side_effect,
+    schemaDelivery: action.schema_delivery,
     description:
       action.approval_policy === "exact_payload"
         ? `${action.description} Exact-action permission: follow the shared Magister action permissions instructions.`

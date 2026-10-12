@@ -130,7 +130,12 @@ describe("Magister action manifest contract", () => {
         expect(properties.has(required)).toBe(true);
       }
       expect(JSON.stringify(row.input_schema)).not.toContain("project_id");
+      // Prompt composition reviewed Gateway-side; the runtime only reads it.
+      expect(["eager", "deferred"]).toContain(row.schema_delivery);
     }
+    expect(nativeActionContract.actions.some((row) => row.schema_delivery === "deferred")).toBe(
+      true,
+    );
   });
 
   it("routes exact inline permissions through the trusted server-owned card", () => {
@@ -168,6 +173,7 @@ describe("Magister action manifest contract", () => {
       expect(tool.parameters).toEqual(row.input_schema);
       expect(tool.description).toContain(row.description);
       expect(tool.sideEffect).toBe(row.side_effect);
+      expect(tool.schemaDelivery).toBe(row.schema_delivery);
       if (row.approval_policy === "none") {
         expect(tool.sharedPromptGuidance).toBeUndefined();
       }

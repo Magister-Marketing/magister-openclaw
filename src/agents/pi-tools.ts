@@ -79,6 +79,7 @@ import {
   normalizeToolName,
   resolveToolProfilePolicy,
 } from "./tool-policy.js";
+import { createToolDescribeTool } from "./tool-schema-deferral.js";
 import { resolveWorkspaceRoot } from "./workspace-dir.js";
 
 function isOpenAIProvider(provider?: string) {
@@ -693,6 +694,9 @@ export function createOpenClawCodingTools(options?: {
           resolvedConfig: options?.config,
         });
   const tools: AnyAgentTool[] = [
+    // Control tool for deferred schemas; policy may deny it, which turns
+    // deferral off for the run (tool-schema-deferral.ts).
+    createToolDescribeTool(),
     ...base,
     ...(includeBaseCodingTools && sandboxRoot
       ? allowWorkspaceWrites

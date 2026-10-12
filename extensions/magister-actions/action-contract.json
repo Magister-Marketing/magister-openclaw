@@ -25,6 +25,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_list_assets"
@@ -61,6 +62,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_read_asset"
@@ -78,6 +80,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_get_brand"
@@ -95,6 +98,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_list_integrations"
@@ -130,6 +134,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "deferred",
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_refresh_integration"
@@ -147,6 +152,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_get_marketing_plan"
@@ -164,6 +170,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_list_workflow_status"
@@ -181,6 +188,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_list_workflows"
@@ -206,6 +214,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_get_workflow"
@@ -223,6 +232,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_list_workflow_templates"
@@ -253,6 +263,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_fork_workflow_template"
@@ -413,6 +424,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "deferred",
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_create_workflow"
@@ -576,6 +588,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "deferred",
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_update_workflow"
@@ -629,6 +642,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "deferred",
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_schedule_workflow"
@@ -661,6 +675,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "deferred",
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_unschedule_workflow"
@@ -689,6 +704,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_run_workflow"
@@ -728,6 +744,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_update_plan_item_status"
@@ -745,6 +762,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_list_firehose_matches"
@@ -774,6 +792,7 @@
         "type": "object"
       },
       "retry_policy": "none",
+      "schema_delivery": "eager",
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_check_back"
@@ -804,6 +823,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "deferred",
       "side_effect": "internal_write",
       "spend_limited": true,
       "tool_name": "magister_recompile_marketing_plan"
@@ -828,6 +848,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_get_compile_run"
@@ -852,6 +873,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_get_audit_health"
@@ -869,6 +891,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_list_analytics_properties"
@@ -920,6 +943,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_read_analytics_snapshots"
@@ -964,6 +988,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_read_analytics_breakdown"
@@ -991,6 +1016,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_list_marketing_events"
@@ -1013,6 +1039,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_list_trackers"
@@ -1037,6 +1064,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_get_tracker"
@@ -1089,6 +1117,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_create_tracker"
@@ -1129,6 +1158,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "deferred",
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_update_tracker"
@@ -1170,6 +1200,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "deferred",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_get_tracker_scorecard"
@@ -1222,6 +1253,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "deferred",
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_record_tracker_checkin"
@@ -1239,6 +1271,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_get_brief_context"
@@ -1524,6 +1557,7 @@
         "type": "object"
       },
       "retry_policy": "read_after_timeout",
+      "schema_delivery": "deferred",
       "side_effect": "external_write",
       "spend_limited": false,
       "tool_name": "magister_send_brief"
@@ -1541,6 +1575,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_list_skills"
@@ -1565,6 +1600,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_get_skill"
@@ -1589,6 +1625,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_list_aeo_audits"
@@ -1620,6 +1657,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "deferred",
       "side_effect": "internal_write",
       "spend_limited": true,
       "tool_name": "magister_run_aeo_audit"
@@ -1644,6 +1682,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_get_aeo_audit"
@@ -1661,6 +1700,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_list_ai_visibility_sets"
@@ -1685,6 +1725,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_get_ai_visibility_set"
@@ -1716,6 +1757,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "deferred",
       "side_effect": "internal_write",
       "spend_limited": true,
       "tool_name": "magister_run_ai_visibility_set"
@@ -1761,6 +1803,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "deferred",
       "side_effect": "none",
       "spend_limited": true,
       "tool_name": "magister_suggest_ai_visibility_prompts"
@@ -1855,6 +1898,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "deferred",
       "side_effect": "internal_write",
       "spend_limited": true,
       "tool_name": "magister_create_ai_visibility_set"
@@ -1884,6 +1928,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": true,
       "tool_name": "magister_keyword_research"
@@ -1925,6 +1970,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "deferred",
       "side_effect": "internal_write",
       "spend_limited": true,
       "tool_name": "magister_discover_influencers"
@@ -1950,6 +1996,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_get_influencer_discovery"
@@ -1967,6 +2014,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_list_social_accounts"
@@ -1990,6 +2038,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_list_social_posts"
@@ -2018,6 +2067,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_get_social_analytics"
@@ -2035,6 +2085,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_list_ad_campaigns"
@@ -2060,6 +2111,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_get_ad_analytics"
@@ -2085,6 +2137,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_get_action_approval"
@@ -2133,6 +2186,7 @@
         "type": "object"
       },
       "retry_policy": "none",
+      "schema_delivery": "deferred",
       "side_effect": "spend",
       "spend_limited": true,
       "tool_name": "magister_generate_gemini_image"
@@ -2216,6 +2270,7 @@
         "type": "object"
       },
       "retry_policy": "none",
+      "schema_delivery": "deferred",
       "side_effect": "spend",
       "spend_limited": true,
       "tool_name": "magister_generate_elevenlabs_voice"
@@ -2296,6 +2351,7 @@
         "type": "object"
       },
       "retry_policy": "none",
+      "schema_delivery": "deferred",
       "side_effect": "spend",
       "spend_limited": true,
       "tool_name": "magister_generate_ideogram_image"
@@ -2339,6 +2395,7 @@
         "type": "object"
       },
       "retry_policy": "none",
+      "schema_delivery": "deferred",
       "side_effect": "spend",
       "spend_limited": true,
       "tool_name": "magister_submit_fal_generation"
@@ -2376,6 +2433,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "deferred",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_get_fal_generation"
@@ -2407,6 +2465,7 @@
         "type": "object"
       },
       "retry_policy": "none",
+      "schema_delivery": "deferred",
       "side_effect": "external_write",
       "spend_limited": true,
       "tool_name": "magister_signed_out_browser_task"
@@ -2496,6 +2555,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_integration_read"
@@ -2590,6 +2650,7 @@
         "type": "object"
       },
       "retry_policy": "read_after_timeout",
+      "schema_delivery": "eager",
       "side_effect": "external_write",
       "spend_limited": false,
       "tool_name": "magister_integration_change"
@@ -2684,6 +2745,7 @@
         "type": "object"
       },
       "retry_policy": "read_after_timeout",
+      "schema_delivery": "deferred",
       "side_effect": "spend",
       "spend_limited": false,
       "tool_name": "magister_integration_spend"
@@ -2778,6 +2840,7 @@
         "type": "object"
       },
       "retry_policy": "read_after_timeout",
+      "schema_delivery": "deferred",
       "side_effect": "delete",
       "spend_limited": false,
       "tool_name": "magister_integration_delete"
@@ -2894,6 +2957,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_save_prospects"
@@ -2937,6 +3001,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_list_prospects"
@@ -2969,6 +3034,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_update_prospect"
@@ -3002,6 +3068,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_add_suppression"
@@ -3031,6 +3098,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_list_suppressions"
@@ -3067,6 +3135,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_create_campaign"
@@ -3084,6 +3153,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_list_campaigns"
@@ -3153,6 +3223,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_queue_touches"
@@ -3198,6 +3269,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_list_touches"
@@ -3261,6 +3333,7 @@
         "type": "object"
       },
       "retry_policy": "read_after_timeout",
+      "schema_delivery": "deferred",
       "side_effect": "external_write",
       "spend_limited": false,
       "tool_name": "magister_send_email"
@@ -3329,6 +3402,7 @@
         "type": "object"
       },
       "retry_policy": "read_after_timeout",
+      "schema_delivery": "eager",
       "side_effect": "external_write",
       "spend_limited": false,
       "tool_name": "magister_create_gmail_draft"
@@ -3367,6 +3441,7 @@
         "type": "object"
       },
       "retry_policy": "read_after_timeout",
+      "schema_delivery": "deferred",
       "side_effect": "external_write",
       "spend_limited": false,
       "tool_name": "magister_request_network_access"
@@ -3432,6 +3507,7 @@
         "type": "object"
       },
       "retry_policy": "read_after_timeout",
+      "schema_delivery": "deferred",
       "side_effect": "external_write",
       "spend_limited": false,
       "tool_name": "magister_send_agent_email"
@@ -3497,6 +3573,7 @@
         "type": "object"
       },
       "retry_policy": "none",
+      "schema_delivery": "deferred",
       "side_effect": "draft",
       "spend_limited": false,
       "tool_name": "magister_create_social_draft"
@@ -3534,6 +3611,7 @@
         "type": "object"
       },
       "retry_policy": "read_after_timeout",
+      "schema_delivery": "deferred",
       "side_effect": "external_write",
       "spend_limited": false,
       "tool_name": "magister_schedule_social_post"
@@ -3566,6 +3644,7 @@
         "type": "object"
       },
       "retry_policy": "read_after_timeout",
+      "schema_delivery": "deferred",
       "side_effect": "external_write",
       "spend_limited": false,
       "tool_name": "magister_publish_social_post"
@@ -3658,6 +3737,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "deferred",
       "side_effect": "draft",
       "spend_limited": true,
       "tool_name": "magister_create_ad_campaign"
@@ -3690,6 +3770,7 @@
         "type": "object"
       },
       "retry_policy": "read_after_timeout",
+      "schema_delivery": "deferred",
       "side_effect": "spend",
       "spend_limited": true,
       "tool_name": "magister_activate_ad_campaign"
@@ -3722,6 +3803,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "deferred",
       "side_effect": "external_write",
       "spend_limited": false,
       "tool_name": "magister_pause_ad_campaign"
@@ -3777,6 +3859,7 @@
         "type": "object"
       },
       "retry_policy": "none",
+      "schema_delivery": "deferred",
       "side_effect": "draft",
       "spend_limited": false,
       "tool_name": "magister_create_blog_post"
@@ -3828,6 +3911,7 @@
         "type": "object"
       },
       "retry_policy": "none",
+      "schema_delivery": "deferred",
       "side_effect": "draft",
       "spend_limited": false,
       "tool_name": "magister_update_blog_post"
@@ -3904,6 +3988,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "draft",
       "spend_limited": false,
       "tool_name": "magister_open_pull_request"
@@ -3943,6 +4028,7 @@
         "type": "object"
       },
       "retry_policy": "none",
+      "schema_delivery": "deferred",
       "side_effect": "draft",
       "spend_limited": false,
       "tool_name": "magister_create_product"
@@ -3986,6 +4072,7 @@
         "type": "object"
       },
       "retry_policy": "read_after_timeout",
+      "schema_delivery": "deferred",
       "side_effect": "external_write",
       "spend_limited": false,
       "tool_name": "magister_publish_content"
@@ -4023,6 +4110,7 @@
         "type": "object"
       },
       "retry_policy": "read_after_timeout",
+      "schema_delivery": "deferred",
       "side_effect": "external_write",
       "spend_limited": false,
       "tool_name": "magister_merge_pull_request"
@@ -4153,6 +4241,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "deferred",
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_submit_workflow_completion"
@@ -4195,6 +4284,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_checkout_repo"
@@ -4233,6 +4323,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_prepare_repo_commit"
@@ -4285,6 +4376,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "draft",
       "spend_limited": false,
       "tool_name": "magister_push_repo_branch"
@@ -4317,6 +4409,7 @@
         "type": "object"
       },
       "retry_policy": "backoff",
+      "schema_delivery": "eager",
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_install_repo_dependencies"
@@ -4372,11 +4465,12 @@
         "type": "object"
       },
       "retry_policy": "none",
+      "schema_delivery": "eager",
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "922e6ee2dd6279dd7ea7eae554185a9efc978bf35b9010ff1f2c4a9e1230521d",
+  "registry_revision": "ff806c95431a177c4fefd1db10b29dcca8a0b19afddc681d3687347469eb5305",
   "schema_version": 1
 }
