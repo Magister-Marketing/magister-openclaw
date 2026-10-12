@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { IngestionError, MAX_EXTRACTED_BYTES } from "./corpus-contract.js";
+import { IngestionError, MAX_EXTRACTED_BYTES, stateRoot } from "./corpus-contract.js";
 
 const MIB = 1024 * 1024;
 
@@ -39,6 +39,22 @@ export function corpusQuotaConfig(env: NodeJS.ProcessEnv = process.env): CorpusQ
   };
 }
 
+/** Entries this process may not read are skipped rather than fatal. `.magister`
+ *  is shared with the root sandbox supervisor, which creates per-attempt
+ *  directories owned by the sandbox user (0700, umask 0027); refusing a whole
+ *  upload because one of those is unreadable turned a quota measurement into
+ *  an outage (MAGISTER-GATEWAY-1N/DG). What cannot be read is not ours to count. */
+function unreadable(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || code === "EACCES" || code === "EPERM";
+}
+
+/** Where ingestion stages an upload before it is promoted into `resources/`;
+ *  the scratch quota governs exactly this directory. */
+export function corpusStagingDir(workspace: string): string {
+  return path.join(stateRoot(workspace), "tmp", "ingest");
+}
+
 export async function directoryBytes(root: string, maxEntries = 100_000): Promise<number> {
   const pending = [root];
   let bytes = 0;
@@ -52,7 +68,7 @@ export async function directoryBytes(root: string, maxEntries = 100_000): Promis
     try {
       children = await fs.promises.readdir(current, { withFileTypes: true });
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      if (unreadable(error)) {
         continue;
       }
       throw error;
@@ -69,7 +85,13 @@ export async function directoryBytes(root: string, maxEntries = 100_000): Promis
       if (child.isDirectory()) {
         pending.push(candidate);
       } else if (child.isFile()) {
-        bytes += (await fs.promises.stat(candidate)).size;
+        try {
+          bytes += (await fs.promises.lstat(candidate)).size;
+        } catch (error) {
+          if (!unreadable(error)) {
+            throw error;
+          }
+        }
       }
     }
   }
@@ -89,7 +111,10 @@ export async function assertCorpusPathQuotas(params: {
   const [sources, extraction, scratch, logs, filesystem, replaced] = await Promise.all([
     directoryBytes(path.join(params.workspace, "resources")),
     directoryBytes(path.join(magister, "extracted")),
-    directoryBytes(path.join(magister, "tmp")),
+    // Only the corpus's own staging. The rest of `.magister/tmp` is sandbox
+    // attempt scratch, which the supervisor caps itself (per attempt and in
+    // aggregate) and which this process often cannot read.
+    directoryBytes(corpusStagingDir(params.workspace)),
     directoryBytes(path.join(magister, "logs")),
     fs.promises.statfs(params.workspace),
     fs.promises.stat(params.destination).catch((error) => {
