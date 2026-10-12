@@ -590,6 +590,9 @@ function createCachedDescriptorPluginTool(params: {
   if (params.descriptor.sideEffect) {
     tool.sideEffect = params.descriptor.sideEffect;
   }
+  if (params.descriptor.schemaDelivery) {
+    tool.schemaDelivery = params.descriptor.schemaDelivery;
+  }
   setPluginToolMeta(tool, {
     pluginId,
     optional: params.descriptor.optional,

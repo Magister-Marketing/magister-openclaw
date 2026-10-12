@@ -11,6 +11,7 @@ import {
   appendToolPromptGuidance,
   type ToolWithSharedPromptGuidance,
 } from "../tool-prompt-guidance.js";
+import { buildDeferredToolDirectoryLines } from "../tool-schema-deferral.js";
 import type { EmbeddedSandboxInfo } from "./types.js";
 import type { ReasoningLevel, ThinkLevel } from "./utils.js";
 
@@ -63,6 +64,8 @@ export function buildEmbeddedSystemPrompt(params: {
   messageToolHints?: string[];
   sandboxInfo?: EmbeddedSandboxInfo;
   tools: ToolWithSharedPromptGuidance[];
+  /** Deferred-schema tools: named in the prompt, schema loaded on demand (tool-schema-deferral.ts). */
+  deferredTools?: ToolWithSharedPromptGuidance[];
   modelAliasLines: string[];
   userTimezone: string;
   userTime?: string;
@@ -101,6 +104,7 @@ export function buildEmbeddedSystemPrompt(params: {
     messageToolHints: params.messageToolHints,
     sandboxInfo: params.sandboxInfo,
     toolNames: params.tools.map((tool) => tool.name),
+    deferredToolLines: buildDeferredToolDirectoryLines(params.deferredTools ?? []),
     modelAliasLines: params.modelAliasLines,
     userTimezone: params.userTimezone,
     userTime: params.userTime,
@@ -112,7 +116,9 @@ export function buildEmbeddedSystemPrompt(params: {
     memoryCitationsMode: params.memoryCitationsMode,
     promptContribution: params.promptContribution,
   });
-  return appendToolPromptGuidance(systemPrompt, params.tools);
+  // A deferred tool's shared guidance must already be in the prompt when the
+  // tool is promoted mid-turn; the prompt does not change between requests.
+  return appendToolPromptGuidance(systemPrompt, [...params.tools, ...(params.deferredTools ?? [])]);
 }
 
 export function createSystemPromptOverride(
