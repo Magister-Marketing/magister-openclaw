@@ -170,6 +170,7 @@ import {
   collectExplicitToolAllowlistSources,
 } from "../../tool-allowlist-guard.js";
 import { UNKNOWN_TOOL_THRESHOLD } from "../../tool-loop-detection.js";
+import { activateToolSchemaDeferral, planToolSchemaDelivery } from "../../tool-schema-deferral.js";
 import { shouldAllowProviderOwnedThinkingReplay } from "../../transcript-policy.js";
 import { normalizeUsage, type NormalizedUsage } from "../../usage.js";
 import { DEFAULT_BOOTSTRAP_FILENAME } from "../../workspace.js";
@@ -1149,7 +1150,11 @@ export async function runEmbeddedAttempt(
       ownerOnlyToolAllowlist: params.ownerOnlyToolAllowlist,
       warn: (message) => log.warn(message),
     });
-    const effectiveTools = [...tools, ...filteredBundledTools];
+    // Every tool stays registered under its real name (policy, hooks, approvals
+    // and the ledger are unchanged); the plan only decides which schemas ride
+    // in each request and which the model loads with tool_describe.
+    const toolSchemaDelivery = planToolSchemaDelivery([...tools, ...filteredBundledTools]);
+    const effectiveTools = toolSchemaDelivery.tools;
     prepStages.mark("bundle-tools");
     const allowedToolNames = collectAllowedToolNames({
       tools: effectiveTools,
@@ -1359,7 +1364,8 @@ export async function runEmbeddedAttempt(
         runtimeInfo,
         messageToolHints,
         sandboxInfo,
-        tools: effectiveTools,
+        tools: toolSchemaDelivery.promptTools,
+        deferredTools: toolSchemaDelivery.deferredTools,
         modelAliasLines: buildModelAliasLines(params.config),
         userTimezone,
         userTime,
@@ -1703,6 +1709,15 @@ export async function runEmbeddedAttempt(
         throw new Error("Embedded agent session missing");
       }
       session.setActiveToolsByName(sessionToolAllowlist);
+      // Deferred schemas: activate the eager tools plus the deferred ones this
+      // conversation already loaded, and let tool_describe promote the rest.
+      const toolSchemaActivation = activateToolSchemaDeferral({
+        session,
+        plan: toolSchemaDelivery,
+        registeredToolNames: sessionToolAllowlist,
+        transcriptEntries:
+          typeof sessionManager.getEntries === "function" ? sessionManager.getEntries() : [],
+      });
       // createAgentSession never tells the core Agent its session id, so the
       // loop forwards sessionId=undefined and cache-affinity fields gated on
       // options.sessionId (prompt_cache_key) silently drop off every request.
@@ -2016,7 +2031,7 @@ export async function runEmbeddedAttempt(
 
       const cacheObservabilityEnabled = Boolean(cacheTrace) || log.isEnabled("debug");
       const promptCacheToolNames = collectPromptCacheToolNames(
-        allCustomTools as Array<{ name?: string }>,
+        toolSchemaActivation.activeToolNames.map((name) => ({ name })),
       );
       let promptCacheChangesForTurn: PromptCacheChange[] | null = null;
 
