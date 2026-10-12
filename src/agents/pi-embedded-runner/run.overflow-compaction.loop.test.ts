@@ -1,5 +1,9 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  onInternalDiagnosticEvent,
+  type DiagnosticEventPayload,
+} from "../../infra/diagnostic-events.js";
+import {
   makeAttemptResult,
   makeCompactionSuccess,
   makeOverflowError,
@@ -289,6 +293,87 @@ describe("overflow compaction in run loop", () => {
     // Exactly once: the run loop re-emits the terminal error it withheld.
     expect(terminalErrors).toHaveLength(1);
     expect(terminalErrors[0]?.data?.error).toBe(overflowError.message);
+  });
+
+  // MAGISTER-MACHINES-N: a precheck attempt reports itself as aborted (it is a
+  // compaction hand-off, not a failure), so the run loop owns the terminal
+  // run.completed when recovery gives up, and only then.
+  async function runCompletedEvents(run: () => Promise<unknown>) {
+    const events: Array<Extract<DiagnosticEventPayload, { type: "run.completed" }>> = [];
+    const stop = onInternalDiagnosticEvent((event) => {
+      if (event.type === "run.completed") {
+        events.push(event);
+      }
+    });
+    try {
+      await run();
+    } finally {
+      stop();
+    }
+    return events;
+  }
+
+  it("reports a terminal run.completed when recovery gives up after a precheck hand-off", async () => {
+    mockedRunEmbeddedAttempt.mockResolvedValueOnce(
+      makeAttemptResult({
+        promptError: makeOverflowError(
+          "Context overflow: prompt too large for the model (precheck).",
+        ),
+        promptErrorSource: "precheck",
+        preflightRecovery: { route: "compact_only" },
+      }),
+    );
+    mockedCompactDirect.mockResolvedValueOnce({
+      ok: false,
+      compacted: false,
+      reason: "nothing to compact",
+    });
+
+    const events = await runCompletedEvents(() => runEmbeddedPiAgent(baseParams));
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      runId: baseParams.runId,
+      outcome: "error",
+      failureKind: "context_overflow",
+      reasonCode: "overflow_recovery_exhausted",
+    });
+  });
+
+  it("reports no run-level terminal when the precheck hand-off compacts and retries", async () => {
+    mockedRunEmbeddedAttempt
+      .mockResolvedValueOnce(
+        makeAttemptResult({
+          promptError: makeOverflowError(
+            "Context overflow: prompt too large for the model (precheck).",
+          ),
+          promptErrorSource: "precheck",
+          preflightRecovery: { route: "compact_only" },
+        }),
+      )
+      .mockResolvedValueOnce(makeAttemptResult({ promptError: null }));
+    mockedCompactDirect.mockResolvedValueOnce(
+      makeCompactionSuccess({ summary: "Compacted", firstKeptEntryId: "entry-5" }),
+    );
+
+    const events = await runCompletedEvents(() => runEmbeddedPiAgent(baseParams));
+
+    expect(events).toEqual([]);
+  });
+
+  it("leaves a provider overflow's terminal to the attempt that reported it", async () => {
+    mockedRunEmbeddedAttempt.mockResolvedValueOnce(
+      makeAttemptResult({ promptError: makeOverflowError() }),
+    );
+    mockedCompactDirect.mockResolvedValueOnce({
+      ok: false,
+      compacted: false,
+      reason: "nothing to compact",
+    });
+
+    const events = await runCompletedEvents(() => runEmbeddedPiAgent(baseParams));
+
+    expect(events).toEqual([]);
   });
 
   it("emits the terminal error on give-up even when no attempt terminal was suppressed (Magister fork)", async () => {

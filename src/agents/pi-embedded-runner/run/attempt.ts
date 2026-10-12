@@ -344,6 +344,7 @@ import {
 } from "./midturn-precheck.js";
 import {
   PREEMPTIVE_OVERFLOW_ERROR_TEXT,
+  isPreemptiveOverflowSignal,
   resolveProactiveCompactionThresholdRatio,
   shouldPreemptivelyCompactBeforePrompt,
 } from "./preemptive-compaction.js";
@@ -727,14 +728,15 @@ export async function runEmbeddedAttempt(
   let timedOutDuringToolExecution = false;
   let promptError: unknown = null;
   // Snapshot the mutable terminal flags at read time; the closures below run
-  // after the flags have settled.
-  const runCompletionFlags = (): RunCompletionFlags => ({
+  // after the flags have settled. `err` is the error the run ends with.
+  const runCompletionFlags = (err: unknown): RunCompletionFlags => ({
     externalAbortRequested: externalAbort || Boolean(params.abortSignal?.aborted),
     aborted,
     timedOut,
     idleTimedOut,
     timedOutDuringCompaction,
     timedOutDuringToolExecution,
+    precheckCompactionHandoff: isPreemptiveOverflowSignal(err),
   });
   let emitDiagnosticRunCompleted:
     | ((outcome: "completed" | "aborted" | "error", err?: unknown) => void)
@@ -823,7 +825,7 @@ export async function runEmbeddedAttempt(
         ...resolveRunCompletionDiagnostic({
           outcome,
           err,
-          flags: runCompletionFlags(),
+          flags: runCompletionFlags(err),
           provider: params.provider,
           model: params.modelId,
         }),
@@ -3781,7 +3783,10 @@ export async function runEmbeddedAttempt(
         cleanupError = err;
       }
       emitDiagnosticRunCompleted?.(
-        resolveRunCompletionOutcome(runCompletionFlags(), cleanupError ?? promptError),
+        resolveRunCompletionOutcome(
+          runCompletionFlags(cleanupError ?? promptError),
+          cleanupError ?? promptError,
+        ),
         cleanupError ?? promptError,
       );
       if (cleanupError) {

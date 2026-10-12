@@ -374,12 +374,14 @@ export type DiagnosticRunCompletedEvent = DiagnosticRunBaseEvent & {
    * Low-cardinality failure classification. For error outcomes this is a
    * FailoverReason value ("timeout", "rate_limit", "auth", ...; typed as
    * string because infra must not import agent types); for aborted outcomes
-   * it is "canceled" (external stop) or "timeout".
+   * it is "canceled" (external stop), "timeout", or "context_overflow" (the
+   * context precheck handed the run loop a compact-and-retry).
    */
   failureKind?: string;
   /**
    * Which terminal condition fired: "external_abort", "run_timeout",
-   * "idle_timeout", "compaction_timeout", or "tool_timeout".
+   * "idle_timeout", "compaction_timeout", "tool_timeout",
+   * "precheck_compaction", or "overflow_recovery_exhausted".
    */
   reasonCode?: string;
 };
