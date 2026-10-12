@@ -10,10 +10,22 @@ describe("draft verification configuration", () => {
       }).success,
     ).toBe(true);
   });
-  it.each([{ mode: "always" }, { mode: "repair", maxRepairs: 99 }, { enabled: true }])(
-    "rejects undeclared controls",
-    (draftVerification) => {
-      expect(OpenClawSchema.safeParse({ tools: { draftVerification } }).success).toBe(false);
+  it.each(["off", "shadow", "repair"])(
+    "accepts a separate %s mode for pasted-data turns",
+    (mode) => {
+      expect(
+        OpenClawSchema.safeParse({
+          tools: { draftVerification: { mode: "shadow", pastedData: mode } },
+        }).success,
+      ).toBe(true);
     },
   );
+  it.each([
+    { mode: "always" },
+    { mode: "repair", maxRepairs: 99 },
+    { enabled: true },
+    { pastedData: "always" },
+  ])("rejects undeclared controls", (draftVerification) => {
+    expect(OpenClawSchema.safeParse({ tools: { draftVerification } }).success).toBe(false);
+  });
 });
