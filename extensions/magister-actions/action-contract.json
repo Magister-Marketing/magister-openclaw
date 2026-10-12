@@ -2846,6 +2846,74 @@
       "tool_name": "magister_send_email"
     },
     {
+      "action": "create_gmail_draft",
+      "approval_policy": "exact_payload",
+      "async_status_adapter": "synchronous",
+      "description": "Create a draft in the user's connected Gmail for them to review and send themselves. Nothing is sent. Pass thread_id to draft a reply in that thread.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "idempotency_key",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "bcc": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "body": {
+            "maxLength": 100000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "cc": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "html": {
+            "maxLength": 200000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "idempotency_key": {
+            "description": "Use one fresh key for each new logical operation. Reuse that key only when retrying the exact same arguments; a later user request, even with identical content, needs a new key.",
+            "maxLength": 256,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 998,
+            "minLength": 1,
+            "type": "string"
+          },
+          "thread_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "to": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": ["idempotency_key", "to", "subject", "body"],
+        "type": "object"
+      },
+      "retry_policy": "read_after_timeout",
+      "side_effect": "external_write",
+      "spend_limited": false,
+      "tool_name": "magister_create_gmail_draft"
+    },
+    {
       "action": "request_network_access",
       "approval_policy": "exact_payload",
       "async_status_adapter": "synchronous",
@@ -3889,6 +3957,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+  "registry_revision": "3d17fd6813b556eccc160d29aa775860434673e8d28dbc1480a7847725fa90ba",
   "schema_version": 1
 }
