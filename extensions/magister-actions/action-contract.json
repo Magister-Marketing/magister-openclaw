@@ -798,7 +798,7 @@
                 "$ref": "#/$defs/PlanItemMeasureScopeArgs"
               },
               "source": {
-                "description": "Goal metric source: ga4, gsc, google_ads, zernio_ads or stripe.",
+                "description": "Goal metric source: ga4, gsc, google_ads, paid_social or stripe.",
                 "maxLength": 40,
                 "minLength": 1,
                 "type": "string"
@@ -939,7 +939,7 @@
                 "$ref": "#/$defs/PlanItemMeasureScopeArgs"
               },
               "source": {
-                "description": "Goal metric source: ga4, gsc, google_ads, zernio_ads or stripe.",
+                "description": "Goal metric source: ga4, gsc, google_ads, paid_social or stripe.",
                 "maxLength": 40,
                 "minLength": 1,
                 "type": "string"
@@ -4764,6 +4764,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "027002a2857642528a08bedac9faa9010e3910fb2c37c4e72d171cbaaaf52f75",
+  "registry_revision": "71e735a00843cf95b2911d1ed840f2d0dcadc4e51fe577cb59dccb65c85d736a",
   "schema_version": 1
 }
