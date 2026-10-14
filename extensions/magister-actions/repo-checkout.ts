@@ -825,11 +825,11 @@ export async function sweepExpiredCheckouts(now = Date.now()): Promise<{ removed
           await workLayerControl(repoDir, "remove-work-layer");
           await fs.promises.rm(repoDir, { recursive: true, force: true });
         });
-      } catch (error) {
-        if (error instanceof CheckoutError && error.statusCode === 409) {
-          continue;
-        }
-        throw error;
+      } catch {
+        // Busy (409) or not removable right now: try again next sweep. The
+        // sweep runs before every checkout, so letting one stale sibling's
+        // failure escape would fail an operation on a different repository.
+        continue;
       }
       await pruneEmptyAncestors(path.dirname(repoDir));
       removed.push(repoDir);
@@ -1002,7 +1002,7 @@ async function withCheckoutLock<T>(
   task: () => Promise<T>,
 ): Promise<T> {
   const layer = workLayer(repoDir);
-  await fs.promises.mkdir(layer.root, { recursive: true });
+  await ensureWorkLayerRoot(repoDir);
   const deadline = Date.now() + checkoutLockWaitMs();
   for (;;) {
     try {
@@ -1117,6 +1117,30 @@ async function workLayerControl(
       truncate(run.output),
     );
   }
+}
+
+/** Make sure the directory the checkout lock lives in exists.
+ *
+ *  The supervisor creates `.work` and every directory down to a layer as
+ *  root, 0755, the first time a command runs in any checkout. From then on
+ *  the host cannot create a layer beside it: a second checkout of the same
+ *  owner that never ran a command has no layer, and taking its lock failed
+ *  with EACCES. The sweep takes that lock before every checkout, so one idle
+ *  sibling broke every checkout on the machine (MAGISTER-MACHINES-Q). The
+ *  supervisor creates layers with the right ownership on request, exactly as
+ *  it does before a command; with nothing in the layer yet, a reset is only
+ *  that creation. */
+async function ensureWorkLayerRoot(repoDir: string): Promise<void> {
+  try {
+    await fs.promises.mkdir(workLayer(repoDir).root, { recursive: true });
+    return;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if ((code !== "EACCES" && code !== "EPERM") || !toolSandboxLauncher()) {
+      throw error;
+    }
+  }
+  await workLayerControl(repoDir, "reset-work-layer");
 }
 
 /** The supervisor's run log, newest last. Unreadable or absent is empty:
