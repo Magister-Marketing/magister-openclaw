@@ -485,6 +485,52 @@ describe("TTL sweeping", () => {
     expect(after.removed).toContain(repoDir);
   });
 
+  /** The supervisor makes `.work/<owner>` root-owned 0755 the first time a
+   *  command runs in any of that owner's checkouts; read-only stands in for
+   *  it here. Returns the sibling checkout that has no layer of its own. */
+  function staleSiblingUnderRootOwnedWork(): { repoDir: string; sibling: string; owner: string } {
+    const { origin, repoDir, root } = upstreamAndCheckout();
+    const sibling = path.join(root, "acme", "other");
+    git(root, "clone", "--quiet", "--depth", "1", `file://${origin}`, sibling);
+    const stale = new Date(Date.now() - CHECKOUT_TTL_MS - 60_000).toISOString();
+    fs.writeFileSync(
+      path.join(sibling, ".git", "magister-checkout.json"),
+      JSON.stringify({ last_used_at: stale, repo: "acme/other" }),
+    );
+    fs.mkdirSync(workLayer(repoDir).root, { recursive: true });
+    const owner = path.dirname(workLayer(repoDir).root);
+    fs.chmodSync(owner, 0o555);
+    return { repoDir, sibling, owner };
+  }
+
+  it("an idle sibling it cannot lock never fails another repository's checkout", async () => {
+    const { repoDir, sibling, owner } = staleSiblingUnderRootOwnedWork();
+    try {
+      await expect(checkoutRepository(request())).resolves.toMatchObject({
+        status: "already_current",
+      });
+      expect(fs.existsSync(repoDir)).toBe(true);
+      // Not removable by the host alone; a later sweep gets another try.
+      expect(fs.existsSync(sibling)).toBe(true);
+    } finally {
+      fs.chmodSync(owner, 0o755);
+    }
+  });
+
+  it("asks the supervisor for a layer the host cannot create, then sweeps", async () => {
+    const { sibling, owner, repoDir } = staleSiblingUnderRootOwnedWork();
+    const log = fakeLauncher(path.dirname(path.dirname(repoDir)), { rootOwnedWork: true });
+    try {
+      const swept = await sweepExpiredCheckouts();
+
+      expect(swept.removed).toContain(sibling);
+      expect(fs.existsSync(sibling)).toBe(false);
+      expect(fs.readFileSync(log, "utf8")).toContain("maintenance reset-work-layer");
+    } finally {
+      fs.chmodSync(owner, 0o755);
+    }
+  });
+
   it("removes a staging tree orphaned by a crashed clone", async () => {
     const root = scratch("magister-repos-");
     process.env.MAGISTER_REPO_ROOT = root;
@@ -927,7 +973,10 @@ describe("prepare with an unusable base", () => {
 /** A stand-in for the tool-sandbox launcher: records every invocation and
  *  does, on the real filesystem, what the supervisor's overlay would make
  *  the sandbox's writes look like from the host. */
-function fakeLauncher(root: string, options: { fetchExit?: number } = {}): string {
+function fakeLauncher(
+  root: string,
+  options: { fetchExit?: number; rootOwnedWork?: boolean } = {},
+): string {
   const dir = scratch("magister-launcher-");
   const log = path.join(dir, "launcher.log");
   const script = path.join(dir, "launcher.sh");
@@ -951,7 +1000,9 @@ function fakeLauncher(root: string, options: { fetchExit?: number } = {}): strin
       'case "$P" in',
       `  fetcher) mkdir -p "$LAYER/upper/node_modules"; echo x > "$LAYER/upper/node_modules/.installed"; exit ${options.fetchExit ?? 0};;`,
       `  tool) mkdir -p "$LAYER"; ${record}; exit 0;;`,
-      '  maintenance) if [ "$1" = "remove-work-layer" ]; then rm -rf "$LAYER"; else rm -rf "$LAYER/upper" "$LAYER/work"; mkdir -p "$LAYER/upper"; fi; exit 0;;',
+      // The real supervisor is root; this stand-in runs as the test user, so
+      // it lifts the read-only owner directory a root-owned one stands for.
+      `  maintenance) ${options.rootOwnedWork ? 'chmod u+w "$(dirname "$LAYER")";' : ""} if [ "$1" = "remove-work-layer" ]; then rm -rf "$LAYER"; else rm -rf "$LAYER/upper" "$LAYER/work"; mkdir -p "$LAYER/upper"; fi; exit 0;;`,
       "esac",
       "exit 70",
       "",
