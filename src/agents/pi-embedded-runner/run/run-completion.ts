@@ -12,6 +12,13 @@ export type RunCompletionFlags = {
   idleTimedOut: boolean;
   timedOutDuringCompaction: boolean;
   timedOutDuringToolExecution: boolean;
+  /**
+   * The attempt stopped before submitting its prompt because the context
+   * precheck found the history over budget, handing the run loop a
+   * compact-and-retry. That is recovery, not a failure: the run loop reports
+   * the terminal error itself if recovery gives up.
+   */
+  precheckCompactionHandoff: boolean;
 };
 
 /**
@@ -28,7 +35,7 @@ export function resolveRunCompletionOutcome(
     return "aborted";
   }
   if (err) {
-    return "error";
+    return flags.precheckCompactionHandoff ? "aborted" : "error";
   }
   if (flags.aborted || flags.timedOut || flags.idleTimedOut || flags.timedOutDuringCompaction) {
     return "aborted";
@@ -40,7 +47,8 @@ export function resolveRunCompletionOutcome(
  * Low-cardinality failure classification for terminal run diagnostics.
  * Errors classify through the failover machinery ("timeout", "rate_limit",
  * "auth", ...); aborted runs are "canceled" when externally stopped and
- * "timeout" when a watchdog ended them.
+ * "timeout" when a watchdog ended them. A precheck compaction hand-off is
+ * "context_overflow" with reason "precheck_compaction".
  */
 export function resolveRunCompletionDiagnostic(params: {
   outcome: RunCompletionOutcome;
@@ -61,21 +69,25 @@ export function resolveRunCompletionDiagnostic(params: {
       : outcome === "aborted"
         ? flags.externalAbortRequested
           ? "canceled"
-          : anyTimeout
-            ? "timeout"
-            : "canceled"
+          : flags.precheckCompactionHandoff
+            ? "context_overflow"
+            : anyTimeout
+              ? "timeout"
+              : "canceled"
         : undefined;
   const reasonCode = flags.externalAbortRequested
     ? "external_abort"
-    : flags.timedOutDuringCompaction
-      ? "compaction_timeout"
-      : flags.timedOutDuringToolExecution
-        ? "tool_timeout"
-        : flags.idleTimedOut
-          ? "idle_timeout"
-          : flags.timedOut
-            ? "run_timeout"
-            : undefined;
+    : outcome === "aborted" && flags.precheckCompactionHandoff
+      ? "precheck_compaction"
+      : flags.timedOutDuringCompaction
+        ? "compaction_timeout"
+        : flags.timedOutDuringToolExecution
+          ? "tool_timeout"
+          : flags.idleTimedOut
+            ? "idle_timeout"
+            : flags.timedOut
+              ? "run_timeout"
+              : undefined;
   return {
     ...(failureKind ? { failureKind } : {}),
     ...(reasonCode ? { reasonCode } : {}),

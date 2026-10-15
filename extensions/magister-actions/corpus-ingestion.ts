@@ -7,12 +7,11 @@ import {
   MAX_SOURCE_BYTES,
   fsyncDir,
   fsyncPath,
-  stateRoot,
 } from "./corpus-contract.js";
 import { extractSource } from "./corpus-extraction.js";
 import { corpusDiskState, corpusPreprocessingAllowed } from "./corpus-index.js";
 import { assertMimeAgreement, detectMime } from "./corpus-mime.js";
-import { assertCorpusPathQuotas } from "./corpus-quota.js";
+import { assertCorpusPathQuotas, corpusStagingDir } from "./corpus-quota.js";
 import { CorpusStore, type CorpusSource } from "./corpus-store.js";
 import { LocalMutationObservation, type LocalMutationContext } from "./mutation-observer.js";
 import { mirrorReadBits } from "./tool-readable.js";
@@ -241,7 +240,7 @@ export async function ingestOne(params: {
   if (params.extract && !(await corpusPreprocessingAllowed())) {
     throw new IngestionError("extraction is paused by machine memory admission", 503);
   }
-  const stagingDir = path.join(stateRoot(params.workspace), "tmp", "ingest");
+  const stagingDir = corpusStagingDir(params.workspace);
   await fs.promises.mkdir(stagingDir, { recursive: true, mode: 0o700 });
   const stagingPath = path.join(stagingDir, `${randomUUID()}.part`);
   const backupPath = path.join(stagingDir, `${randomUUID()}.backup`);

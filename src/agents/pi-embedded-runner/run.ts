@@ -10,6 +10,7 @@ import {
   emitAgentPlanEvent,
 } from "../../infra/agent-events.js";
 import { sleepWithAbort } from "../../infra/backoff.js";
+import { emitTrustedDiagnosticEvent } from "../../infra/diagnostic-events.js";
 import { freezeDiagnosticTraceContext } from "../../infra/diagnostic-trace-context.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { buildAgentHookContextChannelFields } from "../../plugins/hook-agent-context.js";
@@ -163,6 +164,7 @@ import {
 } from "./run/incomplete-turn.js";
 import type { RunEmbeddedPiAgentParams } from "./run/params.js";
 import { buildEmbeddedRunPayloads } from "./run/payloads.js";
+import { isPreemptiveOverflowSignal } from "./run/preemptive-compaction.js";
 import { handleRetryLimitExhaustion } from "./run/retry-limit.js";
 import {
   buildBeforeModelResolveAttachments,
@@ -2150,6 +2152,26 @@ export async function runEmbeddedPiAgent(
             // agent-command `lifecycleEnded`) absorbs the potential double.
             consumeSuppressedTerminal(params.runId);
             emitOverflowTerminal(errorText);
+            if (isPreemptiveOverflowSignal(promptError)) {
+              // The attempt reported its precheck hand-off as aborted, since
+              // compaction could still recover it (MAGISTER-MACHINES-N).
+              // Recovery has given up, so the run's terminal failure is ours
+              // to report; a provider overflow already reported its own error.
+              emitTrustedDiagnosticEvent({
+                type: "run.completed",
+                runId: params.runId,
+                ...(params.sessionKey && { sessionKey: params.sessionKey }),
+                ...(sessionIdUsed && { sessionId: sessionIdUsed }),
+                provider,
+                model: modelId,
+                trigger: params.trigger,
+                ...(channelHint ? { channel: channelHint } : {}),
+                durationMs: Date.now() - started,
+                outcome: "error",
+                failureKind: kind,
+                reasonCode: "overflow_recovery_exhausted",
+              });
+            }
             disarmAttemptRetryRecovery(params.runId);
             attempt.setTerminalLifecycleMeta?.({
               replayInvalid: resolveReplayInvalidForAttempt(),
