@@ -7,10 +7,20 @@ import {
   MIN_PROMPT_BUDGET_TOKENS,
 } from "../../pi-compaction-constants.js";
 import { estimateToolResultReductionPotential } from "../tool-result-truncation.js";
+import { MID_TURN_PRECHECK_ERROR_MESSAGE } from "./midturn-precheck.js";
 import type { PreemptiveCompactionRoute } from "./preemptive-compaction.types.js";
 
 export const PREEMPTIVE_OVERFLOW_ERROR_TEXT =
   "Context overflow: prompt too large for the model (precheck).";
+
+/** The error an attempt ends with to hand the run loop a compact-and-retry. */
+export function isPreemptiveOverflowSignal(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.message === PREEMPTIVE_OVERFLOW_ERROR_TEXT ||
+      err.message === MID_TURN_PRECHECK_ERROR_MESSAGE)
+  );
+}
 
 const ESTIMATED_CHARS_PER_TOKEN = 4;
 const TRUNCATION_ROUTE_BUFFER_TOKENS = 512;

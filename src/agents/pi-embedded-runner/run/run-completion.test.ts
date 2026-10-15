@@ -14,6 +14,7 @@ function flags(overrides: Partial<RunCompletionFlags> = {}): RunCompletionFlags 
     idleTimedOut: false,
     timedOutDuringCompaction: false,
     timedOutDuringToolExecution: false,
+    precheckCompactionHandoff: false,
     ...overrides,
   };
 }
@@ -42,6 +43,37 @@ describe("resolveRunCompletionOutcome", () => {
     expect(resolveRunCompletionOutcome(flags({ aborted: true, timedOut: true }), undefined)).toBe(
       "aborted",
     );
+  });
+});
+
+describe("precheck compaction hand-off", () => {
+  // MAGISTER-MACHINES-N: the precheck stops the attempt so the run loop can
+  // compact and retry. Reported as an error, machine telemetry promoted every
+  // routine compaction to a Sentry issue labelled "unclassified".
+  const precheck = new Error("Context overflow: prompt too large for the model (precheck).");
+
+  it("is aborted, not an error", () => {
+    expect(resolveRunCompletionOutcome(flags({ precheckCompactionHandoff: true }), precheck)).toBe(
+      "aborted",
+    );
+  });
+
+  it("is classified as a context overflow handed to compaction", () => {
+    expect(
+      resolveRunCompletionDiagnostic({
+        outcome: "aborted",
+        err: precheck,
+        flags: flags({ precheckCompactionHandoff: true }),
+      }),
+    ).toEqual({ failureKind: "context_overflow", reasonCode: "precheck_compaction" });
+  });
+
+  it("still reports a user cancel as canceled", () => {
+    const cancel = flags({ externalAbortRequested: true, precheckCompactionHandoff: true });
+    expect(resolveRunCompletionOutcome(cancel, precheck)).toBe("aborted");
+    expect(
+      resolveRunCompletionDiagnostic({ outcome: "aborted", err: precheck, flags: cancel }),
+    ).toEqual({ failureKind: "canceled", reasonCode: "external_abort" });
   });
 });
 
