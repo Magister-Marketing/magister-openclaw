@@ -26,6 +26,8 @@
       "magister_unschedule_workflow",
       "magister_run_workflow",
       "magister_update_plan_item_status",
+      "magister_create_plan_item",
+      "magister_update_plan_item",
       "magister_list_firehose_matches",
       "magister_check_back",
       "magister_recompile_marketing_plan",

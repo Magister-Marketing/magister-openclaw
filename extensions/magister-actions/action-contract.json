@@ -713,7 +713,7 @@
       "action": "update_plan_item_status",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
-      "description": "Update one active marketing-plan item using the verified current chat or plan-task workflow context.",
+      "description": "Update one active marketing-plan item using the verified current chat or plan-task workflow context. End every task turn with a status.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "safe_retry",
       "input_schema": {
@@ -723,20 +723,47 @@
             "maxLength": 1000,
             "type": "string"
           },
+          "note": {
+            "description": "One line for the task's timeline: what shipped, what to review, or what is left.",
+            "maxLength": 500,
+            "type": "string"
+          },
           "plan_item_id": {
             "maxLength": 36,
             "minLength": 36,
             "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
             "type": "string"
           },
-          "status": {
-            "enum": ["ready", "running", "completed", "blocked", "failed", "skipped"],
-            "type": "string"
+          "required_connections": {
+            "description": "Integration catalog ids the work needs (github, vercel, wordpress, google_search_console, instagram, meta_ads, ...); replaces the list.",
+            "items": {
+              "maxLength": 120,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 8,
+            "type": "array"
           },
-          "user_approval_quote": {
-            "description": "Only with status=completed on an item awaiting approval, when the user approved it in this chat: their exact words, copied from their latest message. Completes the item as their sign-off.",
-            "maxLength": 500,
-            "minLength": 2,
+          "shipped_refs": {
+            "description": "With completed: where the result lives (URLs, owner/repo#123, workspace paths).",
+            "items": {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 8,
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "ready",
+              "running",
+              "waiting_approval",
+              "completed",
+              "blocked",
+              "failed",
+              "skipped"
+            ],
             "type": "string"
           }
         },
@@ -748,6 +775,272 @@
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_update_plan_item_status"
+    },
+    {
+      "action": "create_plan_item",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "Add a task to the active marketing plan: a follow-up worth doing, never a task to measure later. It starts ready.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "idempotency_key",
+      "input_schema": {
+        "$defs": {
+          "PlanItemMeasureArgs": {
+            "additionalProperties": false,
+            "properties": {
+              "metric": {
+                "description": "A metric of that source from the goal metric catalog, e.g. clicks.",
+                "maxLength": 60,
+                "minLength": 1,
+                "type": "string"
+              },
+              "scope": {
+                "$ref": "#/$defs/PlanItemMeasureScopeArgs"
+              },
+              "source": {
+                "description": "Goal metric source: ga4, gsc, google_ads, paid_social or stripe.",
+                "maxLength": 40,
+                "minLength": 1,
+                "type": "string"
+              },
+              "window_days": {
+                "default": 28,
+                "maximum": 90,
+                "minimum": 7,
+                "type": "integer"
+              }
+            },
+            "required": ["source", "metric"],
+            "type": "object"
+          },
+          "PlanItemMeasureScopeArgs": {
+            "additionalProperties": false,
+            "properties": {
+              "campaign_id": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "channel": {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              "page": {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "aarrr_stage": {
+            "maxLength": 80,
+            "type": "string"
+          },
+          "channel": {
+            "maxLength": 80,
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "due_at": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "expected_impact": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "idempotency_key": {
+            "description": "Use one fresh key for each new logical operation. Reuse that key only when retrying the exact same arguments; a later user request, even with identical content, needs a new key.",
+            "maxLength": 256,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "type": "string"
+          },
+          "measure": {
+            "$ref": "#/$defs/PlanItemMeasureArgs"
+          },
+          "move_section_key": {
+            "description": "A goal's section_key (move_...) from magister_get_marketing_plan.",
+            "maxLength": 120,
+            "type": "string"
+          },
+          "note": {
+            "description": "Why this task exists (its evidence).",
+            "maxLength": 500,
+            "type": "string"
+          },
+          "phase": {
+            "default": "this_week",
+            "enum": ["today", "tomorrow", "this_week", "this_month", "quarter", "later"],
+            "type": "string"
+          },
+          "priority_score": {
+            "maximum": 100,
+            "minimum": 1,
+            "type": "number"
+          },
+          "required_connections": {
+            "description": "Integration catalog ids the work needs (github, vercel, wordpress, google_search_console, instagram, meta_ads, ...); replaces the list.",
+            "items": {
+              "maxLength": 120,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 8,
+            "type": "array"
+          },
+          "task_prompt": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": ["idempotency_key", "title", "task_prompt"],
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "schema_delivery": "deferred",
+      "side_effect": "internal_write",
+      "spend_limited": false,
+      "tool_name": "magister_create_plan_item"
+    },
+    {
+      "action": "update_plan_item",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "Edit one marketing-plan task's fields (title, prompt, schedule, priority, connections, measure). Only the fields sent change.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "$defs": {
+          "PlanItemMeasureArgs": {
+            "additionalProperties": false,
+            "properties": {
+              "metric": {
+                "description": "A metric of that source from the goal metric catalog, e.g. clicks.",
+                "maxLength": 60,
+                "minLength": 1,
+                "type": "string"
+              },
+              "scope": {
+                "$ref": "#/$defs/PlanItemMeasureScopeArgs"
+              },
+              "source": {
+                "description": "Goal metric source: ga4, gsc, google_ads, paid_social or stripe.",
+                "maxLength": 40,
+                "minLength": 1,
+                "type": "string"
+              },
+              "window_days": {
+                "default": 28,
+                "maximum": 90,
+                "minimum": 7,
+                "type": "integer"
+              }
+            },
+            "required": ["source", "metric"],
+            "type": "object"
+          },
+          "PlanItemMeasureScopeArgs": {
+            "additionalProperties": false,
+            "properties": {
+              "campaign_id": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "channel": {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              "page": {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "due_at": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "expected_impact": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "measure": {
+            "$ref": "#/$defs/PlanItemMeasureArgs"
+          },
+          "note": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "phase": {
+            "enum": ["today", "tomorrow", "this_week", "this_month", "quarter", "later"],
+            "type": "string"
+          },
+          "plan_item_id": {
+            "maxLength": 36,
+            "minLength": 36,
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "priority_score": {
+            "maximum": 100,
+            "minimum": 1,
+            "type": "number"
+          },
+          "required_connections": {
+            "description": "Integration catalog ids the work needs (github, vercel, wordpress, google_search_console, instagram, meta_ads, ...); replaces the list.",
+            "items": {
+              "maxLength": 120,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 8,
+            "type": "array"
+          },
+          "task_prompt": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": ["plan_item_id"],
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "schema_delivery": "deferred",
+      "side_effect": "internal_write",
+      "spend_limited": false,
+      "tool_name": "magister_update_plan_item"
     },
     {
       "action": "list_firehose_matches",
@@ -4471,6 +4764,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "ff806c95431a177c4fefd1db10b29dcca8a0b19afddc681d3687347469eb5305",
+  "registry_revision": "71e735a00843cf95b2911d1ed840f2d0dcadc4e51fe577cb59dccb65c85d736a",
   "schema_version": 1
 }
