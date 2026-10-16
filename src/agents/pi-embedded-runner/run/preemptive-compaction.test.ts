@@ -7,6 +7,7 @@ let PREEMPTIVE_OVERFLOW_ERROR_TEXT: typeof import("./preemptive-compaction.js").
 let estimatePrePromptTokens: typeof import("./preemptive-compaction.js").estimatePrePromptTokens;
 let shouldPreemptivelyCompactBeforePrompt: typeof import("./preemptive-compaction.js").shouldPreemptivelyCompactBeforePrompt;
 let resolveProactiveCompactionThresholdRatio: typeof import("./preemptive-compaction.js").resolveProactiveCompactionThresholdRatio;
+let isPreemptiveOverflowSignal: typeof import("./preemptive-compaction.js").isPreemptiveOverflowSignal;
 
 beforeAll(async () => {
   vi.resetModules();
@@ -15,6 +16,7 @@ beforeAll(async () => {
     estimatePrePromptTokens,
     shouldPreemptivelyCompactBeforePrompt,
     resolveProactiveCompactionThresholdRatio,
+    isPreemptiveOverflowSignal,
   } = await import("./preemptive-compaction.js"));
 });
 
@@ -326,5 +328,30 @@ describe("preemptive-compaction", () => {
     expect(potential.maxReducibleChars).toBeGreaterThan(desiredOverflowTokens * 4);
     expect(result.route).toBe("truncate_tool_results_only");
     expect(result.shouldCompact).toBe(false);
+  });
+});
+
+describe("isPreemptiveOverflowSignal", () => {
+  it("treats the start-of-run and mid-turn prechecks as a compaction hand-off", async () => {
+    const { MidTurnPrecheckSignal } = await import("./midturn-precheck.js");
+    expect(isPreemptiveOverflowSignal(new Error(PREEMPTIVE_OVERFLOW_ERROR_TEXT))).toBe(true);
+    expect(
+      isPreemptiveOverflowSignal(
+        new MidTurnPrecheckSignal({
+          route: "compact_only",
+          estimatedPromptTokens: 2,
+          promptBudgetBeforeReserve: 1,
+          overflowTokens: 1,
+          toolResultReducibleChars: 0,
+          effectiveReserveTokens: 0,
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("leaves every other failure terminal", () => {
+    expect(isPreemptiveOverflowSignal(new Error("Context overflow: provider said so"))).toBe(false);
+    expect(isPreemptiveOverflowSignal(PREEMPTIVE_OVERFLOW_ERROR_TEXT)).toBe(false);
+    expect(isPreemptiveOverflowSignal(undefined)).toBe(false);
   });
 });
