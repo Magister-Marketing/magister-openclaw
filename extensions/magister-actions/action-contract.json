@@ -818,12 +818,16 @@
       "action": "delete_firehose_rule",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
-      "description": "Stop web monitoring for one rule_id from magister_list_firehose_rules.",
+      "description": "Stop web monitoring for one rule_id from magister_list_firehose_rules. Only after the user confirms: pass confirmed=true.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "safe_retry",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
+          "confirmed": {
+            "default": false,
+            "type": "boolean"
+          },
           "rule_id": {
             "maxLength": 128,
             "minLength": 1,
@@ -4561,6 +4565,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "449766d416965c450625e13226f2c5c4a944282e521802b8a5bc272dbdb80a3c",
+  "registry_revision": "2a346fd98a77efce02e3e6b78748caf0cfaf84fc00112ad065a775af1c76cc60",
   "schema_version": 1
 }
