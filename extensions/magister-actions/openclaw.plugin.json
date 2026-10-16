@@ -32,6 +32,7 @@
       "magister_check_back",
       "magister_recompile_marketing_plan",
       "magister_get_compile_run",
+      "magister_run_site_audit",
       "magister_get_audit_health",
       "magister_list_analytics_properties",
       "magister_read_analytics_snapshots",
