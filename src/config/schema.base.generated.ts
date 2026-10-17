@@ -4913,10 +4913,35 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                         type: "string",
                         const: "cache-ttl",
                       },
+                      {
+                        type: "string",
+                        const: "always",
+                      },
                     ],
                   },
                   ttl: {
                     type: "string",
+                  },
+                  windowTokens: {
+                    type: "integer",
+                    exclusiveMinimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  completedTurns: {
+                    anyOf: [
+                      {
+                        type: "string",
+                        const: "keep",
+                      },
+                      {
+                        type: "string",
+                        const: "trim",
+                      },
+                      {
+                        type: "string",
+                        const: "clear",
+                      },
+                    ],
                   },
                   keepLastAssistants: {
                     type: "integer",

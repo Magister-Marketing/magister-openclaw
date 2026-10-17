@@ -470,4 +470,102 @@ describe("pruneContextMessages", () => {
     const toolResult = result[1] as Extract<AgentMessage, { role: "toolResult" }>;
     expect(toolResult.content).toEqual([{ type: "text", text: placeholder }]);
   });
+
+  describe("completedTurns", () => {
+    const BIG = "P".repeat(5_000);
+    // Ratios at 1 so only the completed-turn rule can change anything.
+    const settings = {
+      ...buildToolTrimSettings(),
+      softTrimRatio: 1,
+      hardClearRatio: 1,
+    };
+    const twoTurns = () => [
+      makeUser("step 1"),
+      makeToolResult([{ type: "text", text: BIG }]),
+      makeAssistant([{ type: "text", text: "step 1 report" }]),
+      makeUser("step 2"),
+      makeToolResult([{ type: "text", text: BIG }]),
+      makeAssistant([{ type: "text", text: "working" }]),
+    ];
+
+    it("keep: leaves finished turns to the ratios", () => {
+      const messages = twoTurns();
+      const result = pruneContextMessages({
+        messages,
+        settings: { ...settings, completedTurns: "keep" as const },
+        ctx: CONTEXT_WINDOW_1M,
+      });
+      expect(result).toBe(messages);
+    });
+
+    it("clear: replaces the tool results of finished turns and keeps the current turn", () => {
+      const messages = twoTurns();
+      const result = pruneContextMessages({
+        messages,
+        settings: { ...settings, completedTurns: "clear" as const },
+        ctx: CONTEXT_WINDOW_1M,
+      });
+      const first = result[1] as Extract<AgentMessage, { role: "toolResult" }>;
+      const second = result[4] as Extract<AgentMessage, { role: "toolResult" }>;
+      expect((first.content[0] as { text: string }).text).toBe(settings.hardClear.placeholder);
+      expect((second.content[0] as { text: string }).text).toBe(BIG);
+      // The reply that closed the turn is untouched.
+      expect(result[2]).toBe(messages[2]);
+    });
+
+    it("trim: soft-trims the tool results of finished turns", () => {
+      const result = pruneContextMessages({
+        messages: twoTurns(),
+        settings: { ...settings, completedTurns: "trim" as const },
+        ctx: CONTEXT_WINDOW_1M,
+      });
+      const first = result[1] as Extract<AgentMessage, { role: "toolResult" }>;
+      const second = result[4] as Extract<AgentMessage, { role: "toolResult" }>;
+      expect((first.content[0] as { text: string }).text).toContain("[Tool result trimmed:");
+      expect((second.content[0] as { text: string }).text).toBe(BIG);
+    });
+
+    it("is idempotent, so a pruned context keeps the same prefix on the next request", () => {
+      const once = pruneContextMessages({
+        messages: twoTurns(),
+        settings: { ...settings, completedTurns: "clear" as const },
+        ctx: CONTEXT_WINDOW_1M,
+      });
+      const twice = pruneContextMessages({
+        messages: once,
+        settings: { ...settings, completedTurns: "clear" as const },
+        ctx: CONTEXT_WINDOW_1M,
+      });
+      expect(twice).toBe(once);
+    });
+
+    it("respects the tool allow/deny match", () => {
+      const result = pruneContextMessages({
+        messages: twoTurns(),
+        settings: { ...settings, completedTurns: "clear" as const },
+        ctx: CONTEXT_WINDOW_1M,
+        isToolPrunable: () => false,
+      });
+      const first = result[1] as Extract<AgentMessage, { role: "toolResult" }>;
+      expect((first.content[0] as { text: string }).text).toBe(BIG);
+    });
+
+    it("counts the cleared turns before deciding whether the ratios apply", () => {
+      // 5K window = 20K chars. Two 5K-char results plus text sit at ~50% of it; clearing the
+      // finished turn brings the context under the soft-trim ratio, so the current turn's result
+      // is left whole even though the raw total was over the line.
+      const result = pruneContextMessages({
+        messages: twoTurns(),
+        settings: {
+          ...settings,
+          completedTurns: "clear" as const,
+          keepLastAssistants: 0,
+          softTrimRatio: 0.4,
+        },
+        ctx: CONTEXT_WINDOW_5K,
+      });
+      const second = result[4] as Extract<AgentMessage, { role: "toolResult" }>;
+      expect((second.content[0] as { text: string }).text).toBe(BIG);
+    });
+  });
 });

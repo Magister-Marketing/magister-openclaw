@@ -4,12 +4,27 @@ export type ContextPruningToolMatch = {
   allow?: string[];
   deny?: string[];
 };
-export type ContextPruningMode = "off" | "cache-ttl";
+/**
+ * - `cache-ttl`: prune only once the provider's prompt cache has expired (Anthropic/Google style
+ *   caches), so a warm cache is never invalidated by a prune.
+ * - `always`: prune on every request, for any provider. Meant for long tool-heavy sessions
+ *   (workflow runs) where the context would otherwise carry every fetched page to the end.
+ */
+export type ContextPruningMode = "off" | "cache-ttl" | "always";
+/**
+ * What happens to tool results from turns before the latest user message: `keep` leaves them to
+ * the ratio rules, `trim` soft-trims them on every request, `clear` replaces them with the
+ * placeholder. The assistant reply that closed each turn always stays.
+ */
+export type ContextPruningCompletedTurns = "keep" | "trim" | "clear";
 
 export type ContextPruningConfig = {
   mode?: ContextPruningMode;
   /** TTL to consider cache expired (duration string, default unit: minutes). */
   ttl?: string;
+  /** Token budget the ratios are measured against (default: the model's context window). */
+  windowTokens?: number;
+  completedTurns?: ContextPruningCompletedTurns;
   keepLastAssistants?: number;
   softTrimRatio?: number;
   hardClearRatio?: number;
@@ -29,6 +44,8 @@ export type ContextPruningConfig = {
 export type EffectiveContextPruningSettings = {
   mode: Exclude<ContextPruningMode, "off">;
   ttlMs: number;
+  windowTokens: number | null;
+  completedTurns: ContextPruningCompletedTurns;
   keepLastAssistants: number;
   softTrimRatio: number;
   hardClearRatio: number;
@@ -48,6 +65,8 @@ export type EffectiveContextPruningSettings = {
 export const DEFAULT_CONTEXT_PRUNING_SETTINGS: EffectiveContextPruningSettings = {
   mode: "cache-ttl",
   ttlMs: 5 * 60 * 1000,
+  windowTokens: null,
+  completedTurns: "keep",
   keepLastAssistants: 3,
   softTrimRatio: 0.3,
   hardClearRatio: 0.5,
@@ -64,12 +83,18 @@ export const DEFAULT_CONTEXT_PRUNING_SETTINGS: EffectiveContextPruningSettings =
   },
 };
 
+export function isActiveContextPruningMode(
+  mode: unknown,
+): mode is Exclude<ContextPruningMode, "off"> {
+  return mode === "cache-ttl" || mode === "always";
+}
+
 export function computeEffectiveSettings(raw: unknown): EffectiveContextPruningSettings | null {
   if (!raw || typeof raw !== "object") {
     return null;
   }
   const cfg = raw as ContextPruningConfig;
-  if (cfg.mode !== "cache-ttl") {
+  if (!isActiveContextPruningMode(cfg.mode)) {
     return null;
   }
 
@@ -84,6 +109,20 @@ export function computeEffectiveSettings(raw: unknown): EffectiveContextPruningS
     }
   }
 
+  if (
+    typeof cfg.windowTokens === "number" &&
+    Number.isFinite(cfg.windowTokens) &&
+    cfg.windowTokens > 0
+  ) {
+    s.windowTokens = Math.floor(cfg.windowTokens);
+  }
+  if (
+    cfg.completedTurns === "keep" ||
+    cfg.completedTurns === "trim" ||
+    cfg.completedTurns === "clear"
+  ) {
+    s.completedTurns = cfg.completedTurns;
+  }
   if (typeof cfg.keepLastAssistants === "number" && Number.isFinite(cfg.keepLastAssistants)) {
     s.keepLastAssistants = Math.max(0, Math.floor(cfg.keepLastAssistants));
   }

@@ -44,9 +44,14 @@ export type AgentModelListConfig = {
 };
 
 export type AgentContextPruningConfig = {
-  mode?: "off" | "cache-ttl";
+  /** `cache-ttl` prunes once the provider cache expired; `always` prunes on every request. */
+  mode?: "off" | "cache-ttl" | "always";
   /** TTL to consider cache expired (duration string, default unit: minutes). */
   ttl?: string;
+  /** Token budget the ratios are measured against (default: the model's context window). */
+  windowTokens?: number;
+  /** Tool results from before the latest user message: keep, soft-trim, or clear them (default: keep). */
+  completedTurns?: "keep" | "trim" | "clear";
   keepLastAssistants?: number;
   softTrimRatio?: number;
   hardClearRatio?: number;
