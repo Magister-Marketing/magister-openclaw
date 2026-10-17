@@ -1825,6 +1825,48 @@
       "tool_name": "magister_get_ai_visibility_set"
     },
     {
+      "action": "get_ai_visibility_citations",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "Read which sources ChatGPT, Claude, Gemini and Google AI Overview cite in their answers to the brand's tracked prompts (the Analytics Citations tab). Use it, not a browser, for what AI engines answer and cite.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "days": {
+            "maximum": 365,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "limit": {
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "source": {
+            "enum": ["claude", "chatgpt", "perplexity", "google_ai_overview", "gemini"],
+            "type": "string"
+          },
+          "unbranded": {
+            "default": false,
+            "type": "boolean"
+          },
+          "view": {
+            "default": "domains",
+            "enum": ["domains", "urls", "share_over_time"],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "schema_delivery": "eager",
+      "side_effect": "none",
+      "spend_limited": false,
+      "tool_name": "magister_get_ai_visibility_citations"
+    },
+    {
       "action": "run_ai_visibility_set",
       "approval_policy": "none",
       "async_status_adapter": "ai_visibility_round",
@@ -4565,6 +4607,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "2a346fd98a77efce02e3e6b78748caf0cfaf84fc00112ad065a775af1c76cc60",
+  "registry_revision": "48d0bfb20770b4626616c41d03eb71c958253f8def8caab16ba82040594bcd2b",
   "schema_version": 1
 }
