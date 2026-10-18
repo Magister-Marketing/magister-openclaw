@@ -527,6 +527,54 @@ describe("typed gateway execution", () => {
     });
   });
 
+  it("reuses a cached read that showed a result card only in that card's chat", async () => {
+    process.env.GATEWAY_TOKEN = "token";
+    const workspace = mkdtempSync(join(tmpdir(), "magister-card-cache-"));
+    temporaryDirectories.push(workspace);
+    process.env.OPENCLAW_WORKSPACE_DIR = workspace;
+    process.env.FLY_APP_NAME = "project-app-card";
+    const chatA = "agent:marketing:webchat:11111111-1111-4111-8111-111111111111";
+    const chatB = "agent:marketing:webchat:22222222-2222-4222-8222-222222222222";
+    const sessions: Array<string | undefined> = [];
+    const gateway = async (_url: string | URL | Request, init?: RequestInit) => {
+      const sessionKey = (init?.headers as Record<string, string>)["x-magister-session-key"];
+      sessions.push(sessionKey);
+      return new Response(
+        JSON.stringify(
+          envelope({
+            receipt: {
+              integrations: [{ service: "ga4" }],
+              result_card: { card_key: "influencers:run-1", session_key: sessionKey },
+            },
+          }),
+        ),
+        { status: 200 },
+      );
+    };
+    const inChatA = createMagisterActionTool(api(), integrationsAction, gateway, {
+      sessionKey: chatA,
+    });
+    const inChatB = createMagisterActionTool(api(), integrationsAction, gateway, {
+      sessionKey: chatB,
+    });
+
+    const first = resultJson(await inChatA.execute("call-card-a1", {}));
+    const again = resultJson(await inChatA.execute("call-card-a2", {}));
+    const otherChat = resultJson(await inChatB.execute("call-card-b1", {}));
+
+    // Chat B reached the Gateway, which shows the card in chat B.
+    expect(sessions).toEqual([chatA, chatB]);
+    expect((first.receipt as Record<string, unknown>).cache_freshness).toMatchObject({
+      cached: false,
+    });
+    expect((again.receipt as Record<string, unknown>).cache_freshness).toMatchObject({
+      cached: true,
+    });
+    expect((otherChat.receipt as Record<string, unknown>).cache_freshness).toMatchObject({
+      cached: false,
+    });
+  });
+
   it("never caches a non-terminal read result", async () => {
     process.env.GATEWAY_TOKEN = "token";
     const workspace = mkdtempSync(join(tmpdir(), "magister-running-cache-"));

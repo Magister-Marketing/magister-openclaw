@@ -174,6 +174,24 @@ function readCachePolicy(action: string): ReadCachePolicy | undefined {
   return undefined;
 }
 
+/**
+ * A read the Gateway also showed as a result card belongs to the chat it was
+ * shown in: its receipt says which (`receipt.result_card.session_key`).
+ * Replayed in another chat it would show no card while telling the agent one
+ * is there, so only that session reuses it; any other chat asks the Gateway,
+ * which shows the card in that chat.
+ */
+function cachedReadFitsSession(
+  envelope: ActionEnvelope,
+  runtimeSessionKey: string | undefined,
+): boolean {
+  const card = envelope.receipt.result_card;
+  if (!isRecord(card)) {
+    return true;
+  }
+  return typeof card.session_key === "string" && card.session_key === runtimeSessionKey;
+}
+
 function cacheScope(rawParams: Record<string, unknown>): {
   workspace: string;
   projectScope: string;
@@ -1038,6 +1056,7 @@ export function createMagisterActionTool(
         );
       }
 
+      const runtimeSessionKey = trustedRuntimeSessionKey(context);
       const policy = action.side_effect === "none" ? readCachePolicy(action.action) : undefined;
       const scope = policy ? cacheScope(rawParams) : undefined;
       const inputHash = policy
@@ -1057,7 +1076,11 @@ export function createMagisterActionTool(
               freshnessTtlSeconds: source.freshnessTtlSeconds,
             });
             const envelope = parseActionEnvelope(cached);
-            if (envelope?.ok && envelope.status.terminal) {
+            if (
+              envelope?.ok &&
+              envelope.status.terminal &&
+              cachedReadFitsSession(envelope, runtimeSessionKey)
+            ) {
               envelope.receipt = {
                 ...envelope.receipt,
                 cache_freshness: {
@@ -1079,7 +1102,6 @@ export function createMagisterActionTool(
       const controller = new AbortController();
       const selectedTimeoutMs = actionTimeoutMs(action.action, config.timeoutMs);
       const timeout = setTimeout(() => controller.abort(), selectedTimeoutMs);
-      const runtimeSessionKey = trustedRuntimeSessionKey(context);
       const runtimeSessionId = context.sessionId?.trim();
       try {
         const mediaPreparedParams = await prepareExactSocialMedia(action.action, rawParams, {
