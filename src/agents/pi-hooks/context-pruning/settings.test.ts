@@ -3,6 +3,7 @@ import {
   computeEffectiveSettings,
   DEFAULT_CONTEXT_PRUNING_SETTINGS,
   isActiveContextPruningMode,
+  settingsForSession,
 } from "./settings.js";
 
 describe("computeEffectiveSettings", () => {
@@ -42,5 +43,24 @@ describe("computeEffectiveSettings", () => {
     });
     expect(s?.windowTokens).toBeNull();
     expect(s?.completedTurns).toBe("keep");
+  });
+
+  it("scopes the completed-turns rule to the configured session keys", () => {
+    const s = computeEffectiveSettings({
+      mode: "always",
+      completedTurns: "clear",
+      completedTurnsSessionKeys: ["workflow_run:", "", 7 as unknown as string],
+    });
+    expect(s?.completedTurnsSessionKeys).toEqual(["workflow_run:"]);
+    expect(settingsForSession(s!, "workflow_run:abc").completedTurns).toBe("clear");
+    expect(settingsForSession(s!, "webchat:abc").completedTurns).toBe("keep");
+    expect(settingsForSession(s!, undefined).completedTurns).toBe("keep");
+    // Every other knob is untouched for the excluded session.
+    expect(settingsForSession(s!, "webchat:abc").mode).toBe("always");
+  });
+
+  it("applies the completed-turns rule everywhere when no session keys are listed", () => {
+    const s = computeEffectiveSettings({ mode: "always", completedTurns: "trim" });
+    expect(settingsForSession(s!, "webchat:abc")).toBe(s);
   });
 });

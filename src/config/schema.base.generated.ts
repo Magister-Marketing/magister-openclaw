@@ -4943,6 +4943,12 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                       },
                     ],
                   },
+                  completedTurnsSessionKeys: {
+                    type: "array",
+                    items: {
+                      type: "string",
+                    },
+                  },
                   keepLastAssistants: {
                     type: "integer",
                     minimum: 0,

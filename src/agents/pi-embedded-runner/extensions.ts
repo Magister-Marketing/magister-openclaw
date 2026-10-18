@@ -13,6 +13,7 @@ import { setContextPruningRuntime } from "../pi-hooks/context-pruning/runtime.js
 import {
   computeEffectiveSettings,
   isActiveContextPruningMode,
+  settingsForSession,
 } from "../pi-hooks/context-pruning/settings.js";
 import { makeToolPrunablePredicate } from "../pi-hooks/context-pruning/tools.js";
 import { ensurePiCompactionReserveTokens } from "../pi-settings.js";
@@ -93,6 +94,7 @@ function buildContextPruningFactory(params: {
   provider: string;
   modelId: string;
   model: ProviderRuntimeModel | undefined;
+  sessionKey?: string;
 }): ExtensionFactory | undefined {
   const raw = params.cfg?.agents?.defaults?.contextPruning;
   if (!isActiveContextPruningMode(raw?.mode)) {
@@ -107,10 +109,11 @@ function buildContextPruningFactory(params: {
     return undefined;
   }
 
-  const settings = computeEffectiveSettings(raw);
-  if (!settings) {
+  const configured = computeEffectiveSettings(raw);
+  if (!configured) {
     return undefined;
   }
+  const settings = settingsForSession(configured, params.sessionKey);
   const transcriptPolicy = resolveTranscriptPolicy({
     modelApi: params.model?.api,
     provider: params.provider,
@@ -149,6 +152,7 @@ export function buildEmbeddedExtensionFactories(params: {
   provider: string;
   modelId: string;
   model: ProviderRuntimeModel | undefined;
+  sessionKey?: string;
 }): ExtensionFactory[] {
   const factories: ExtensionFactory[] = [];
   if (resolveCompactionMode(params.cfg) === "safeguard") {

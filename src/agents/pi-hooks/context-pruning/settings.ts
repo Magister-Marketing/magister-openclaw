@@ -25,6 +25,11 @@ export type ContextPruningConfig = {
   /** Token budget the ratios are measured against (default: the model's context window). */
   windowTokens?: number;
   completedTurns?: ContextPruningCompletedTurns;
+  /**
+   * Session key prefixes the completed-turns rule applies to (for example `workflow_run:`).
+   * Empty means every session. Other sessions keep only the ratio rules.
+   */
+  completedTurnsSessionKeys?: string[];
   keepLastAssistants?: number;
   softTrimRatio?: number;
   hardClearRatio?: number;
@@ -46,6 +51,7 @@ export type EffectiveContextPruningSettings = {
   ttlMs: number;
   windowTokens: number | null;
   completedTurns: ContextPruningCompletedTurns;
+  completedTurnsSessionKeys: string[];
   keepLastAssistants: number;
   softTrimRatio: number;
   hardClearRatio: number;
@@ -67,6 +73,7 @@ export const DEFAULT_CONTEXT_PRUNING_SETTINGS: EffectiveContextPruningSettings =
   ttlMs: 5 * 60 * 1000,
   windowTokens: null,
   completedTurns: "keep",
+  completedTurnsSessionKeys: [],
   keepLastAssistants: 3,
   softTrimRatio: 0.3,
   hardClearRatio: 0.5,
@@ -123,6 +130,11 @@ export function computeEffectiveSettings(raw: unknown): EffectiveContextPruningS
   ) {
     s.completedTurns = cfg.completedTurns;
   }
+  if (Array.isArray(cfg.completedTurnsSessionKeys)) {
+    s.completedTurnsSessionKeys = cfg.completedTurnsSessionKeys.filter(
+      (key): key is string => typeof key === "string" && key.length > 0,
+    );
+  }
   if (typeof cfg.keepLastAssistants === "number" && Number.isFinite(cfg.keepLastAssistants)) {
     s.keepLastAssistants = Math.max(0, Math.floor(cfg.keepLastAssistants));
   }
@@ -159,4 +171,18 @@ export function computeEffectiveSettings(raw: unknown): EffectiveContextPruningS
   }
 
   return s;
+}
+
+/** The settings for one session: the completed-turns rule only where its session keys say so. */
+export function settingsForSession(
+  settings: EffectiveContextPruningSettings,
+  sessionKey: string | undefined,
+): EffectiveContextPruningSettings {
+  if (settings.completedTurns === "keep" || settings.completedTurnsSessionKeys.length === 0) {
+    return settings;
+  }
+  const applies =
+    typeof sessionKey === "string" &&
+    settings.completedTurnsSessionKeys.some((prefix) => sessionKey.startsWith(prefix));
+  return applies ? settings : { ...settings, completedTurns: "keep" };
 }
