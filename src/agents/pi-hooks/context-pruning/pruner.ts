@@ -433,8 +433,15 @@ export function pruneContextMessages(params: {
     return outputAfterSoftTrim;
   }
 
+  // In cache-ttl mode the cache has already expired, so clearing one more old result per
+  // request costs nothing extra. In always mode the cache is warm, and a prefix that changes
+  // near its start on every request re-sends the whole context at the uncached price: measured
+  // on a workflow run, the cached share fell from 93% to 48% and the run cost more than with no
+  // pruning. So once the threshold is crossed, always mode clears every prunable result before
+  // the protected tail; the set only ever grows at its end, and the prefix stays cached.
+  const clearEverything = settings.mode === "always";
   for (const i of prunableToolIndexes) {
-    if (ratio < settings.hardClearRatio) {
+    if (!clearEverything && ratio < settings.hardClearRatio) {
       break;
     }
     const msg = (next ?? messages)[i];

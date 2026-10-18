@@ -568,4 +568,57 @@ describe("pruneContextMessages", () => {
       expect((second.content[0] as { text: string }).text).toBe(BIG);
     });
   });
+
+  describe("hard clear in always mode", () => {
+    const BIG = "Q".repeat(3_000);
+    // 5K window = 20K chars. Soft trim is switched off (nothing exceeds maxChars) so the
+    // hard-clear line, 50% of the window, is what the five 3K results cross.
+    const settings = {
+      ...buildToolTrimSettings(),
+      softTrimRatio: 0.1,
+      hardClearRatio: 0.5,
+      minPrunableToolChars: 0,
+      softTrim: { maxChars: 100_000, headChars: 1, tailChars: 1 },
+      hardClear: { ...DEFAULT_CONTEXT_PRUNING_SETTINGS.hardClear, enabled: true },
+    };
+    const messages = () => [
+      makeUser("go"),
+      makeToolResult([{ type: "text", text: BIG }]),
+      makeAssistant([{ type: "text", text: "a" }]),
+      makeToolResult([{ type: "text", text: BIG }]),
+      makeAssistant([{ type: "text", text: "b" }]),
+      makeToolResult([{ type: "text", text: BIG }]),
+      makeAssistant([{ type: "text", text: "c" }]),
+      makeToolResult([{ type: "text", text: BIG }]),
+      makeAssistant([{ type: "text", text: "d" }]),
+      makeToolResult([{ type: "text", text: BIG }]),
+      makeAssistant([{ type: "text", text: "e" }]),
+    ];
+    const clearedCount = (result: AgentMessage[]) =>
+      result.filter(
+        (m) =>
+          m.role === "toolResult" &&
+          (m.content[0] as { text?: string }).text === settings.hardClear.placeholder,
+      ).length;
+
+    it("cache-ttl clears one old result at a time, until the ratio is back under the line", () => {
+      const result = pruneContextMessages({
+        messages: messages(),
+        settings: { ...settings, mode: "cache-ttl" as const },
+        ctx: CONTEXT_WINDOW_5K,
+      });
+      // 15K of 20K chars: the first clear leaves 12K (still 60%), the second 9K, under 50%.
+      expect(clearedCount(result)).toBe(2);
+    });
+
+    it("always clears every prunable result before the tail, so the prefix stays stable", () => {
+      const result = pruneContextMessages({
+        messages: messages(),
+        settings: { ...settings, mode: "always" as const },
+        ctx: CONTEXT_WINDOW_5K,
+      });
+      // keepLastAssistants is 1, so every result before the last assistant is prunable.
+      expect(clearedCount(result)).toBe(5);
+    });
+  });
 });
