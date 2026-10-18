@@ -1061,6 +1061,82 @@
       "tool_name": "magister_list_firehose_matches"
     },
     {
+      "action": "list_firehose_rules",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "List what web monitoring watches for this brand (its Firehose rules).",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "schema_delivery": "eager",
+      "side_effect": "none",
+      "spend_limited": false,
+      "tool_name": "magister_list_firehose_rules"
+    },
+    {
+      "action": "create_firehose_rule",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "Start web monitoring for one Lucene query (quote phrases): the brand, a competitor or a topic. A query already watched is returned, not doubled.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "tag": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": ["value"],
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "schema_delivery": "eager",
+      "side_effect": "internal_write",
+      "spend_limited": false,
+      "tool_name": "magister_create_firehose_rule"
+    },
+    {
+      "action": "delete_firehose_rule",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "Stop web monitoring for one rule_id from magister_list_firehose_rules. Only after the user confirms: pass confirmed=true.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmed": {
+            "default": false,
+            "type": "boolean"
+          },
+          "rule_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": ["rule_id"],
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "schema_delivery": "eager",
+      "side_effect": "internal_write",
+      "spend_limited": false,
+      "tool_name": "magister_delete_firehose_rule"
+    },
+    {
       "action": "check_back",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
@@ -2812,6 +2888,48 @@
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_get_ai_visibility_set"
+    },
+    {
+      "action": "get_ai_visibility_citations",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "Read which sources ChatGPT, Claude, Gemini and Google AI Overview cite in their answers to the brand's tracked prompts (the Analytics Citations tab). Use it, not a browser, for what AI engines answer and cite.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "days": {
+            "maximum": 365,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "limit": {
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "source": {
+            "enum": ["claude", "chatgpt", "perplexity", "google_ai_overview", "gemini"],
+            "type": "string"
+          },
+          "unbranded": {
+            "default": false,
+            "type": "boolean"
+          },
+          "view": {
+            "default": "domains",
+            "enum": ["domains", "urls", "share_over_time"],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "schema_delivery": "eager",
+      "side_effect": "none",
+      "spend_limited": false,
+      "tool_name": "magister_get_ai_visibility_citations"
     },
     {
       "action": "run_ai_visibility_set",
@@ -5554,6 +5672,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "2780c85fc97931430401683b49f3b6c17b5b42891966536b0d50c6120dbe0df4",
+  "registry_revision": "1006c202ec5a3d59deb46b90bd25b8a2640d5a477317f59f2a86103608807e8c",
   "schema_version": 1
 }
