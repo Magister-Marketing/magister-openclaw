@@ -8677,6 +8677,12 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
             description:
               "Per-provider tool allow/deny overrides keyed by channel/provider ID to tailor capabilities by surface. Use this when one provider needs stricter controls than global tool policy.",
           },
+          deferredSchemas: {
+            type: "array",
+            items: {
+              type: "string",
+            },
+          },
           web: {
             type: "object",
             properties: {

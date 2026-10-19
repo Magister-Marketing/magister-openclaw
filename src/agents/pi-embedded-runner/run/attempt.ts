@@ -170,7 +170,11 @@ import {
   collectExplicitToolAllowlistSources,
 } from "../../tool-allowlist-guard.js";
 import { UNKNOWN_TOOL_THRESHOLD } from "../../tool-loop-detection.js";
-import { activateToolSchemaDeferral, planToolSchemaDelivery } from "../../tool-schema-deferral.js";
+import {
+  activateToolSchemaDeferral,
+  applyConfiguredSchemaDeferral,
+  planToolSchemaDelivery,
+} from "../../tool-schema-deferral.js";
 import { shouldAllowProviderOwnedThinkingReplay } from "../../transcript-policy.js";
 import { normalizeUsage, type NormalizedUsage } from "../../usage.js";
 import { DEFAULT_BOOTSTRAP_FILENAME } from "../../workspace.js";
@@ -1152,8 +1156,15 @@ export async function runEmbeddedAttempt(
     });
     // Every tool stays registered under its real name (policy, hooks, approvals
     // and the ledger are unchanged); the plan only decides which schemas ride
-    // in each request and which the model loads with tool_describe.
-    const toolSchemaDelivery = planToolSchemaDelivery([...tools, ...filteredBundledTools]);
+    // in each request and which the model loads with tool_describe. Hosted
+    // actions bring their delivery from the contract; tools.deferredSchemas
+    // adds the native ones the image config names.
+    const toolSchemaDelivery = planToolSchemaDelivery(
+      applyConfiguredSchemaDeferral(
+        [...tools, ...filteredBundledTools],
+        params.config?.tools?.deferredSchemas,
+      ),
+    );
     const effectiveTools = toolSchemaDelivery.tools;
     prepStages.mark("bundle-tools");
     const allowedToolNames = collectAllowedToolNames({

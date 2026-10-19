@@ -2,6 +2,7 @@ import type { AfterToolCallContext, AgentTool } from "@mariozechner/pi-agent-cor
 import { describe, expect, it, vi } from "vitest";
 import {
   activateToolSchemaDeferral,
+  applyConfiguredSchemaDeferral,
   buildDeferredToolDirectoryLines,
   collectPromotedToolNames,
   createToolDescribeTool,
@@ -75,6 +76,48 @@ function afterToolCallContext(params: {
     context: { systemPrompt: "", messages: [], tools: params.tools },
   };
 }
+
+describe("applyConfiguredSchemaDeferral", () => {
+  it("defers the named native tools and leaves everything else as it came", () => {
+    const message = makeTool("message");
+    const read = makeTool("read");
+    const out = applyConfiguredSchemaDeferral(
+      [message, read, eager(), deferred()],
+      ["message", "video_generate"],
+    );
+    expect(out.map((tool) => [tool.name, tool.schemaDelivery])).toEqual([
+      ["message", "deferred"],
+      ["read", undefined],
+      ["magister_get_brand", "eager"],
+      ["magister_send_brief", "deferred"],
+    ]);
+    // Only the deferred copy is new; the untouched tools keep their identity.
+    expect(out[1]).toBe(read);
+    expect(message.schemaDelivery).toBeUndefined();
+  });
+
+  it("never defers tool_describe and does nothing for an empty list", () => {
+    const describe = createToolDescribeTool();
+    const tools = [describe, makeTool("message")];
+    expect(
+      applyConfiguredSchemaDeferral(tools, [TOOL_DESCRIBE_TOOL_NAME])[0].schemaDelivery,
+    ).toBeUndefined();
+    expect(
+      applyConfiguredSchemaDeferral(tools, undefined).map((tool) => tool.schemaDelivery),
+    ).toEqual([undefined, undefined]);
+  });
+
+  it("puts a config-deferred native tool in the directory with its first sentence", () => {
+    const describe = createToolDescribeTool();
+    const plan = planToolSchemaDelivery(
+      applyConfiguredSchemaDeferral([describe, makeTool("message"), makeTool("read")], ["message"]),
+    );
+    expect(plan.promptTools.map((tool) => tool.name)).toEqual([TOOL_DESCRIBE_TOOL_NAME, "read"]);
+    expect(buildDeferredToolDirectoryLines(plan.deferredTools)).toEqual([
+      "- message: message does one thing well.",
+    ]);
+  });
+});
 
 describe("planToolSchemaDelivery", () => {
   it("ships every schema when tool_describe did not survive policy", () => {

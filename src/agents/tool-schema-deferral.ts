@@ -49,6 +49,29 @@ export function isDeferredSchemaTool(tool: Pick<AnyAgentTool, "name" | "schemaDe
   return tool.schemaDelivery === "deferred" && tool.name !== TOOL_DESCRIBE_TOOL_NAME;
 }
 
+/**
+ * Defer the tools `tools.deferredSchemas` names. Hosted Magister actions carry
+ * their delivery in the action contract; native and bundled tools have no
+ * contract, so the image config names the ones whose schema almost never
+ * earns its place in the prompt (30 days to 2026-10-19 in production:
+ * `message`, `video_generate`, `image_generate` and `sessions_spawn` were
+ * 16.5K of the 75K tool-schema chars on every request and reached under 2% of
+ * tool-using sessions). Config only adds deferral: a contract-deferred action
+ * stays deferred, an unknown name is ignored, and tool_describe itself is
+ * never deferred, or nothing could be loaded.
+ */
+export function applyConfiguredSchemaDeferral(
+  tools: readonly AnyAgentTool[],
+  deferredNames: readonly string[] | undefined,
+): AnyAgentTool[] {
+  const names = new Set((deferredNames ?? []).filter((name) => name !== TOOL_DESCRIBE_TOOL_NAME));
+  return tools.map((tool) =>
+    names.has(tool.name) && tool.schemaDelivery !== "deferred"
+      ? { ...tool, schemaDelivery: "deferred" as const }
+      : tool,
+  );
+}
+
 export type ToolDescribeResult = {
   tool: string;
   description: string;
