@@ -1522,7 +1522,7 @@
                 "type": "string"
               },
               "kind": {
-                "enum": ["goal", "task", "campaign", "experiment"],
+                "enum": ["goal", "task", "piece", "experiment"],
                 "type": "string"
               }
             },
@@ -1619,7 +1619,7 @@
                 "type": "string"
               },
               "kind": {
-                "enum": ["goal", "task", "campaign", "experiment"],
+                "enum": ["goal", "task", "piece", "experiment"],
                 "type": "string"
               }
             },
@@ -1769,7 +1769,7 @@
                 "type": "string"
               },
               "kind": {
-                "enum": ["goal", "task", "campaign", "experiment"],
+                "enum": ["goal", "task", "piece", "experiment"],
                 "type": "string"
               }
             },
@@ -1964,7 +1964,7 @@
                 "type": "string"
               },
               "kind": {
-                "enum": ["goal", "task", "campaign", "experiment"],
+                "enum": ["goal", "task", "piece", "experiment"],
                 "type": "string"
               }
             },
@@ -2107,7 +2107,7 @@
       "action": "list_measures",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
-      "description": "List everything the project measures as the Impact view shows it: goals, and every task, campaign, experiment and monitor with its status (running, measuring, finished, unmeasured, waiting), metric, window and result.",
+      "description": "List everything the project measures as the Impact view shows it: goals, and every task, published piece, experiment and monitor with its status (running, measuring, finished, unmeasured, waiting), metric, window and result.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "safe_retry",
       "input_schema": {
@@ -5672,6 +5672,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "1006c202ec5a3d59deb46b90bd25b8a2640d5a477317f59f2a86103608807e8c",
+  "registry_revision": "83b3178ce4cff506b8a3dff0247f19b28c3d962acc897692191cdb5fc1d30bd4",
   "schema_version": 1
 }
