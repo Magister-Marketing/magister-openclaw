@@ -4913,10 +4913,41 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                         type: "string",
                         const: "cache-ttl",
                       },
+                      {
+                        type: "string",
+                        const: "always",
+                      },
                     ],
                   },
                   ttl: {
                     type: "string",
+                  },
+                  windowTokens: {
+                    type: "integer",
+                    exclusiveMinimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  completedTurns: {
+                    anyOf: [
+                      {
+                        type: "string",
+                        const: "keep",
+                      },
+                      {
+                        type: "string",
+                        const: "trim",
+                      },
+                      {
+                        type: "string",
+                        const: "clear",
+                      },
+                    ],
+                  },
+                  completedTurnsSessionKeys: {
+                    type: "array",
+                    items: {
+                      type: "string",
+                    },
                   },
                   keepLastAssistants: {
                     type: "integer",
@@ -8645,6 +8676,12 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
             title: "Tool Policy by Provider",
             description:
               "Per-provider tool allow/deny overrides keyed by channel/provider ID to tailor capabilities by surface. Use this when one provider needs stricter controls than global tool policy.",
+          },
+          deferredSchemas: {
+            type: "array",
+            items: {
+              type: "string",
+            },
           },
           web: {
             type: "object",

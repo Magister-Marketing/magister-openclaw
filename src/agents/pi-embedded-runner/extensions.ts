@@ -10,7 +10,11 @@ import { setCompactionSafeguardRuntime } from "../pi-hooks/compaction-safeguard-
 import compactionSafeguardExtension from "../pi-hooks/compaction-safeguard.js";
 import contextPruningExtension from "../pi-hooks/context-pruning.js";
 import { setContextPruningRuntime } from "../pi-hooks/context-pruning/runtime.js";
-import { computeEffectiveSettings } from "../pi-hooks/context-pruning/settings.js";
+import {
+  computeEffectiveSettings,
+  isActiveContextPruningMode,
+  settingsForSession,
+} from "../pi-hooks/context-pruning/settings.js";
 import { makeToolPrunablePredicate } from "../pi-hooks/context-pruning/tools.js";
 import { ensurePiCompactionReserveTokens } from "../pi-settings.js";
 import { resolveTranscriptPolicy } from "../transcript-policy.js";
@@ -90,19 +94,26 @@ function buildContextPruningFactory(params: {
   provider: string;
   modelId: string;
   model: ProviderRuntimeModel | undefined;
+  sessionKey?: string;
 }): ExtensionFactory | undefined {
   const raw = params.cfg?.agents?.defaults?.contextPruning;
-  if (raw?.mode !== "cache-ttl") {
+  if (!isActiveContextPruningMode(raw?.mode)) {
     return undefined;
   }
-  if (!isCacheTtlEligibleProvider(params.provider, params.modelId, params.model?.api)) {
+  // cache-ttl waits for a provider cache to expire, so it needs a provider with one; "always"
+  // prunes on every request and works with any provider.
+  if (
+    raw?.mode === "cache-ttl" &&
+    !isCacheTtlEligibleProvider(params.provider, params.modelId, params.model?.api)
+  ) {
     return undefined;
   }
 
-  const settings = computeEffectiveSettings(raw);
-  if (!settings) {
+  const configured = computeEffectiveSettings(raw);
+  if (!configured) {
     return undefined;
   }
+  const settings = settingsForSession(configured, params.sessionKey);
   const transcriptPolicy = resolveTranscriptPolicy({
     modelApi: params.model?.api,
     provider: params.provider,
@@ -111,13 +122,16 @@ function buildContextPruningFactory(params: {
 
   setContextPruningRuntime(params.sessionManager, {
     settings,
-    contextWindowTokens: resolveContextWindowTokens(params),
+    contextWindowTokens: settings.windowTokens ?? resolveContextWindowTokens(params),
     isToolPrunable: makeToolPrunablePredicate(settings.tools),
     dropThinkingBlocks: transcriptPolicy.dropThinkingBlocks,
-    lastCacheTouchAt: readLastCacheTtlTimestamp(params.sessionManager, {
-      provider: params.provider,
-      modelId: params.modelId,
-    }),
+    lastCacheTouchAt:
+      settings.mode === "cache-ttl"
+        ? readLastCacheTtlTimestamp(params.sessionManager, {
+            provider: params.provider,
+            modelId: params.modelId,
+          })
+        : null,
   });
 
   return contextPruningExtension;
@@ -138,6 +152,7 @@ export function buildEmbeddedExtensionFactories(params: {
   provider: string;
   modelId: string;
   model: ProviderRuntimeModel | undefined;
+  sessionKey?: string;
 }): ExtensionFactory[] {
   const factories: ExtensionFactory[] = [];
   if (resolveCompactionMode(params.cfg) === "safeguard") {
