@@ -254,6 +254,35 @@ function findLastUserIndex(messages: AgentMessage[]): number | null {
   return null;
 }
 
+/** Ids of the `read` calls in messages[start, end) whose path starts with one of the prefixes. */
+function readCallIdsUnder(
+  messages: AgentMessage[],
+  start: number,
+  end: number,
+  prefixes: readonly string[],
+): Set<string> {
+  const ids = new Set<string>();
+  if (prefixes.length === 0) {
+    return ids;
+  }
+  for (let i = start; i < end; i++) {
+    const msg = messages[i];
+    if (msg?.role !== "assistant") {
+      continue;
+    }
+    for (const block of msg.content) {
+      if (block?.type !== "toolCall" || block.name !== "read") {
+        continue;
+      }
+      const path = block.arguments?.path ?? block.arguments?.file_path;
+      if (typeof path === "string" && prefixes.some((prefix) => path.startsWith(prefix))) {
+        ids.add(block.id);
+      }
+    }
+  }
+  return ids;
+}
+
 function clearToolResultMessage(params: {
   msg: ToolResultMessage;
   settings: EffectiveContextPruningSettings;
@@ -365,13 +394,24 @@ export function pruneContextMessages(params: {
   // Completed turns: a tool result from before the latest user message has already fed the
   // reply that closed its turn, so it is pruned on every request, whatever the ratios say. In a
   // workflow run each step is one user message, so this clears a step's fetched pages the moment
-  // the next step starts; the step's own reply stays.
+  // the next step starts; the step's own reply stays. Reads under completedTurnsKeepReads (skills)
+  // stay too: the agent reuses them every turn, and clearing them made it read the same skills
+  // again on later chat turns.
   if (settings.completedTurns !== "keep") {
     const lastUserIndex = findLastUserIndex(messages);
     const completedEnd = lastUserIndex === null ? pruneStartIndex : lastUserIndex;
+    const keptReads = readCallIdsUnder(
+      messages,
+      pruneStartIndex,
+      completedEnd,
+      settings.completedTurnsKeepReads,
+    );
     for (let i = pruneStartIndex; i < completedEnd; i++) {
       const msg = messages[i];
       if (!msg || msg.role !== "toolResult" || !isToolPrunable(msg.toolName)) {
+        continue;
+      }
+      if (keptReads.has(msg.toolCallId)) {
         continue;
       }
       const current = msg as unknown as ToolResultMessage;

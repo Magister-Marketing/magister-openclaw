@@ -54,6 +54,8 @@ export type AgentContextPruningConfig = {
   completedTurns?: "keep" | "trim" | "clear";
   /** Session key prefixes the completed-turns rule applies to, without the `agent:<id>:` qualifier (empty: every session). */
   completedTurnsSessionKeys?: string[];
+  /** Path prefixes whose `read` results the completed-turns rule keeps (skills reused every turn). */
+  completedTurnsKeepReads?: string[];
   keepLastAssistants?: number;
   softTrimRatio?: number;
   hardClearRatio?: number;
