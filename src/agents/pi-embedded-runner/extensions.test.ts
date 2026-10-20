@@ -127,7 +127,7 @@ describe("buildEmbeddedExtensionFactories", () => {
             mode: "always",
             windowTokens: 200_000,
             completedTurns: "clear",
-            completedTurnsSessionKeys: ["workflow_run:"],
+            completedTurnsSessionKeys: ["workflow_run:", "webchat:"],
           },
         },
       },
@@ -155,8 +155,13 @@ describe("buildEmbeddedExtensionFactories", () => {
       expect(runtime?.settings.completedTurns).toBe("clear");
     });
 
+    it("clears finished turns in a chat, whose stored key is agent-qualified", () => {
+      const { runtime } = build("agent:marketing:webchat:chat-1");
+      expect(runtime?.settings.completedTurns).toBe("clear");
+    });
+
     it("keeps finished turns in a session the completed-turns keys do not name", () => {
-      const { runtime } = build("webchat:chat-1");
+      const { runtime } = build("agent:marketing:main");
       expect(runtime?.settings.mode).toBe("always");
       expect(runtime?.settings.completedTurns).toBe("keep");
     });

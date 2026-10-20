@@ -1,4 +1,5 @@
 import { parseDurationMs } from "../../../cli/parse-duration.js";
+import { toAgentRequestSessionKey } from "../../../routing/session-key.js";
 
 export type ContextPruningToolMatch = {
   allow?: string[];
@@ -26,8 +27,9 @@ export type ContextPruningConfig = {
   windowTokens?: number;
   completedTurns?: ContextPruningCompletedTurns;
   /**
-   * Session key prefixes the completed-turns rule applies to (for example `workflow_run:`).
-   * Empty means every session. Other sessions keep only the ratio rules.
+   * Session key prefixes the completed-turns rule applies to (for example `workflow_run:` or
+   * `webchat:`), matched without the `agent:<id>:` qualifier a stored key carries. Empty means
+   * every session. Other sessions keep only the ratio rules.
    */
   completedTurnsSessionKeys?: string[];
   keepLastAssistants?: number;
@@ -173,7 +175,11 @@ export function computeEffectiveSettings(raw: unknown): EffectiveContextPruningS
   return s;
 }
 
-/** The settings for one session: the completed-turns rule only where its session keys say so. */
+/**
+ * The settings for one session: the completed-turns rule only where its session keys say so. A
+ * chat's key arrives agent-qualified (`agent:marketing:webchat:<id>`) while a workflow run's is
+ * bare (`workflow_run:<id>`), so prefixes match the key with that qualifier removed.
+ */
 export function settingsForSession(
   settings: EffectiveContextPruningSettings,
   sessionKey: string | undefined,
@@ -181,8 +187,9 @@ export function settingsForSession(
   if (settings.completedTurns === "keep" || settings.completedTurnsSessionKeys.length === 0) {
     return settings;
   }
+  const requestKey = toAgentRequestSessionKey(sessionKey);
   const applies =
-    typeof sessionKey === "string" &&
-    settings.completedTurnsSessionKeys.some((prefix) => sessionKey.startsWith(prefix));
+    requestKey !== undefined &&
+    settings.completedTurnsSessionKeys.some((prefix) => requestKey.startsWith(prefix));
   return applies ? settings : { ...settings, completedTurns: "keep" };
 }

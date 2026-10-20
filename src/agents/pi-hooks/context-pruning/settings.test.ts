@@ -59,6 +59,22 @@ describe("computeEffectiveSettings", () => {
     expect(settingsForSession(s!, "webchat:abc").mode).toBe("always");
   });
 
+  it("matches a chat's agent-qualified key against a bare prefix", () => {
+    const s = computeEffectiveSettings({
+      mode: "always",
+      completedTurns: "clear",
+      completedTurnsSessionKeys: ["workflow_run:", "webchat:"],
+    });
+    expect(settingsForSession(s!, "agent:marketing:webchat:abc").completedTurns).toBe("clear");
+    expect(settingsForSession(s!, "webchat:abc").completedTurns).toBe("clear");
+    expect(settingsForSession(s!, "agent:marketing:workflow_run:run-1").completedTurns).toBe(
+      "clear",
+    );
+    expect(settingsForSession(s!, "workflow_run:run-1").completedTurns).toBe("clear");
+    expect(settingsForSession(s!, "agent:marketing:main").completedTurns).toBe("keep");
+    expect(settingsForSession(s!, "agent:marketing:slack:channel:c1").completedTurns).toBe("keep");
+  });
+
   it("applies the completed-turns rule everywhere when no session keys are listed", () => {
     const s = computeEffectiveSettings({ mode: "always", completedTurns: "trim" });
     expect(settingsForSession(s!, "webchat:abc")).toBe(s);

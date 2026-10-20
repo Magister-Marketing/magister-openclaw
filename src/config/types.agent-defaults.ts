@@ -52,7 +52,7 @@ export type AgentContextPruningConfig = {
   windowTokens?: number;
   /** Tool results from before the latest user message: keep, soft-trim, or clear them (default: keep). */
   completedTurns?: "keep" | "trim" | "clear";
-  /** Session key prefixes the completed-turns rule applies to (empty: every session). */
+  /** Session key prefixes the completed-turns rule applies to, without the `agent:<id>:` qualifier (empty: every session). */
   completedTurnsSessionKeys?: string[];
   keepLastAssistants?: number;
   softTrimRatio?: number;
