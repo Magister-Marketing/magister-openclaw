@@ -59,6 +59,16 @@ describe("computeEffectiveSettings", () => {
     expect(settingsForSession(s!, "webchat:abc").mode).toBe("always");
   });
 
+  it("reads the completed-turns keep list and drops empty entries", () => {
+    const s = computeEffectiveSettings({
+      mode: "always",
+      completedTurns: "clear",
+      completedTurnsKeepReads: ["/data/.openclaw/skills/", ""],
+    });
+    expect(s?.completedTurnsKeepReads).toEqual(["/data/.openclaw/skills/"]);
+    expect(computeEffectiveSettings({ mode: "always" })?.completedTurnsKeepReads).toEqual([]);
+  });
+
   it("matches a chat's agent-qualified key against a bare prefix", () => {
     const s = computeEffectiveSettings({
       mode: "always",

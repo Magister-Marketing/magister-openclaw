@@ -89,6 +89,7 @@ function buildToolTrimSettings() {
     hardClearRatio: DEFAULT_CONTEXT_PRUNING_SETTINGS.hardClearRatio,
     minPrunableToolChars: DEFAULT_CONTEXT_PRUNING_SETTINGS.minPrunableToolChars,
     tools: DEFAULT_CONTEXT_PRUNING_SETTINGS.tools,
+    completedTurnsKeepReads: DEFAULT_CONTEXT_PRUNING_SETTINGS.completedTurnsKeepReads,
     softTrim: { maxChars: 200, headChars: 100, tailChars: 50 },
     hardClear: { ...DEFAULT_CONTEXT_PRUNING_SETTINGS.hardClear, enabled: false },
   };
@@ -487,6 +488,50 @@ describe("pruneContextMessages", () => {
       makeToolResult([{ type: "text", text: BIG }]),
       makeAssistant([{ type: "text", text: "working" }]),
     ];
+
+    it("clear: keeps reads under completedTurnsKeepReads and clears the rest", () => {
+      const call = (id: string, name: string, path: string) =>
+        ({ type: "toolCall", id, name, arguments: { path } }) as const;
+      const result = (id: string, toolName: string) =>
+        ({
+          role: "toolResult",
+          toolCallId: id,
+          toolName,
+          content: [{ type: "text", text: BIG }],
+          timestamp: Date.now(),
+        }) as unknown as AgentMessage;
+      const messages = [
+        makeUser("turn 1"),
+        makeAssistant([
+          call("c1", "read", "/data/.openclaw/skills/cro/SKILL.md"),
+          call("c2", "read", "/data/.openclaw/workspace/BRAND.md"),
+          call("c3", "web_fetch", "/data/.openclaw/skills/not-a-read"),
+        ]),
+        result("c1", "read"),
+        result("c2", "read"),
+        result("c3", "web_fetch"),
+        makeAssistant([{ type: "text", text: "turn 1 reply" }]),
+        makeUser("turn 2"),
+      ];
+      const pruned = pruneContextMessages({
+        messages,
+        settings: {
+          ...settings,
+          completedTurns: "clear" as const,
+          completedTurnsKeepReads: ["/data/.openclaw/skills/"],
+        },
+        ctx: CONTEXT_WINDOW_1M,
+      });
+      const text = (i: number) =>
+        (
+          (pruned[i] as Extract<AgentMessage, { role: "toolResult" }>).content[0] as {
+            text: string;
+          }
+        ).text;
+      expect(text(2)).toBe(BIG);
+      expect(text(3)).toBe(settings.hardClear.placeholder);
+      expect(text(4)).toBe(settings.hardClear.placeholder);
+    });
 
     it("keep: leaves finished turns to the ratios", () => {
       const messages = twoTurns();

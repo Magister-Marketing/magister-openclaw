@@ -145,6 +145,7 @@ export const AgentDefaultsSchema = z
           .union([z.literal("keep"), z.literal("trim"), z.literal("clear")])
           .optional(),
         completedTurnsSessionKeys: z.array(z.string()).optional(),
+        completedTurnsKeepReads: z.array(z.string()).optional(),
         keepLastAssistants: z.number().int().nonnegative().optional(),
         softTrimRatio: z.number().min(0).max(1).optional(),
         hardClearRatio: z.number().min(0).max(1).optional(),

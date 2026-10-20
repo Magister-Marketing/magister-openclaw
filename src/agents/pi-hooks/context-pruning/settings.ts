@@ -32,6 +32,11 @@ export type ContextPruningConfig = {
    * every session. Other sessions keep only the ratio rules.
    */
   completedTurnsSessionKeys?: string[];
+  /**
+   * Path prefixes whose `read` results the completed-turns rule keeps: reference files such as
+   * skills, which the agent reuses turn after turn and would otherwise read again.
+   */
+  completedTurnsKeepReads?: string[];
   keepLastAssistants?: number;
   softTrimRatio?: number;
   hardClearRatio?: number;
@@ -54,6 +59,7 @@ export type EffectiveContextPruningSettings = {
   windowTokens: number | null;
   completedTurns: ContextPruningCompletedTurns;
   completedTurnsSessionKeys: string[];
+  completedTurnsKeepReads: string[];
   keepLastAssistants: number;
   softTrimRatio: number;
   hardClearRatio: number;
@@ -76,6 +82,7 @@ export const DEFAULT_CONTEXT_PRUNING_SETTINGS: EffectiveContextPruningSettings =
   windowTokens: null,
   completedTurns: "keep",
   completedTurnsSessionKeys: [],
+  completedTurnsKeepReads: [],
   keepLastAssistants: 3,
   softTrimRatio: 0.3,
   hardClearRatio: 0.5,
@@ -135,6 +142,11 @@ export function computeEffectiveSettings(raw: unknown): EffectiveContextPruningS
   if (Array.isArray(cfg.completedTurnsSessionKeys)) {
     s.completedTurnsSessionKeys = cfg.completedTurnsSessionKeys.filter(
       (key): key is string => typeof key === "string" && key.length > 0,
+    );
+  }
+  if (Array.isArray(cfg.completedTurnsKeepReads)) {
+    s.completedTurnsKeepReads = cfg.completedTurnsKeepReads.filter(
+      (prefix): prefix is string => typeof prefix === "string" && prefix.length > 0,
     );
   }
   if (typeof cfg.keepLastAssistants === "number" && Number.isFinite(cfg.keepLastAssistants)) {

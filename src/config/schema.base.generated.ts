@@ -4949,6 +4949,12 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                       type: "string",
                     },
                   },
+                  completedTurnsKeepReads: {
+                    type: "array",
+                    items: {
+                      type: "string",
+                    },
+                  },
                   keepLastAssistants: {
                     type: "integer",
                     minimum: 0,
