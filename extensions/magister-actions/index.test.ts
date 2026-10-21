@@ -575,6 +575,38 @@ describe("typed gateway execution", () => {
     });
   });
 
+  it("reads the audit afresh every time, since a channel rescore rewrites it", async () => {
+    process.env.GATEWAY_TOKEN = "token";
+    const workspace = mkdtempSync(join(tmpdir(), "magister-audit-cache-"));
+    temporaryDirectories.push(workspace);
+    process.env.OPENCLAW_WORKSPACE_DIR = workspace;
+    process.env.FLY_APP_NAME = "project-app-audit";
+    const auditHealthAction = nativeActionContract.actions.find(
+      (row) => row.action === "get_audit_health",
+    );
+    if (!auditHealthAction) {
+      throw new Error("get_audit_health contract missing");
+    }
+    const scores = [18, 31];
+    let fetches = 0;
+    const tool = createMagisterActionTool(api(), auditHealthAction, async () => {
+      const score = scores[Math.min(fetches, scores.length - 1)];
+      fetches += 1;
+      return new Response(
+        JSON.stringify(envelope({ receipt: { plan_id: "plan-1", seo: score } })),
+        { status: 200 },
+      );
+    });
+
+    const before = resultJson(await tool.execute("call-audit-1", { plan_id: "plan-1" }));
+    const after = resultJson(await tool.execute("call-audit-2", { plan_id: "plan-1" }));
+
+    expect(fetches).toBe(2);
+    expect((before.receipt as Record<string, unknown>).seo).toBe(18);
+    expect((after.receipt as Record<string, unknown>).seo).toBe(31);
+    expect((after.receipt as Record<string, unknown>).cache_freshness).toBeUndefined();
+  });
+
   it("never caches a non-terminal read result", async () => {
     process.env.GATEWAY_TOKEN = "token";
     const workspace = mkdtempSync(join(tmpdir(), "magister-running-cache-"));

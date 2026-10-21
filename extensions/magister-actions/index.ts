@@ -159,6 +159,12 @@ type ReadCachePolicy = {
 const contract = contractJson as Contract;
 
 function readCachePolicy(action: string): ReadCachePolicy | undefined {
+  if (action === "get_audit_health") {
+    // One database read on the Gateway, and rewritten when a channel of the
+    // audit is rescored (`run_site_audit` with a channel): a cached copy would
+    // tell the agent the score from before the rescore.
+    return undefined;
+  }
   if (action === "list_integrations" || action.includes("skill")) {
     return { provenance: "integration_discovery", ttlSeconds: 300 };
   }
