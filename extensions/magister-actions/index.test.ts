@@ -265,6 +265,46 @@ describe("typed gateway execution", () => {
     expect(request?.init?.headers).not.toHaveProperty("x-magister-session-id");
   });
 
+  it("forwards the Getting Started chat's kickoff session with its id", async () => {
+    process.env.GATEWAY_TOKEN = "secret-machine-token";
+    let request: { init?: RequestInit } | undefined;
+    const tool = createMagisterActionTool(
+      api(),
+      action,
+      async (_input, init) => {
+        request = { init };
+        return new Response(JSON.stringify(envelope()), { status: 200 });
+      },
+      {
+        sessionKey: "audit_kickoff:dd2c2cfe-ad21-4d92-8958-08f1e9dba32d",
+        sessionId: "11111111-1111-4111-8111-111111111111",
+      },
+    );
+
+    await tool.execute("call-getting-started", {});
+    expect(request?.init?.headers).toMatchObject({
+      "x-magister-session-key": "audit_kickoff:dd2c2cfe-ad21-4d92-8958-08f1e9dba32d",
+      "x-magister-session-id": "11111111-1111-4111-8111-111111111111",
+    });
+  });
+
+  it("does not forward a malformed kickoff session key", async () => {
+    process.env.GATEWAY_TOKEN = "secret-machine-token";
+    let request: { init?: RequestInit } | undefined;
+    const tool = createMagisterActionTool(
+      api(),
+      action,
+      async (_input, init) => {
+        request = { init };
+        return new Response(JSON.stringify(envelope()), { status: 200 });
+      },
+      { sessionKey: "audit_kickoff:plan-1" },
+    );
+
+    await tool.execute("call-malformed-kickoff", {});
+    expect(request?.init?.headers).not.toHaveProperty("x-magister-session-key");
+  });
+
   it("forwards a trusted Slack thread session outside tool arguments", async () => {
     process.env.GATEWAY_TOKEN = "secret-machine-token";
     let request: { init?: RequestInit } | undefined;

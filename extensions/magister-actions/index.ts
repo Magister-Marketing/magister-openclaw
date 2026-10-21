@@ -63,6 +63,11 @@ const SLACK_SESSION_RE =
   /^(?:agent:[^:]+:)?slack:(?:(?:direct|group|channel):[a-z0-9_-]+(?::thread:[0-9]+\.[0-9]+)?|[a-z0-9_-]+:[a-z0-9_-]+)$/i;
 const WEBCHAT_SESSION_RE =
   /^agent:[a-z0-9_-]{1,80}:webchat:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// The Getting Started chat keeps the onboarding kickoff's key. Forwarding it
+// lets the Gateway bind an approval to that chat (an inline card, its link in
+// "Needs you", the decision back in the same chat) instead of a bare link.
+const AUDIT_KICKOFF_SESSION_RE =
+  /^audit_kickoff:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const ERROR_CODES = new Set([
   "validation_error",
@@ -340,7 +345,8 @@ function trustedRuntimeSessionKey(context: OpenClawPluginToolContext): string | 
   if (
     WORKFLOW_SESSION_RE.test(sessionKey) ||
     SLACK_SESSION_RE.test(sessionKey) ||
-    WEBCHAT_SESSION_RE.test(sessionKey)
+    WEBCHAT_SESSION_RE.test(sessionKey) ||
+    AUDIT_KICKOFF_SESSION_RE.test(sessionKey)
   ) {
     return sessionKey;
   }
