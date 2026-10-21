@@ -1226,12 +1226,17 @@
       "action": "run_site_audit",
       "approval_policy": "none",
       "async_status_adapter": "audit_plan",
-      "description": "Start the free full site audit behind the health score, then poll magister_get_audit_health until terminal. An audit already running is returned, not doubled.",
+      "description": "Start the free full site audit behind the health score, then poll magister_get_audit_health until terminal. An audit already running is returned, not doubled. With channel (google_search = SEO, website_and_content = website, social, ads = paid ads) only that channel of the latest audit is rescored, in about a minute: poll magister_get_audit_health while it returns rescoring, then compare the channel's new score with previous_score.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "safe_retry",
       "input_schema": {
         "additionalProperties": false,
-        "properties": {},
+        "properties": {
+          "channel": {
+            "enum": ["google_search", "website_and_content", "social", "ads"],
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "retry_policy": "backoff",
@@ -5672,6 +5677,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "83b3178ce4cff506b8a3dff0247f19b28c3d962acc897692191cdb5fc1d30bd4",
+  "registry_revision": "7d58f4a57daea98b970f2ea60380207a219a8494734ef02f87d6c35c0e4e49a2",
   "schema_version": 1
 }
