@@ -71,6 +71,8 @@ export type AgentCommandOpts = {
   threadId?: string | number;
   /** Message channel context. */
   messageChannel?: string;
+  /** Deferred-schema tools whose schema ships eagerly for this session (x-magister-eager-schemas). */
+  eagerSchemaTools?: string[];
   /** Tool-policy/output surface context. Defaults to messageChannel. */
   messageProvider?: string;
   /** Delivery channel. */

@@ -72,6 +72,60 @@ export function applyConfiguredSchemaDeferral(
   );
 }
 
+/**
+ * Per-session eager schemas. A Magister task chat knows its work before the
+ * first turn, so the Gateway names the task's own deferred tools in this
+ * request header (``gateway/app/services/task_tool_delivery.py``); their
+ * schemas then ride in every request of that session instead of costing a
+ * describe round trip and a prompt-cache rewrite mid-session. The header
+ * only widens what is eager: it never defers, denies or permits anything,
+ * and an unknown name is ignored. Deferral stays a prompt-composition
+ * choice, so an authenticated caller gains no capability from it.
+ */
+export const EAGER_SCHEMAS_HEADER = "x-magister-eager-schemas";
+
+const EAGER_SCHEMAS_MAX = 32;
+const TOOL_NAME_PATTERN = /^[a-z][a-z0-9_]{0,127}$/;
+
+/** Comma-separated tool names from the header: trimmed, valid, unique, bounded. */
+export function parseEagerSchemaTools(raw: string | null | undefined): string[] {
+  if (typeof raw !== "string" || !raw.trim()) {
+    return [];
+  }
+  const names: string[] = [];
+  for (const part of raw.split(",")) {
+    const name = part.trim();
+    if (!TOOL_NAME_PATTERN.test(name) || name === TOOL_DESCRIBE_TOOL_NAME || names.includes(name)) {
+      continue;
+    }
+    names.push(name);
+    if (names.length >= EAGER_SCHEMAS_MAX) {
+      break;
+    }
+  }
+  return names;
+}
+
+/**
+ * Make the named deferred tools eager for this run. Applied after
+ * applyConfiguredSchemaDeferral, so the request wins over both the contract
+ * and the image config for exactly the tools it names.
+ */
+export function applyRequestedEagerSchemas(
+  tools: readonly AnyAgentTool[],
+  eagerNames: readonly string[] | undefined,
+): AnyAgentTool[] {
+  const names = new Set(eagerNames ?? []);
+  if (names.size === 0) {
+    return [...tools];
+  }
+  return tools.map((tool) =>
+    names.has(tool.name) && tool.schemaDelivery === "deferred"
+      ? { ...tool, schemaDelivery: "eager" as const }
+      : tool,
+  );
+}
+
 export type ToolDescribeResult = {
   tool: string;
   description: string;

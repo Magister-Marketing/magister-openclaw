@@ -173,6 +173,7 @@ import { UNKNOWN_TOOL_THRESHOLD } from "../../tool-loop-detection.js";
 import {
   activateToolSchemaDeferral,
   applyConfiguredSchemaDeferral,
+  applyRequestedEagerSchemas,
   planToolSchemaDelivery,
 } from "../../tool-schema-deferral.js";
 import { shouldAllowProviderOwnedThinkingReplay } from "../../transcript-policy.js";
@@ -1158,11 +1159,16 @@ export async function runEmbeddedAttempt(
     // and the ledger are unchanged); the plan only decides which schemas ride
     // in each request and which the model loads with tool_describe. Hosted
     // actions bring their delivery from the contract; tools.deferredSchemas
-    // adds the native ones the image config names.
+    // adds the native ones the image config names; the request's
+    // x-magister-eager-schemas (a Magister task chat's own tools) wins for
+    // exactly the tools it names.
     const toolSchemaDelivery = planToolSchemaDelivery(
-      applyConfiguredSchemaDeferral(
-        [...tools, ...filteredBundledTools],
-        params.config?.tools?.deferredSchemas,
+      applyRequestedEagerSchemas(
+        applyConfiguredSchemaDeferral(
+          [...tools, ...filteredBundledTools],
+          params.config?.tools?.deferredSchemas,
+        ),
+        params.eagerSchemaTools,
       ),
     );
     const effectiveTools = toolSchemaDelivery.tools;

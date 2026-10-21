@@ -140,6 +140,7 @@ function buildAgentCommandInput(params: {
   sessionKey: string;
   runId: string;
   messageChannel: string;
+  eagerSchemaTools?: string[];
   senderIsOwner: boolean;
   abortSignal?: AbortSignal;
 }) {
@@ -152,6 +153,7 @@ function buildAgentCommandInput(params: {
     runId: params.runId,
     deliver: false as const,
     messageChannel: params.messageChannel,
+    eagerSchemaTools: params.eagerSchemaTools,
     bestEffortDeliver: false as const,
     senderIsOwner: params.senderIsOwner,
     allowModelOverride: true as const,
@@ -702,7 +704,7 @@ export async function handleOpenAiHttpRequest(
   const model = typeof payload.model === "string" ? payload.model : "openclaw";
   const user = typeof payload.user === "string" ? payload.user : undefined;
 
-  const { agentId, sessionKey, messageChannel } = resolveGatewayRequestContext({
+  const { agentId, sessionKey, messageChannel, eagerSchemaTools } = resolveGatewayRequestContext({
     req,
     model,
     user,
@@ -760,6 +762,7 @@ export async function handleOpenAiHttpRequest(
     sessionKey,
     runId,
     messageChannel,
+    eagerSchemaTools,
     abortSignal: abortController.signal,
     senderIsOwner,
   });
