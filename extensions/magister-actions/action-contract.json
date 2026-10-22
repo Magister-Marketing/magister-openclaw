@@ -1344,7 +1344,7 @@
       "action": "read_analytics_breakdown",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
-      "description": "Read one persisted top-query, top-page, source, event, campaign, or rank-distribution window.",
+      "description": "Read one persisted breakdown window: top pages, queries, sources, events, campaigns or products, lists, or rank distribution.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "safe_retry",
       "input_schema": {
@@ -1417,7 +1417,7 @@
       "action": "fetch_integration_data",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
-      "description": "Pull the latest data from one connected integration now, or from every connected source with service 'all'. Takes a source (ga4, gsc, google_ads, paid_social, stripe, posthog), an integration (google_analytics) or a plain name ('google analytics', 'search console', 'meta ads'); writes the stored series the Data folders and Analytics views read and reports status, rows and as-of date per property. Only status 'ok' means data was pulled; 'unsupported' names the integration-read paths to use instead.",
+      "description": "Pull the latest data from one connected integration now, or from every connected source with service 'all'. Takes a source as INTEGRATIONS.md's Data section names it (ga4, gsc, google_ads, paid_social, stripe, shopify, ...), an integration (google_analytics) or a plain name ('search console', 'meta ads'); refreshes up to 90 recent days of the stored series the Library \u203a Analytics folders and Analytics views read (history is already stored) and reports status, rows and as-of date per property. Only status 'ok' means data was pulled; 'unsupported' names the integration-read paths to use instead.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "safe_retry",
       "input_schema": {
@@ -1437,7 +1437,7 @@
             "type": "string"
           },
           "service": {
-            "description": "What to pull: a source (ga4, gsc, google_ads, paid_social, stripe, posthog), an integration (google_analytics) or a plain name (\"google analytics\", \"search console\", \"meta ads\"); \"all\" pulls every connected source.",
+            "description": "What to pull: a source as INTEGRATIONS.md's Data section and list_analytics_properties name it (ga4, gsc, google_ads, paid_social, stripe, shopify, klaviyo, hubspot, \u2026), an integration (google_analytics) or a plain name (\"search console\", \"meta ads\"); \"all\" pulls every connected source.",
             "maxLength": 80,
             "minLength": 1,
             "type": "string"
@@ -1544,7 +1544,7 @@
                 "type": "string"
               },
               "dimension": {
-                "enum": ["channel", "page", "platform", "campaign"],
+                "enum": ["channel", "page", "platform", "campaign", "stage"],
                 "type": "string"
               },
               "external_id": {
@@ -1641,7 +1641,7 @@
                 "type": "string"
               },
               "dimension": {
-                "enum": ["channel", "page", "platform", "campaign"],
+                "enum": ["channel", "page", "platform", "campaign", "stage"],
                 "type": "string"
               },
               "external_id": {
@@ -1801,7 +1801,7 @@
                 "type": "string"
               },
               "dimension": {
-                "enum": ["channel", "page", "platform", "campaign"],
+                "enum": ["channel", "page", "platform", "campaign", "stage"],
                 "type": "string"
               },
               "external_id": {
@@ -2006,7 +2006,7 @@
                 "type": "string"
               },
               "dimension": {
-                "enum": ["channel", "page", "platform", "campaign"],
+                "enum": ["channel", "page", "platform", "campaign", "stage"],
                 "type": "string"
               },
               "external_id": {
@@ -5640,6 +5640,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "67065a131c09fd80c8124bd83b423b2dbac0179c4b91fd52ac49262e18ac0405",
+  "registry_revision": "553841e6ce2d31f5e520e9481cb97d893ccc933506d6752d283452dd9edce374",
   "schema_version": 1
 }
