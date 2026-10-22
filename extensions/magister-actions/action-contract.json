@@ -1686,6 +1686,11 @@
                 "maxLength": 40,
                 "type": "string"
               },
+              "display": {
+                "description": "How the tile is drawn: line or bars for a trend or compare, table or bars for a breakdown.",
+                "enum": ["line", "bars", "table"],
+                "type": "string"
+              },
               "formula": {
                 "maxLength": 200,
                 "type": "string"
@@ -1836,6 +1841,11 @@
                 "maxLength": 40,
                 "type": "string"
               },
+              "display": {
+                "description": "How the tile is drawn: line or bars for a trend or compare, table or bars for a breakdown.",
+                "enum": ["line", "bars", "table"],
+                "type": "string"
+              },
               "formula": {
                 "maxLength": 200,
                 "type": "string"
@@ -1927,7 +1937,7 @@
       "action": "create_analytics_view",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
-      "description": "Create a custom Analytics view, optionally with its first tiles (up to 24).",
+      "description": "Create the brand's own Analytics page (a custom view), optionally with its first tiles (up to 24); a brand has at most 25. Its tiles read the stored daily pulls, so it stays current by itself.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "idempotency_key",
       "input_schema": {
@@ -2029,6 +2039,11 @@
             "properties": {
               "breakdown_kind": {
                 "maxLength": 40,
+                "type": "string"
+              },
+              "display": {
+                "description": "How the tile is drawn: line or bars for a trend or compare, table or bars for a breakdown.",
+                "enum": ["line", "bars", "table"],
                 "type": "string"
               },
               "formula": {
@@ -5677,6 +5692,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "816e63126c00d15f624f4a4cfb3319c10f3d55970a161c391ac1c901f5973e85",
+  "registry_revision": "b9a3dead68d74c036a827a847bf3a228d7944bb8f94f6e8450289c14708e5897",
   "schema_version": 1
 }
