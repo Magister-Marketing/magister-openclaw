@@ -1695,6 +1695,11 @@
                 "maxLength": 200,
                 "type": "string"
               },
+              "grain": {
+                "description": "A trend's or compare's points: one a day (default), a week (from Monday) or a month.",
+                "enum": ["day", "week", "month"],
+                "type": "string"
+              },
               "queries": {
                 "items": {
                   "$ref": "#/$defs/TileQuery"
@@ -1848,6 +1853,11 @@
               },
               "formula": {
                 "maxLength": 200,
+                "type": "string"
+              },
+              "grain": {
+                "description": "A trend's or compare's points: one a day (default), a week (from Monday) or a month.",
+                "enum": ["day", "week", "month"],
                 "type": "string"
               },
               "queries": {
@@ -2048,6 +2058,11 @@
               },
               "formula": {
                 "maxLength": 200,
+                "type": "string"
+              },
+              "grain": {
+                "description": "A trend's or compare's points: one a day (default), a week (from Monday) or a month.",
+                "enum": ["day", "week", "month"],
                 "type": "string"
               },
               "queries": {
@@ -5692,6 +5707,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "b9a3dead68d74c036a827a847bf3a228d7944bb8f94f6e8450289c14708e5897",
+  "registry_revision": "e0c49bd57fcbcc666bad18028cf4e7c3e4eab3e4a6d76a31dbfbf404ac8ac678",
   "schema_version": 1
 }
