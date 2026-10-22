@@ -34,11 +34,13 @@ const MAX_BRAND_CORE_CHARS = 1_200;
 const MAX_USER_BRAND_CORE_CHARS = 500;
 const BRAND_GENERATED_START = "<!-- MAGISTER:GENERATED BRAND START -->";
 const BRAND_GENERATED_END = "<!-- MAGISTER:GENERATED BRAND END -->";
-// Deliberately broad: the cost of a false positive is a few hundred cached-miss
-// characters, the cost of a false negative is a deliverable in the wrong voice
-// and the wrong colors. Verbs and artifact nouns are both listed because users
-// name the artifact ("a blog post") far more often than the discipline
-// ("content"). Kept as one alternation so the gate stays a single pass.
+// Deliberately broad: the cost of a false positive is the full block for the
+// rest of the session (the tier never steps down within one, see
+// brandTaskForSession), the cost of a false negative is a deliverable in the
+// wrong voice and the wrong colors. Verbs and artifact nouns are both listed
+// because users name the artifact ("a blog post") far more often than the
+// discipline ("content"). Kept as one alternation so the gate stays a single
+// pass.
 const BRAND_TASK_PATTERN = new RegExp(
   "\\b(" +
     [
@@ -100,6 +102,7 @@ export class MagisterMemoryContextEngine implements ContextEngine {
   private readonly projectPath: string;
   private readonly brandPath: string;
   private readonly snapshotBySession = new Map<string, string>();
+  private readonly brandTaskSessions = new Map<string, true>();
 
   constructor(options: Options = {}) {
     this.inner = options.inner ?? new MagisterIntegrationsContextEngine();
@@ -143,7 +146,9 @@ export class MagisterMemoryContextEngine implements ContextEngine {
       }
     }
 
-    const brandContext = await this.renderBrandContext(params.prompt);
+    const brandContext = await this.renderBrandContext(
+      this.brandTaskForSession(params.sessionId, params.prompt),
+    );
     if (!snapshot && !brandContext) {
       return innerResult;
     }
@@ -188,6 +193,7 @@ export class MagisterMemoryContextEngine implements ContextEngine {
       await this.inner.dispose();
     }
     this.snapshotBySession.clear();
+    this.brandTaskSessions.clear();
   }
 
   private async renderSnapshot(): Promise<string> {
@@ -231,7 +237,26 @@ export class MagisterMemoryContextEngine implements ContextEngine {
     return blocks.join("\n\n");
   }
 
-  private async renderBrandContext(prompt: string | undefined): Promise<string> {
+  // The brand block sits in the dynamic system block, ahead of the whole
+  // conversation, so a change to it moves everything after it. Picking the tier
+  // from each turn's prompt flipped it between the steps of one workflow run
+  // (one step brand-shaped, the next not), and on OpenAI every such shrink
+  // re-wrote the history after it: production, 14 days to 2026-10-22, 74 of 74
+  // shrinks inside a workflow run were full cache misses. A session that has
+  // needed the full tier keeps it; stepping up from the core tier still works.
+  private brandTaskForSession(sessionId: string, prompt: string | undefined): boolean {
+    const brandTask =
+      this.brandTaskSessions.has(sessionId) || BRAND_TASK_PATTERN.test(prompt ?? "");
+    if (brandTask) {
+      // Map preserves insertion order; re-inserting on hit gives LRU eviction.
+      this.brandTaskSessions.delete(sessionId);
+      this.brandTaskSessions.set(sessionId, true);
+      pruneMapToMaxSize(this.brandTaskSessions, MAX_TRACKED_SESSIONS);
+    }
+    return brandTask;
+  }
+
+  private async renderBrandContext(brandTask: boolean): Promise<string> {
     const raw = await readTextOrEmpty(this.brandPath);
     if (!raw) {
       return "";
@@ -252,7 +277,6 @@ export class MagisterMemoryContextEngine implements ContextEngine {
       )
       .trim();
 
-    const brandTask = Boolean(prompt) && BRAND_TASK_PATTERN.test(prompt as string);
     const userBudget = brandTask ? MAX_USER_BRAND_CHARS : MAX_USER_BRAND_CORE_CHARS;
     const totalBudget = brandTask ? MAX_BRAND_CONTEXT_CHARS : MAX_BRAND_CORE_CHARS;
 

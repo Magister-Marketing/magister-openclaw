@@ -230,6 +230,50 @@ describe("MagisterMemoryContextEngine", () => {
     expect(res.systemPromptAddition).toContain("Positioning detail.");
   });
 
+  it("keeps the full brand tier for the rest of a session once it was needed", async () => {
+    await writeFile(
+      brandPath,
+      [
+        "<!-- MAGISTER:GENERATED BRAND START -->",
+        "### Generated from the latest marketing audit",
+        "",
+        "## Voice",
+        "",
+        "Tone: precise, warm",
+        "",
+        "## Ideal customer",
+        "",
+        "Positioning detail. ".repeat(100),
+        "<!-- MAGISTER:GENERATED BRAND END -->",
+      ].join("\n"),
+    );
+    const engine = new MagisterMemoryContextEngine({
+      memoryPath,
+      userPath,
+      projectPath,
+      brandPath,
+      inner: new LegacyContextEngine(),
+    });
+    const notBrand = "What is the current server uptime?";
+    const first = await engine.assemble({ sessionId: "s1", messages: [], prompt: notBrand });
+    expect(first.systemPromptAddition).not.toContain("Positioning detail.");
+
+    // A workflow's brand-shaped step steps the session up to the full tier…
+    const brand = await engine.assemble({
+      sessionId: "s1",
+      messages: [],
+      prompt: "Draft homepage copy in our brand voice",
+    });
+    expect(brand.systemPromptAddition).toContain("Positioning detail.");
+    // …and the next step keeps it byte-identical, so the prompt cache holds.
+    const next = await engine.assemble({ sessionId: "s1", messages: [], prompt: notBrand });
+    expect(next.systemPromptAddition).toBe(brand.systemPromptAddition);
+
+    // Another session still starts at the core tier.
+    const other = await engine.assemble({ sessionId: "s2", messages: [], prompt: notBrand });
+    expect(other.systemPromptAddition).toBe(first.systemPromptAddition);
+  });
+
   it("still injects a voice and visual floor when the prompt is not brand work", async () => {
     await writeFile(
       brandPath,
