@@ -22,6 +22,10 @@ const DEFAULT_USER_PATH = "/data/.openclaw/workspace/USER.md";
 const DEFAULT_PROJECT_PATH = "/data/.openclaw/workspace/PROJECT.md";
 const DEFAULT_BRAND_PATH = "/data/.openclaw/workspace/BRAND.md";
 const MAX_TRACKED_SESSIONS = 200;
+// Sessions that have needed the full brand tier, keyed by brand file and
+// session id. Module state on purpose: resolveContextEngine builds a new engine
+// for every run, so anything an instance remembers is gone by the next turn.
+const brandTaskSessions = new Map<string, true>();
 // Two budget tiers. Brand-shaped work gets the whole profile; every other turn
 // still gets a floor, because the agent cannot ask for context it was never
 // told exists, and a one-turn keyword guess is wrong far more often than it is
@@ -102,7 +106,6 @@ export class MagisterMemoryContextEngine implements ContextEngine {
   private readonly projectPath: string;
   private readonly brandPath: string;
   private readonly snapshotBySession = new Map<string, string>();
-  private readonly brandTaskSessions = new Map<string, true>();
 
   constructor(options: Options = {}) {
     this.inner = options.inner ?? new MagisterIntegrationsContextEngine();
@@ -193,7 +196,6 @@ export class MagisterMemoryContextEngine implements ContextEngine {
       await this.inner.dispose();
     }
     this.snapshotBySession.clear();
-    this.brandTaskSessions.clear();
   }
 
   private async renderSnapshot(): Promise<string> {
@@ -245,13 +247,13 @@ export class MagisterMemoryContextEngine implements ContextEngine {
   // shrinks inside a workflow run were full cache misses. A session that has
   // needed the full tier keeps it; stepping up from the core tier still works.
   private brandTaskForSession(sessionId: string, prompt: string | undefined): boolean {
-    const brandTask =
-      this.brandTaskSessions.has(sessionId) || BRAND_TASK_PATTERN.test(prompt ?? "");
+    const key = `${this.brandPath}\u0000${sessionId}`;
+    const brandTask = brandTaskSessions.has(key) || BRAND_TASK_PATTERN.test(prompt ?? "");
     if (brandTask) {
       // Map preserves insertion order; re-inserting on hit gives LRU eviction.
-      this.brandTaskSessions.delete(sessionId);
-      this.brandTaskSessions.set(sessionId, true);
-      pruneMapToMaxSize(this.brandTaskSessions, MAX_TRACKED_SESSIONS);
+      brandTaskSessions.delete(key);
+      brandTaskSessions.set(key, true);
+      pruneMapToMaxSize(brandTaskSessions, MAX_TRACKED_SESSIONS);
     }
     return brandTask;
   }
