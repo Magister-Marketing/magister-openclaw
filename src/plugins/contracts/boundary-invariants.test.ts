@@ -40,7 +40,9 @@ const BUNDLED_TYPED_HOOK_REGISTRATION_GUARDS = {
   "extensions/magister-memory/index.ts": [
     "agent_end",
     "before_compaction",
+    "before_model_resolve",
     "before_prompt_build",
+    "before_tool_call",
     "session_end",
   ],
   "extensions/matrix/subagent-hooks-api.ts": [
