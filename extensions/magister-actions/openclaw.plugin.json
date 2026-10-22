@@ -58,7 +58,6 @@
       "magister_create_tracker",
       "magister_update_tracker",
       "magister_get_tracker_scorecard",
-      "magister_record_tracker_checkin",
       "magister_get_brief_context",
       "magister_send_brief",
       "magister_list_skills",

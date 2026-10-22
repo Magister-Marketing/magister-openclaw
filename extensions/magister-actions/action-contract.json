@@ -2219,7 +2219,7 @@
       "action": "list_trackers",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
-      "description": "List project experiment trackers with each tracker's latest check-in.",
+      "description": "List project experiment trackers.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "safe_retry",
       "input_schema": {
@@ -2242,7 +2242,7 @@
       "action": "get_tracker",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
-      "description": "Read one project-owned experiment tracker and its full check-in history.",
+      "description": "Read one project-owned experiment tracker.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "safe_retry",
       "input_schema": {
@@ -2398,59 +2398,6 @@
       "side_effect": "none",
       "spend_limited": false,
       "tool_name": "magister_get_tracker_scorecard"
-    },
-    {
-      "action": "record_tracker_checkin",
-      "approval_policy": "none",
-      "async_status_adapter": "synchronous",
-      "description": "Record one project-owned tracker check-in after reading current persisted analytics values.",
-      "idempotency_enforcement": "registry",
-      "idempotency_policy": "idempotency_key",
-      "input_schema": {
-        "additionalProperties": false,
-        "properties": {
-          "goal_progress": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "maxItems": 20,
-            "type": "array"
-          },
-          "idempotency_key": {
-            "description": "Use one fresh key for each new logical operation. Reuse that key only when retrying the exact same arguments; a later user request, even with identical content, needs a new key.",
-            "maxLength": 256,
-            "minLength": 8,
-            "pattern": "^[A-Za-z0-9._:-]+$",
-            "type": "string"
-          },
-          "metric_values": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "maxItems": 20,
-            "type": "array"
-          },
-          "summary": {
-            "maxLength": 2000,
-            "minLength": 1,
-            "type": "string"
-          },
-          "tracker_id": {
-            "maxLength": 64,
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": ["idempotency_key", "tracker_id", "summary"],
-        "type": "object"
-      },
-      "retry_policy": "backoff",
-      "schema_delivery": "deferred",
-      "side_effect": "internal_write",
-      "spend_limited": false,
-      "tool_name": "magister_record_tracker_checkin"
     },
     {
       "action": "get_brief_context",
@@ -2624,25 +2571,11 @@
           },
           "WeeklyExtras": {
             "properties": {
-              "lessons": {
-                "items": {
-                  "type": "string"
-                },
-                "maxItems": 10,
-                "type": "array"
-              },
               "next_week_priorities": {
                 "items": {
                   "type": "string"
                 },
                 "maxItems": 3,
-                "type": "array"
-              },
-              "wins": {
-                "items": {
-                  "type": "string"
-                },
-                "maxItems": 10,
                 "type": "array"
               }
             },
@@ -5707,6 +5640,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "e0c49bd57fcbcc666bad18028cf4e7c3e4eab3e4a6d76a31dbfbf404ac8ac678",
+  "registry_revision": "67065a131c09fd80c8124bd83b423b2dbac0179c4b91fd52ac49262e18ac0405",
   "schema_version": 1
 }
