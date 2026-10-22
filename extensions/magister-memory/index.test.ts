@@ -48,6 +48,7 @@ describe("manifest tool contract", () => {
       "before_compaction",
       "session_end",
       "before_prompt_build",
+      "before_tool_call",
     ]);
     expect(registerService).toHaveBeenCalledWith(
       expect.objectContaining({ id: "magister-memory-conversation-checkpoints" }),

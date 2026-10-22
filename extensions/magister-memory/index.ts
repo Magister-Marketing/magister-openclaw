@@ -12,6 +12,7 @@ import { resolveConversationCheckpointConfig } from "./conversation-config.js";
 import { ConversationCheckpointManager } from "./conversation-manager.js";
 import { MemoryStore, type MemoryTarget } from "./memory-store.js";
 import { memoryOperationId, withHostMutationBoundary } from "./mutation-boundary.js";
+import { resolveTurnBudgetConfig, TurnBudget } from "./turn-budget.js";
 
 /**
  * Where session recall lands in the system prompt.
@@ -189,8 +190,14 @@ export default definePluginEntry({
       api,
       resolveConversationCheckpointConfig(api.pluginConfig),
     );
+    const turnBudget = new TurnBudget(
+      resolveTurnBudgetConfig(
+        (api.pluginConfig as Record<string, unknown> | undefined)?.turnBudget,
+      ),
+    );
     api.registerTool((ctx) => createMemoryTool(api, ctx), { name: "memory" });
     api.on("agent_end", async (event, ctx) => {
+      turnBudget.end(event.runId ?? ctx.runId);
       try {
         await checkpointManager.captureAgentEnd(event, ctx);
       } catch {
@@ -212,6 +219,7 @@ export default definePluginEntry({
       });
     });
     api.on("before_prompt_build", async (_event, ctx) => {
+      turnBudget.start(ctx.runId);
       try {
         const recentContext = await checkpointManager.buildPromptContext(ctx);
         return buildPromptBuildHookResult(recentContext);
@@ -219,6 +227,17 @@ export default definePluginEntry({
         api.logger.warn("magister-memory: recent conversation recall failed");
         return undefined;
       }
+    });
+    // Turn budget (turn-budget.ts): once a run has worked N minutes or M tool
+    // calls without replying, the next tool call is vetoed with the nudge as
+    // its result, the way the tool-loop detector delivers its warning.
+    api.on("before_tool_call", (event, ctx) => {
+      const nudge = turnBudget.noteToolCall(event.runId ?? ctx.runId, event.toolName);
+      if (!nudge) {
+        return undefined;
+      }
+      api.logger.info(`magister-memory: turn budget nudge for ${event.toolName}`);
+      return { block: true, blockReason: nudge };
     });
     api.registerService({
       id: "magister-memory-conversation-checkpoints",

@@ -28,6 +28,32 @@ describe("resolveGatewayRequestContext", () => {
     expect(result.messageChannel).toBe("custom-channel");
   });
 
+  it("reads x-magister-eager-schemas into eagerSchemaTools", () => {
+    const withHeader = resolveGatewayRequestContext({
+      req: createReq({
+        "x-magister-eager-schemas":
+          "magister_create_social_draft, magister_publish_social_post,tool_describe",
+      }),
+      model: "openclaw",
+      sessionPrefix: "openai",
+      defaultMessageChannel: "webchat",
+      useMessageChannelHeader: true,
+    });
+    expect(withHeader.eagerSchemaTools).toEqual([
+      "magister_create_social_draft",
+      "magister_publish_social_post",
+    ]);
+
+    const without = resolveGatewayRequestContext({
+      req: createReq(),
+      model: "openclaw",
+      sessionPrefix: "openresponses",
+      defaultMessageChannel: "webchat",
+      useMessageChannelHeader: false,
+    });
+    expect(without.eagerSchemaTools).toEqual([]);
+  });
+
   it("uses default messageChannel when header support is disabled", () => {
     const result = resolveGatewayRequestContext({
       req: createReq({ "x-openclaw-message-channel": "custom-channel" }),
