@@ -22,11 +22,12 @@ describe("TurnBudget", () => {
     const c = clock();
     const budget = new TurnBudget({ minutes: 5, toolCalls: 25 }, c.now);
     budget.start("run-1");
-    for (let i = 0; i < 25; i += 1) {
+    for (let i = 0; i < 24; i += 1) {
       expect(budget.noteToolCall("run-1", "read")).toBeUndefined();
     }
+    // The 25th call, just inside the clock, is still within both limits.
     c.advanceMinutes(4.9);
-    expect(budget.noteToolCall("run-1", "read")).toBeUndefined;
+    expect(budget.noteToolCall("run-1", "read")).toBeUndefined();
   });
 
   it("nudges once the clock is spent, then starts the next window", () => {
