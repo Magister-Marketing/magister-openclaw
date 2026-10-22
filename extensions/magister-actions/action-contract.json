@@ -4952,6 +4952,15 @@
             "maxLength": 2048,
             "type": "string"
           },
+          "locations": {
+            "description": "googleads only, required: 1-50 places the ads may show, each an ISO 3166-1 alpha-2 country code (US, GB) or geoTargetConstants/<id>. Ask the user; languages are not restricted.",
+            "items": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
           "name": {
             "maxLength": 500,
             "minLength": 1,
@@ -5709,6 +5718,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "a477477ec6052dd3ac1c2e71d162674ace2fdcb96cb49328a8699ba11c3d1473",
+  "registry_revision": "b14e41461d7fec4b8f0e19fe6eb43bb0df14cfb5ecfefd7a3099fae2d4a45948",
   "schema_version": 1
 }
