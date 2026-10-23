@@ -16,14 +16,17 @@ import {
   COMMIT_AUTHOR_EMAIL,
   awaitRepositoryIdle,
   checkoutRepository,
+  CI_DEFINITION_PATHS,
   detectPackageManager,
   ensureRepoRoot,
   handleRepoCheckout,
   INSTALL_POLL_SECONDS,
   installRepoDependencies,
+  isCiDefinition,
   MAX_MANIFEST_PATH_CHARS,
   makeReadableByTools,
   measureTree,
+  normalizeRepoPath,
   parseBranch,
   parseInstallRequest,
   parseProvider,
@@ -947,6 +950,186 @@ describe("pushing a branch", () => {
       statusCode: 400,
       message: expect.stringContaining("not prepared"),
     });
+  });
+});
+
+describe("the CI guard at push time", () => {
+  /** A bare remote whose default branch is `main`, plus a checkout of `ref`
+   *  (full history when `depth` is null), detached as the host leaves it. */
+  function checkoutOf(options: {
+    ref?: string;
+    depth?: number | null;
+    provider?: "github" | "gitlab";
+    seedFiles?: Record<string, string>;
+  }): { origin: string; seed: string; repoDir: string } {
+    const seed = scratch("magister-seed-");
+    git(seed, "init", "--quiet", "--initial-branch=main");
+    fs.writeFileSync(path.join(seed, "README.md"), "first\n");
+    git(seed, "add", "README.md");
+    git(seed, "commit", "--quiet", "-m", "first");
+    const origin = scratch("magister-bare-");
+    git(origin, "init", "--quiet", "--bare", "--initial-branch=main");
+    git(seed, "push", "--quiet", `file://${origin}`, "main");
+    if (options.ref) {
+      git(seed, "checkout", "--quiet", "-b", options.ref);
+      for (const [file, body] of Object.entries(options.seedFiles ?? {})) {
+        fs.mkdirSync(path.dirname(path.join(seed, file)), { recursive: true });
+        fs.writeFileSync(path.join(seed, file), body);
+        git(seed, "add", file);
+      }
+      git(seed, "commit", "--quiet", "-m", "branch work");
+      git(seed, "push", "--quiet", `file://${origin}`, options.ref);
+    }
+
+    const root = scratch("magister-repos-");
+    process.env.MAGISTER_REPO_ROOT = root;
+    const provider = options.provider ?? "github";
+    const repoDir = resolveRepoDir(parseRepo("acme/site", provider));
+    fs.mkdirSync(path.dirname(repoDir), { recursive: true });
+    const depth = options.depth === undefined ? 1 : options.depth;
+    git(
+      root,
+      "clone",
+      "--quiet",
+      ...(depth === null ? [] : ["--depth", String(depth)]),
+      ...(options.ref ? ["--branch", options.ref] : []),
+      `file://${origin}`,
+      repoDir,
+    );
+    git(repoDir, "checkout", "--quiet", "--detach", "HEAD");
+    return { origin, seed, repoDir };
+  }
+
+  function write(repoDir: string, file: string, body = "x\n"): void {
+    fs.mkdirSync(path.dirname(path.join(repoDir, file)), { recursive: true });
+    fs.writeFileSync(path.join(repoDir, file), body);
+  }
+
+  it("matches the Gateway's CI paths after normalising, and refuses `..`", () => {
+    expect(CI_DEFINITION_PATHS.github.map(([, exact]) => exact)).toEqual([
+      ".github/workflows",
+      ".github/actions",
+    ]);
+    for (const file of [
+      ".github/workflows/a.yml",
+      ".github/actions/x/action.yml",
+      "./.github//workflows/a.yml",
+      ".GitHub/Workflows/a.yml",
+      "a/../.github/workflows/b.yml",
+    ]) {
+      expect(isCiDefinition(file, "github")).toBe(true);
+    }
+    for (const file of [".gitlab-ci.yml", ".GitLab-CI.yml", ".gitlab/ci/build.yml"]) {
+      expect(isCiDefinition(file, "gitlab")).toBe(true);
+    }
+    expect(isCiDefinition("deploy/pipeline.yml", "gitlab", "deploy/pipeline.yml")).toBe(true);
+    expect(isCiDefinition("deploy/pipeline.yml", "gitlab")).toBe(false);
+    expect(isCiDefinition("docs/workflows.md", "github")).toBe(false);
+    expect(isCiDefinition(".github/CODEOWNERS", "github")).toBe(false);
+    expect(normalizeRepoPath("./A//b/./C.yml")).toBe("a/b/c.yml");
+    expect(normalizeRepoPath("a/../b")).toBeNull();
+  });
+
+  it("refuses a workflow the remote branch head does not have", async () => {
+    const { origin, repoDir } = checkoutOf({});
+    write(repoDir, "README.md", "edited\n");
+    const first = await prepareRepoCommit(prepare());
+    await pushRepoBranch(push({ commit_sha: first.commit_sha }));
+
+    write(repoDir, ".github/workflows/ci.yml", "on: push\n");
+    const next = await prepareRepoCommit(prepare({ message: "add ci" }));
+
+    await expect(
+      pushRepoBranch(push({ commit_sha: next.commit_sha, expected_remote_sha: first.commit_sha })),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining(".github/workflows/ci.yml"),
+    });
+    expect(remoteTip(origin, "magister/readme")).toBe(first.commit_sha);
+  });
+
+  it("refuses a new branch whose base the remote no longer holds when it carries a workflow", async () => {
+    // The checkout's base adds the workflow; its branch is then deleted, so the
+    // prepared commit's own change set (README only) says nothing about it.
+    const { origin, repoDir } = checkoutOf({
+      ref: "feature",
+      depth: null,
+      seedFiles: { ".github/workflows/deploy.yml": "on: push\n" },
+    });
+    git(origin, "branch", "-D", "feature");
+    write(repoDir, "README.md", "edited\n");
+    const receipt = await prepareRepoCommit(prepare());
+    expect(receipt.changed_files).toEqual([{ path: "README.md", change: "modified" }]);
+
+    await expect(pushRepoBranch(push({ commit_sha: receipt.commit_sha }))).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining(".github/workflows/deploy.yml"),
+    });
+    expect(remoteTip(origin, "magister/readme")).toBeNull();
+  });
+
+  it("refuses when a shallow history holds no common point with the remote", async () => {
+    const { origin, repoDir } = checkoutOf({
+      ref: "feature",
+      depth: 1,
+      seedFiles: { ".github/workflows/deploy.yml": "on: push\n" },
+    });
+    git(origin, "branch", "-D", "feature");
+    write(repoDir, "README.md", "edited\n");
+    const receipt = await prepareRepoCommit(prepare());
+
+    await expect(pushRepoBranch(push({ commit_sha: receipt.commit_sha }))).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining("Could not establish"),
+    });
+    expect(remoteTip(origin, "magister/readme")).toBeNull();
+  });
+
+  it("pushes a clean change, including an ordinary file under .github", async () => {
+    const { origin, repoDir } = checkoutOf({});
+    write(repoDir, "README.md", "edited\n");
+    write(repoDir, ".github/CODEOWNERS", "* @acme\n");
+    const receipt = await prepareRepoCommit(prepare());
+
+    const pushed = await pushRepoBranch(push({ commit_sha: receipt.commit_sha }));
+
+    expect(pushed.status).toBe("pushed");
+    expect(remoteTip(origin, "magister/readme")).toBe(receipt.commit_sha);
+  });
+
+  it("refuses a GitLab project's own pipeline file when the Gateway names it", async () => {
+    const { origin, repoDir } = checkoutOf({ provider: "gitlab" });
+    write(repoDir, "deploy/Pipeline.yml", "stages: []\n");
+    const receipt = await prepareRepoCommit(prepare({ provider: "gitlab" }));
+
+    const request = push({
+      provider: "gitlab",
+      token: "glpat_test",
+      commit_sha: receipt.commit_sha,
+    });
+    await expect(
+      pushRepoBranch({ ...request, ci_config_path: "deploy/pipeline.yml" }),
+    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining("CI definition") });
+    expect(remoteTip(origin, "magister/readme")).toBeNull();
+
+    // Without a custom pipeline file it is an ordinary file.
+    const pushed = await pushRepoBranch(request);
+    expect(pushed.status).toBe("pushed");
+  });
+
+  it("accepts a GitLab pipeline path only for GitLab, normalised, never with `..`", () => {
+    const base = { ...push(), commit_sha: "a".repeat(40) };
+    expect(
+      parsePushRequest({ ...base, provider: "gitlab", ci_config_path: "./Deploy//CI.yml" })
+        .ci_config_path,
+    ).toBe("deploy/ci.yml");
+    expect(parsePushRequest({ ...base, provider: "gitlab" }).ci_config_path).toBeUndefined();
+    expect(() => parsePushRequest({ ...base, ci_config_path: "ci.yml" })).toThrow(
+      /only meaningful/,
+    );
+    expect(() =>
+      parsePushRequest({ ...base, provider: "gitlab", ci_config_path: "a/../ci.yml" }),
+    ).toThrow(CheckoutError);
   });
 });
 
