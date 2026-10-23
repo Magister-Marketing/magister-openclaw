@@ -61,7 +61,7 @@ describe("MagisterMemoryContextEngine", () => {
     expect(res.systemPromptAddition).toContain("provenance=trusted_project_state");
   });
 
-  it("freezes snapshot per session — does not re-read file after first assemble", async () => {
+  it("holds one snapshot for the model calls of a run", async () => {
     await writeFile(memoryPath, "Original");
     const engine = new MagisterMemoryContextEngine({
       memoryPath,
@@ -74,14 +74,14 @@ describe("MagisterMemoryContextEngine", () => {
     const first = await engine.assemble({ sessionId: "s1", messages: [] });
     expect(first.systemPromptAddition).toContain("Original");
 
-    // File changes mid-session — engine MUST NOT pick this up for the same sessionId.
+    // The file changes during the run; this run's later calls keep its snapshot.
     await writeFile(memoryPath, "Updated");
     const second = await engine.assemble({ sessionId: "s1", messages: [] });
     expect(second.systemPromptAddition).toContain("Original");
     expect(second.systemPromptAddition).not.toContain("Updated");
   });
 
-  it("re-reads an empty snapshot on later assembles and freezes once content appears", async () => {
+  it("re-reads an empty snapshot within a run and holds it once content appears", async () => {
     const engine = new MagisterMemoryContextEngine({
       memoryPath,
       userPath,
@@ -101,11 +101,31 @@ describe("MagisterMemoryContextEngine", () => {
     const second = await engine.assemble({ sessionId: "s1", messages: [] });
     expect(second.systemPromptAddition).toContain("Seeded memory entry");
 
-    // And once non-empty, it freezes: later writes do not appear.
+    // And once non-empty, the run holds it: later writes do not appear.
     await writeFile(memoryPath, "Rewritten later");
     const third = await engine.assemble({ sessionId: "s1", messages: [] });
     expect(third.systemPromptAddition).toContain("Seeded memory entry");
     expect(third.systemPromptAddition).not.toContain("Rewritten later");
+  });
+
+  it("reads edited memory on the next turn, which gets a new engine", async () => {
+    // resolveContextEngine builds an engine per run; an edit reaches the next
+    // turn of the same session (the intended behaviour, not a frozen session).
+    const turn = () =>
+      new MagisterMemoryContextEngine({
+        memoryPath,
+        userPath,
+        projectPath,
+        brandPath,
+        inner: new LegacyContextEngine(),
+      }).assemble({ sessionId: "s1", messages: [] });
+    await writeFile(memoryPath, "Original");
+    expect((await turn()).systemPromptAddition).toContain("Original");
+
+    await writeFile(memoryPath, "Updated");
+    const next = await turn();
+    expect(next.systemPromptAddition).toContain("Updated");
+    expect(next.systemPromptAddition).not.toContain("Original");
   });
 
   it("re-reads for a new session", async () => {
@@ -228,6 +248,49 @@ describe("MagisterMemoryContextEngine", () => {
     const res = await engine.assemble({ sessionId: "s1", messages: [], prompt });
     // The full tier admits the long trailing section; the core tier would not.
     expect(res.systemPromptAddition).toContain("Positioning detail.");
+  });
+
+  it("keeps the full brand tier for the rest of a session once it was needed", async () => {
+    await writeFile(
+      brandPath,
+      [
+        "<!-- MAGISTER:GENERATED BRAND START -->",
+        "### Generated from the latest marketing audit",
+        "",
+        "## Voice",
+        "",
+        "Tone: precise, warm",
+        "",
+        "## Ideal customer",
+        "",
+        "Positioning detail. ".repeat(100),
+        "<!-- MAGISTER:GENERATED BRAND END -->",
+      ].join("\n"),
+    );
+    // resolveContextEngine builds a new engine for every run, so each turn
+    // here gets its own instance, as on a machine.
+    const turn = (sessionId: string, prompt: string) =>
+      new MagisterMemoryContextEngine({
+        memoryPath,
+        userPath,
+        projectPath,
+        brandPath,
+        inner: new LegacyContextEngine(),
+      }).assemble({ sessionId, messages: [], prompt });
+    const notBrand = "What is the current server uptime?";
+    const first = await turn("s1", notBrand);
+    expect(first.systemPromptAddition).not.toContain("Positioning detail.");
+
+    // A workflow's brand-shaped step steps the session up to the full tier…
+    const brand = await turn("s1", "Draft homepage copy in our brand voice");
+    expect(brand.systemPromptAddition).toContain("Positioning detail.");
+    // …and the next step keeps it byte-identical, so the prompt cache holds.
+    const next = await turn("s1", notBrand);
+    expect(next.systemPromptAddition).toBe(brand.systemPromptAddition);
+
+    // Another session still starts at the core tier.
+    const other = await turn("s2", notBrand);
+    expect(other.systemPromptAddition).toBe(first.systemPromptAddition);
   });
 
   it("still injects a voice and visual floor when the prompt is not brand work", async () => {

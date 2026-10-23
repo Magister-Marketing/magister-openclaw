@@ -4889,7 +4889,7 @@
       "action": "create_ad_campaign",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
-      "description": "Create a project-owned advertising campaign in a forced paused state.",
+      "description": "Create a project-owned advertising campaign in a forced paused state, including a complete Google Ads Search campaign.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "idempotency_key",
       "input_schema": {
@@ -4921,6 +4921,15 @@
             "maxLength": 160,
             "type": "string"
           },
+          "descriptions": {
+            "description": "googleads only: 2-4 descriptions, at most 90 characters each.",
+            "items": {
+              "maxLength": 300,
+              "type": "string"
+            },
+            "maxItems": 20,
+            "type": "array"
+          },
           "end_date": {
             "maxLength": 64,
             "minLength": 1,
@@ -4935,6 +4944,15 @@
             "maxLength": 500,
             "type": "string"
           },
+          "headlines": {
+            "description": "googleads only: 3-15 headlines, at most 30 characters each, no '!'.",
+            "items": {
+              "maxLength": 300,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
           "idempotency_key": {
             "description": "Use one fresh key for each new logical operation. Reuse that key only when retrying the exact same arguments; a later user request, even with identical content, needs a new key.",
             "maxLength": 256,
@@ -4946,9 +4964,32 @@
             "maxLength": 2048,
             "type": "string"
           },
+          "keyword_match_type": {
+            "description": "googleads only: how keywords match searches; default PHRASE.",
+            "enum": ["BROAD", "PHRASE", "EXACT"],
+            "type": "string"
+          },
+          "keywords": {
+            "description": "googleads only: 1-50 plain search terms, at most 80 characters, no quotes or brackets.",
+            "items": {
+              "maxLength": 300,
+              "type": "string"
+            },
+            "maxItems": 200,
+            "type": "array"
+          },
           "link_url": {
             "maxLength": 2048,
             "type": "string"
+          },
+          "locations": {
+            "description": "googleads only, required: 1-50 places the ads may show, each an ISO 3166-1 alpha-2 country code (US, GB) or geoTargetConstants/<id>. Ask the user; languages are not restricted.",
+            "items": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "type": "array"
           },
           "name": {
             "maxLength": 500,
@@ -4956,7 +4997,7 @@
             "type": "string"
           },
           "platform": {
-            "enum": ["metaads", "tiktokads", "linkedinads", "pinterestads", "xads"],
+            "enum": ["metaads", "tiktokads", "linkedinads", "pinterestads", "xads", "googleads"],
             "type": "string"
           }
         },
@@ -5707,6 +5748,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "1a7dd4a9d3ee0151e5ab35944e783c10a48e2104e0ee61d672e0755f5480fecc",
+  "registry_revision": "6501f4b88d4b4e3045f645670430101f9fbfda89f200607515335d20368d3e73",
   "schema_version": 1
 }
