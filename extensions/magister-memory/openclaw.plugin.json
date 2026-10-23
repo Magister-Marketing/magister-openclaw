@@ -13,7 +13,12 @@
     "additionalProperties": false,
     "properties": {
       "enabled": { "type": "boolean" },
-      "memoryCharLimit": { "type": "integer", "minimum": 200, "maximum": 20000 },
+      "memoryCharLimit": {
+        "type": "integer",
+        "minimum": 200,
+        "maximum": 20000,
+        "description": "Retired and ignored: the Gateway owns the brand memory limit. Kept so a config that still sets it stays valid."
+      },
       "userCharLimit": { "type": "integer", "minimum": 200, "maximum": 20000 },
       "turnBudget": {
         "type": "object",
