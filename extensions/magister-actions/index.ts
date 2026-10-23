@@ -63,6 +63,11 @@ const SLACK_SESSION_RE =
   /^(?:agent:[^:]+:)?slack:(?:(?:direct|group|channel):[a-z0-9_-]+(?::thread:[0-9]+\.[0-9]+)?|[a-z0-9_-]+:[a-z0-9_-]+)$/i;
 const WEBCHAT_SESSION_RE =
   /^agent:[a-z0-9_-]{1,80}:webchat:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// The Getting Started chat keeps the onboarding kickoff's key. Forwarding it
+// lets the Gateway bind an approval to that chat (an inline card, its link in
+// "Needs you", the decision back in the same chat) instead of a bare link.
+const AUDIT_KICKOFF_SESSION_RE =
+  /^audit_kickoff:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const ERROR_CODES = new Set([
   "validation_error",
@@ -159,6 +164,12 @@ type ReadCachePolicy = {
 const contract = contractJson as Contract;
 
 function readCachePolicy(action: string): ReadCachePolicy | undefined {
+  if (action === "get_audit_health") {
+    // One database read on the Gateway, and rewritten when a channel of the
+    // audit is rescored (`run_site_audit` with a channel): a cached copy would
+    // tell the agent the score from before the rescore.
+    return undefined;
+  }
   if (action === "list_integrations" || action.includes("skill")) {
     return { provenance: "integration_discovery", ttlSeconds: 300 };
   }
@@ -172,6 +183,24 @@ function readCachePolicy(action: string): ReadCachePolicy | undefined {
     return { provenance: "research", ttlSeconds: 900 };
   }
   return undefined;
+}
+
+/**
+ * A read the Gateway also showed as a result card belongs to the chat it was
+ * shown in: its receipt says which (`receipt.result_card.session_key`).
+ * Replayed in another chat it would show no card while telling the agent one
+ * is there, so only that session reuses it; any other chat asks the Gateway,
+ * which shows the card in that chat.
+ */
+function cachedReadFitsSession(
+  envelope: ActionEnvelope,
+  runtimeSessionKey: string | undefined,
+): boolean {
+  const card = envelope.receipt.result_card;
+  if (!isRecord(card)) {
+    return true;
+  }
+  return typeof card.session_key === "string" && card.session_key === runtimeSessionKey;
 }
 
 function cacheScope(rawParams: Record<string, unknown>): {
@@ -316,7 +345,8 @@ function trustedRuntimeSessionKey(context: OpenClawPluginToolContext): string | 
   if (
     WORKFLOW_SESSION_RE.test(sessionKey) ||
     SLACK_SESSION_RE.test(sessionKey) ||
-    WEBCHAT_SESSION_RE.test(sessionKey)
+    WEBCHAT_SESSION_RE.test(sessionKey) ||
+    AUDIT_KICKOFF_SESSION_RE.test(sessionKey)
   ) {
     return sessionKey;
   }
@@ -1038,6 +1068,7 @@ export function createMagisterActionTool(
         );
       }
 
+      const runtimeSessionKey = trustedRuntimeSessionKey(context);
       const policy = action.side_effect === "none" ? readCachePolicy(action.action) : undefined;
       const scope = policy ? cacheScope(rawParams) : undefined;
       const inputHash = policy
@@ -1057,7 +1088,11 @@ export function createMagisterActionTool(
               freshnessTtlSeconds: source.freshnessTtlSeconds,
             });
             const envelope = parseActionEnvelope(cached);
-            if (envelope?.ok && envelope.status.terminal) {
+            if (
+              envelope?.ok &&
+              envelope.status.terminal &&
+              cachedReadFitsSession(envelope, runtimeSessionKey)
+            ) {
               envelope.receipt = {
                 ...envelope.receipt,
                 cache_freshness: {
@@ -1079,7 +1114,6 @@ export function createMagisterActionTool(
       const controller = new AbortController();
       const selectedTimeoutMs = actionTimeoutMs(action.action, config.timeoutMs);
       const timeout = setTimeout(() => controller.abort(), selectedTimeoutMs);
-      const runtimeSessionKey = trustedRuntimeSessionKey(context);
       const runtimeSessionId = context.sessionId?.trim();
       try {
         const mediaPreparedParams = await prepareExactSocialMedia(action.action, rawParams, {

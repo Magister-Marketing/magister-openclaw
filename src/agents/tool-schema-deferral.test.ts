@@ -2,6 +2,9 @@ import type { AfterToolCallContext, AgentTool } from "@mariozechner/pi-agent-cor
 import { describe, expect, it, vi } from "vitest";
 import {
   activateToolSchemaDeferral,
+  applyConfiguredSchemaDeferral,
+  applyRequestedEagerSchemas,
+  parseEagerSchemaTools,
   buildDeferredToolDirectoryLines,
   collectPromotedToolNames,
   createToolDescribeTool,
@@ -75,6 +78,48 @@ function afterToolCallContext(params: {
     context: { systemPrompt: "", messages: [], tools: params.tools },
   };
 }
+
+describe("applyConfiguredSchemaDeferral", () => {
+  it("defers the named native tools and leaves everything else as it came", () => {
+    const message = makeTool("message");
+    const read = makeTool("read");
+    const out = applyConfiguredSchemaDeferral(
+      [message, read, eager(), deferred()],
+      ["message", "video_generate"],
+    );
+    expect(out.map((tool) => [tool.name, tool.schemaDelivery])).toEqual([
+      ["message", "deferred"],
+      ["read", undefined],
+      ["magister_get_brand", "eager"],
+      ["magister_send_brief", "deferred"],
+    ]);
+    // Only the deferred copy is new; the untouched tools keep their identity.
+    expect(out[1]).toBe(read);
+    expect(message.schemaDelivery).toBeUndefined();
+  });
+
+  it("never defers tool_describe and does nothing for an empty list", () => {
+    const describe = createToolDescribeTool();
+    const tools = [describe, makeTool("message")];
+    expect(
+      applyConfiguredSchemaDeferral(tools, [TOOL_DESCRIBE_TOOL_NAME])[0].schemaDelivery,
+    ).toBeUndefined();
+    expect(
+      applyConfiguredSchemaDeferral(tools, undefined).map((tool) => tool.schemaDelivery),
+    ).toEqual([undefined, undefined]);
+  });
+
+  it("puts a config-deferred native tool in the directory with its first sentence", () => {
+    const describe = createToolDescribeTool();
+    const plan = planToolSchemaDelivery(
+      applyConfiguredSchemaDeferral([describe, makeTool("message"), makeTool("read")], ["message"]),
+    );
+    expect(plan.promptTools.map((tool) => tool.name)).toEqual([TOOL_DESCRIBE_TOOL_NAME, "read"]);
+    expect(buildDeferredToolDirectoryLines(plan.deferredTools)).toEqual([
+      "- message: message does one thing well.",
+    ]);
+  });
+});
 
 describe("planToolSchemaDelivery", () => {
   it("ships every schema when tool_describe did not survive policy", () => {
@@ -311,5 +356,54 @@ describe("activateToolSchemaDeferral", () => {
       TOOL_DESCRIBE_TOOL_NAME,
       "magister_get_brand",
     ]);
+  });
+});
+
+describe("requested eager schemas (x-magister-eager-schemas)", () => {
+  it("parses a bounded, unique list of valid tool names and never tool_describe", () => {
+    expect(parseEagerSchemaTools(undefined)).toEqual([]);
+    expect(parseEagerSchemaTools("  ")).toEqual([]);
+    expect(
+      parseEagerSchemaTools(
+        " magister_create_social_draft, magister_publish_social_post ,magister_create_social_draft, tool_describe, Bad-Name, ",
+      ),
+    ).toEqual(["magister_create_social_draft", "magister_publish_social_post"]);
+    const many = Array.from({ length: 40 }, (_, i) => `tool_${i}`).join(",");
+    expect(parseEagerSchemaTools(many)).toHaveLength(32);
+  });
+
+  it("makes exactly the named deferred tools eager and leaves the rest alone", () => {
+    const tools = [
+      eager(),
+      deferred(),
+      makeTool("magister_send_email", { schemaDelivery: "deferred" }),
+    ];
+    const applied = applyRequestedEagerSchemas(tools, ["magister_send_brief", "unknown_tool"]);
+    expect(applied.map((tool) => [tool.name, tool.schemaDelivery])).toEqual([
+      ["magister_get_brand", "eager"],
+      ["magister_send_brief", "eager"],
+      ["magister_send_email", "deferred"],
+    ]);
+    // The input tools are not mutated and an empty request changes nothing.
+    expect(tools[1].schemaDelivery).toBe("deferred");
+    expect(applyRequestedEagerSchemas(tools, [])).toEqual(tools);
+    expect(applyRequestedEagerSchemas(tools, undefined)).toEqual(tools);
+  });
+
+  it("wins over the image config for the tools it names, and only those", () => {
+    const configured = applyConfiguredSchemaDeferral(
+      [makeTool("message"), makeTool("image_generate"), eager()],
+      ["message", "image_generate"],
+    );
+    const plan = planToolSchemaDelivery([
+      ...applyRequestedEagerSchemas(configured, ["message"]),
+      createToolDescribeTool(),
+    ]);
+    expect(plan.promptTools.map((tool) => tool.name)).toEqual([
+      "message",
+      "magister_get_brand",
+      TOOL_DESCRIBE_TOOL_NAME,
+    ]);
+    expect([...plan.deferredToolNames]).toEqual(["image_generate"]);
   });
 });

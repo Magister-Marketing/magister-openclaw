@@ -2,7 +2,7 @@
   "name": "@openclaw/magister-memory",
   "version": "2026.5.4",
   "private": true,
-  "description": "Magister bounded, file-backed agent memory plugin",
+  "description": "Magister agent memory plugin: brand memory through the Gateway, user memory on the machine",
   "type": "module",
   "dependencies": {
     "typebox": "1.1.37"

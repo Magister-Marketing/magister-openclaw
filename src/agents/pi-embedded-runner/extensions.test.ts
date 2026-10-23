@@ -5,6 +5,7 @@ import type { OpenClawConfig } from "../../config/config.js";
 import { getCompactionSafeguardRuntime } from "../pi-hooks/compaction-safeguard-runtime.js";
 import compactionSafeguardExtension from "../pi-hooks/compaction-safeguard.js";
 import contextPruningExtension from "../pi-hooks/context-pruning.js";
+import { getContextPruningRuntime } from "../pi-hooks/context-pruning/runtime.js";
 import { buildEmbeddedExtensionFactories } from "./extensions.js";
 
 vi.mock("../../plugins/provider-runtime.js", () => ({
@@ -116,5 +117,53 @@ describe("buildEmbeddedExtensionFactories", () => {
     });
 
     expect(factories).toContain(contextPruningExtension);
+  });
+
+  describe("always mode", () => {
+    const cfg = {
+      agents: {
+        defaults: {
+          contextPruning: {
+            mode: "always",
+            windowTokens: 200_000,
+            completedTurns: "clear",
+            completedTurnsSessionKeys: ["workflow_run:", "webchat:"],
+          },
+        },
+      },
+    } as unknown as OpenClawConfig;
+
+    function build(sessionKey: string) {
+      const sessionManager = {} as SessionManager;
+      const factories = buildEmbeddedExtensionFactories({
+        cfg,
+        sessionManager,
+        provider: "magister-gateway",
+        modelId: "openai/gpt-6-luna",
+        model: { id: "openai/gpt-6-luna", contextWindow: 922_000 } as Model<Api>,
+        sessionKey,
+      });
+      return { factories, runtime: getContextPruningRuntime(sessionManager) };
+    }
+
+    it("prunes on a provider without a cache TTL and measures against windowTokens", () => {
+      const { factories, runtime } = build("workflow_run:run-1");
+      expect(factories).toContain(contextPruningExtension);
+      expect(runtime?.settings.mode).toBe("always");
+      expect(runtime?.contextWindowTokens).toBe(200_000);
+      expect(runtime?.lastCacheTouchAt).toBeNull();
+      expect(runtime?.settings.completedTurns).toBe("clear");
+    });
+
+    it("clears finished turns in a chat, whose stored key is agent-qualified", () => {
+      const { runtime } = build("agent:marketing:webchat:chat-1");
+      expect(runtime?.settings.completedTurns).toBe("clear");
+    });
+
+    it("keeps finished turns in a session the completed-turns keys do not name", () => {
+      const { runtime } = build("agent:marketing:main");
+      expect(runtime?.settings.mode).toBe("always");
+      expect(runtime?.settings.completedTurns).toBe("keep");
+    });
   });
 });

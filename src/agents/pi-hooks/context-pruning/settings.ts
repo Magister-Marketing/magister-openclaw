@@ -1,15 +1,42 @@
 import { parseDurationMs } from "../../../cli/parse-duration.js";
+import { toAgentRequestSessionKey } from "../../../routing/session-key.js";
 
 export type ContextPruningToolMatch = {
   allow?: string[];
   deny?: string[];
 };
-export type ContextPruningMode = "off" | "cache-ttl";
+/**
+ * - `cache-ttl`: prune only once the provider's prompt cache has expired (Anthropic/Google style
+ *   caches), so a warm cache is never invalidated by a prune.
+ * - `always`: prune on every request, for any provider. Meant for long tool-heavy sessions
+ *   (workflow runs) where the context would otherwise carry every fetched page to the end.
+ */
+export type ContextPruningMode = "off" | "cache-ttl" | "always";
+/**
+ * What happens to tool results from turns before the latest user message: `keep` leaves them to
+ * the ratio rules, `trim` soft-trims them on every request, `clear` replaces them with the
+ * placeholder. The assistant reply that closed each turn always stays.
+ */
+export type ContextPruningCompletedTurns = "keep" | "trim" | "clear";
 
 export type ContextPruningConfig = {
   mode?: ContextPruningMode;
   /** TTL to consider cache expired (duration string, default unit: minutes). */
   ttl?: string;
+  /** Token budget the ratios are measured against (default: the model's context window). */
+  windowTokens?: number;
+  completedTurns?: ContextPruningCompletedTurns;
+  /**
+   * Session key prefixes the completed-turns rule applies to (for example `workflow_run:` or
+   * `webchat:`), matched without the `agent:<id>:` qualifier a stored key carries. Empty means
+   * every session. Other sessions keep only the ratio rules.
+   */
+  completedTurnsSessionKeys?: string[];
+  /**
+   * Path prefixes whose `read` results the completed-turns rule keeps: reference files such as
+   * skills, which the agent reuses turn after turn and would otherwise read again.
+   */
+  completedTurnsKeepReads?: string[];
   keepLastAssistants?: number;
   softTrimRatio?: number;
   hardClearRatio?: number;
@@ -29,6 +56,10 @@ export type ContextPruningConfig = {
 export type EffectiveContextPruningSettings = {
   mode: Exclude<ContextPruningMode, "off">;
   ttlMs: number;
+  windowTokens: number | null;
+  completedTurns: ContextPruningCompletedTurns;
+  completedTurnsSessionKeys: string[];
+  completedTurnsKeepReads: string[];
   keepLastAssistants: number;
   softTrimRatio: number;
   hardClearRatio: number;
@@ -48,6 +79,10 @@ export type EffectiveContextPruningSettings = {
 export const DEFAULT_CONTEXT_PRUNING_SETTINGS: EffectiveContextPruningSettings = {
   mode: "cache-ttl",
   ttlMs: 5 * 60 * 1000,
+  windowTokens: null,
+  completedTurns: "keep",
+  completedTurnsSessionKeys: [],
+  completedTurnsKeepReads: [],
   keepLastAssistants: 3,
   softTrimRatio: 0.3,
   hardClearRatio: 0.5,
@@ -64,12 +99,18 @@ export const DEFAULT_CONTEXT_PRUNING_SETTINGS: EffectiveContextPruningSettings =
   },
 };
 
+export function isActiveContextPruningMode(
+  mode: unknown,
+): mode is Exclude<ContextPruningMode, "off"> {
+  return mode === "cache-ttl" || mode === "always";
+}
+
 export function computeEffectiveSettings(raw: unknown): EffectiveContextPruningSettings | null {
   if (!raw || typeof raw !== "object") {
     return null;
   }
   const cfg = raw as ContextPruningConfig;
-  if (cfg.mode !== "cache-ttl") {
+  if (!isActiveContextPruningMode(cfg.mode)) {
     return null;
   }
 
@@ -84,6 +125,30 @@ export function computeEffectiveSettings(raw: unknown): EffectiveContextPruningS
     }
   }
 
+  if (
+    typeof cfg.windowTokens === "number" &&
+    Number.isFinite(cfg.windowTokens) &&
+    cfg.windowTokens > 0
+  ) {
+    s.windowTokens = Math.floor(cfg.windowTokens);
+  }
+  if (
+    cfg.completedTurns === "keep" ||
+    cfg.completedTurns === "trim" ||
+    cfg.completedTurns === "clear"
+  ) {
+    s.completedTurns = cfg.completedTurns;
+  }
+  if (Array.isArray(cfg.completedTurnsSessionKeys)) {
+    s.completedTurnsSessionKeys = cfg.completedTurnsSessionKeys.filter(
+      (key): key is string => typeof key === "string" && key.length > 0,
+    );
+  }
+  if (Array.isArray(cfg.completedTurnsKeepReads)) {
+    s.completedTurnsKeepReads = cfg.completedTurnsKeepReads.filter(
+      (prefix): prefix is string => typeof prefix === "string" && prefix.length > 0,
+    );
+  }
   if (typeof cfg.keepLastAssistants === "number" && Number.isFinite(cfg.keepLastAssistants)) {
     s.keepLastAssistants = Math.max(0, Math.floor(cfg.keepLastAssistants));
   }
@@ -120,4 +185,23 @@ export function computeEffectiveSettings(raw: unknown): EffectiveContextPruningS
   }
 
   return s;
+}
+
+/**
+ * The settings for one session: the completed-turns rule only where its session keys say so. A
+ * chat's key arrives agent-qualified (`agent:marketing:webchat:<id>`) while a workflow run's is
+ * bare (`workflow_run:<id>`), so prefixes match the key with that qualifier removed.
+ */
+export function settingsForSession(
+  settings: EffectiveContextPruningSettings,
+  sessionKey: string | undefined,
+): EffectiveContextPruningSettings {
+  if (settings.completedTurns === "keep" || settings.completedTurnsSessionKeys.length === 0) {
+    return settings;
+  }
+  const requestKey = toAgentRequestSessionKey(sessionKey);
+  const applies =
+    requestKey !== undefined &&
+    settings.completedTurnsSessionKeys.some((prefix) => requestKey.startsWith(prefix));
+  return applies ? settings : { ...settings, completedTurns: "keep" };
 }

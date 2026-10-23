@@ -40,6 +40,8 @@ export type RunEmbeddedPiAgentParams = {
   sandboxSessionKey?: string;
   agentId?: string;
   messageChannel?: string;
+  /** Deferred-schema tools whose schema ships eagerly for this session (x-magister-eager-schemas). */
+  eagerSchemaTools?: string[];
   messageProvider?: string;
   agentAccountId?: string;
   /** What initiated this agent run: "user", "heartbeat", "cron", "memory", "overflow", or "manual". */

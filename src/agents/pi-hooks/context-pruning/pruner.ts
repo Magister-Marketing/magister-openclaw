@@ -245,6 +245,60 @@ function findFirstUserIndex(messages: AgentMessage[]): number | null {
   return null;
 }
 
+function findLastUserIndex(messages: AgentMessage[]): number | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role === "user") {
+      return i;
+    }
+  }
+  return null;
+}
+
+/** Ids of the `read` calls in messages[start, end) whose path starts with one of the prefixes. */
+function readCallIdsUnder(
+  messages: AgentMessage[],
+  start: number,
+  end: number,
+  prefixes: readonly string[],
+): Set<string> {
+  const ids = new Set<string>();
+  if (prefixes.length === 0) {
+    return ids;
+  }
+  for (let i = start; i < end; i++) {
+    const msg = messages[i];
+    if (msg?.role !== "assistant") {
+      continue;
+    }
+    for (const block of msg.content) {
+      if (block?.type !== "toolCall" || block.name !== "read") {
+        continue;
+      }
+      const path = block.arguments?.path ?? block.arguments?.file_path;
+      if (typeof path === "string" && prefixes.some((prefix) => path.startsWith(prefix))) {
+        ids.add(block.id);
+      }
+    }
+  }
+  return ids;
+}
+
+function clearToolResultMessage(params: {
+  msg: ToolResultMessage;
+  settings: EffectiveContextPruningSettings;
+}): ToolResultMessage | null {
+  const { msg, settings } = params;
+  const parts = collectTextSegments(msg.content);
+  if (
+    !hasImageBlocks(msg.content) &&
+    parts.length === 1 &&
+    parts[0] === settings.hardClear.placeholder
+  ) {
+    return null;
+  }
+  return { ...msg, content: [asText(settings.hardClear.placeholder)] };
+}
+
 function softTrimToolResultMessage(params: {
   msg: ToolResultMessage;
   settings: EffectiveContextPruningSettings;
@@ -326,16 +380,60 @@ export function pruneContextMessages(params: {
 
   const totalCharsBefore = estimateContextChars(estimatedMessages);
   let totalChars = totalCharsBefore;
+  let next: AgentMessage[] | null = null;
+
+  const replaceAt = (i: number, updated: ToolResultMessage) => {
+    const before = estimateMessageChars((next ?? messages)[i]);
+    if (!next) {
+      next = messages.slice();
+    }
+    next[i] = updated as unknown as AgentMessage;
+    totalChars += estimateMessageChars(updated as unknown as AgentMessage) - before;
+  };
+
+  // Completed turns: a tool result from before the latest user message has already fed the
+  // reply that closed its turn, so it is pruned on every request, whatever the ratios say. In a
+  // workflow run each step is one user message, so this clears a step's fetched pages the moment
+  // the next step starts; the step's own reply stays. Reads under completedTurnsKeepReads (skills)
+  // stay too: the agent reuses them every turn, and clearing them made it read the same skills
+  // again on later chat turns.
+  if (settings.completedTurns !== "keep") {
+    const lastUserIndex = findLastUserIndex(messages);
+    const completedEnd = lastUserIndex === null ? pruneStartIndex : lastUserIndex;
+    const keptReads = readCallIdsUnder(
+      messages,
+      pruneStartIndex,
+      completedEnd,
+      settings.completedTurnsKeepReads,
+    );
+    for (let i = pruneStartIndex; i < completedEnd; i++) {
+      const msg = messages[i];
+      if (!msg || msg.role !== "toolResult" || !isToolPrunable(msg.toolName)) {
+        continue;
+      }
+      if (keptReads.has(msg.toolCallId)) {
+        continue;
+      }
+      const current = msg as unknown as ToolResultMessage;
+      const updated =
+        settings.completedTurns === "clear"
+          ? clearToolResultMessage({ msg: current, settings })
+          : softTrimToolResultMessage({ msg: current, settings });
+      if (updated) {
+        replaceAt(i, updated);
+      }
+    }
+  }
+
   let ratio = totalChars / charWindow;
   if (ratio < settings.softTrimRatio) {
-    return messages;
+    return next ?? messages;
   }
 
   const prunableToolIndexes: number[] = [];
-  let next: AgentMessage[] | null = null;
 
   for (let i = pruneStartIndex; i < cutoffIndex; i++) {
-    const msg = messages[i];
+    const msg = (next ?? messages)[i];
     if (!msg || msg.role !== "toolResult") {
       continue;
     }
@@ -351,14 +449,7 @@ export function pruneContextMessages(params: {
     if (!updated) {
       continue;
     }
-
-    const beforeChars = estimateMessageChars(msg);
-    const afterChars = estimateMessageChars(updated as unknown as AgentMessage);
-    totalChars += afterChars - beforeChars;
-    if (!next) {
-      next = messages.slice();
-    }
-    next[i] = updated as unknown as AgentMessage;
+    replaceAt(i, updated);
   }
 
   const outputAfterSoftTrim = next ?? messages;
@@ -382,26 +473,29 @@ export function pruneContextMessages(params: {
     return outputAfterSoftTrim;
   }
 
+  // In cache-ttl mode the cache has already expired, so clearing one more old result per
+  // request costs nothing extra. In always mode the cache is warm, and a prefix that changes
+  // near its start on every request re-sends the whole context at the uncached price: measured
+  // on a workflow run, the cached share fell from 93% to 48% and the run cost more than with no
+  // pruning. So once the threshold is crossed, always mode clears every prunable result before
+  // the protected tail; the set only ever grows at its end, and the prefix stays cached.
+  const clearEverything = settings.mode === "always";
   for (const i of prunableToolIndexes) {
-    if (ratio < settings.hardClearRatio) {
+    if (!clearEverything && ratio < settings.hardClearRatio) {
       break;
     }
     const msg = (next ?? messages)[i];
     if (!msg || msg.role !== "toolResult") {
       continue;
     }
-
-    const beforeChars = estimateMessageChars(msg);
-    const cleared: ToolResultMessage = {
-      ...msg,
-      content: [asText(settings.hardClear.placeholder)],
-    };
-    if (!next) {
-      next = messages.slice();
+    const cleared = clearToolResultMessage({
+      msg: msg as unknown as ToolResultMessage,
+      settings,
+    });
+    if (!cleared) {
+      continue;
     }
-    next[i] = cleared as unknown as AgentMessage;
-    const afterChars = estimateMessageChars(cleared as unknown as AgentMessage);
-    totalChars += afterChars - beforeChars;
+    replaceAt(i, cleared);
     ratio = totalChars / charWindow;
   }
 

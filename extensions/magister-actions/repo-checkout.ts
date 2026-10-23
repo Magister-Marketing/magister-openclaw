@@ -148,6 +148,66 @@ export const REPO_PROVIDERS = {
 } as const;
 export type RepoProvider = keyof typeof REPO_PROVIDERS;
 
+/**
+ * The files a host's CI runs, as lowercase normalised paths: `[prefix, exact]`,
+ * a path matching when it equals `exact` or starts with a non-empty `prefix`.
+ *
+ * A push runs no approval, so a branch carrying one of these would run
+ * arbitrary CI before anyone reviewed it. The Gateway refuses the same paths
+ * everywhere else a repository write skips the approval card, from
+ * `gateway/app/actions/ci_definitions.py`; a Gateway test reads this constant
+ * and fails when the two lists differ.
+ */
+export const CI_DEFINITION_PATHS: Record<
+  RepoProvider,
+  ReadonlyArray<readonly [prefix: string, exact: string]>
+> = {
+  // Workflows, and the composite actions workflows run.
+  github: [
+    [".github/workflows/", ".github/workflows"],
+    [".github/actions/", ".github/actions"],
+  ],
+  // The default pipeline file and the conventional directory of included files.
+  gitlab: [
+    ["", ".gitlab-ci.yml"],
+    [".gitlab/ci/", ".gitlab/ci"],
+  ],
+};
+
+/** `value` lowercased and slash-separated, with `./`, duplicate and leading
+ *  slashes dropped; null for a path with a `..` segment, which is refused
+ *  rather than resolved. */
+export function normalizeRepoPath(value: string): string | null {
+  const segments = value
+    .replace(/\\/g, "/")
+    .split("/")
+    .filter((segment) => segment !== "" && segment !== ".");
+  if (segments.includes("..")) {
+    return null;
+  }
+  return segments.join("/").toLowerCase();
+}
+
+/** Whether `file` is, or cannot be shown not to be, a CI definition on the
+ *  host. `ciConfigPath` is a GitLab project's custom pipeline file, already
+ *  normalised, as the Gateway sends it. */
+export function isCiDefinition(
+  file: string,
+  provider: RepoProvider,
+  ciConfigPath?: string,
+): boolean {
+  const normalized = normalizeRepoPath(file);
+  if (normalized === null) {
+    return true;
+  }
+  if (provider === "gitlab" && ciConfigPath && normalized === ciConfigPath) {
+    return true;
+  }
+  return CI_DEFINITION_PATHS[provider].some(
+    ([prefix, exact]) => normalized === exact || (prefix !== "" && normalized.startsWith(prefix)),
+  );
+}
+
 export type CheckoutRequest = {
   repo: string;
   provider: RepoProvider;
@@ -251,6 +311,9 @@ export type PushRequest = {
   commit_sha: string;
   expected_remote_sha?: string;
   token: string;
+  /** A GitLab project's custom pipeline file, normalised. Sent only when the
+   *  project sets one; absent means the default `.gitlab-ci.yml`. */
+  ci_config_path?: string;
   mutation_context?: unknown;
 };
 
@@ -1876,6 +1939,51 @@ export function reviewUrls(
   };
 }
 
+/**
+ * The repository paths where the tree pushed to `request.branch` differs from
+ * what the remote holds now: the branch's own head when the branch exists,
+ * otherwise the remote default branch's head. Compared tree to tree, not from
+ * a merge base, because CI runs the branch's own files: a branch cut from an
+ * old commit carries that commit's workflows even when it changes none of
+ * them. Null when the remote head cannot be read (the fetch fails or the ref
+ * moved), which the caller refuses rather than guessing.
+ */
+async function pushedPaths(
+  repoDir: string,
+  request: PushRequest,
+  remote: RemoteView,
+): Promise<string[] | null> {
+  const target = remote.tip === null ? remote.defaultBranch : request.branch;
+  const fetched = await runGit(
+    ["fetch", "--quiet", "--no-tags", "origin", "--", `refs/heads/${target}`],
+    {
+      cwd: repoDir,
+      token: request.token,
+      provider: request.provider,
+      timeoutMs: CLONE_TIMEOUT_MS,
+      onTick: () => withinCheckoutBudget(repoDir),
+    },
+  );
+  if (fetched.code !== 0) {
+    return null;
+  }
+  const local = { cwd: repoDir, timeoutMs: GIT_COMMAND_TIMEOUT_MS };
+  const head = (
+    await runGit(["rev-parse", "--verify", "--quiet", "FETCH_HEAD^{commit}"], local)
+  ).stdout.trim();
+  if (!SHA_RE.test(head) || (remote.tip !== null && head !== remote.tip)) {
+    return null;
+  }
+  const diff = await runGit(
+    ["diff", "--name-only", "--no-renames", "--no-ext-diff", "-z", head, request.commit_sha],
+    local,
+  );
+  if (diff.code !== 0) {
+    return null;
+  }
+  return diff.stdout.split("\0").filter((file) => file !== "");
+}
+
 async function performPush(request: PushRequest): Promise<PushReceipt> {
   const { repoDir, full } = await requireCheckout(request.repo, request.provider);
   return withCheckoutLock(repoDir, "host:push", () => pushFrozenCommit(repoDir, full, request));
@@ -1959,6 +2067,26 @@ async function pushFrozenCommit(
         `It is now at ${remote.tip.slice(0, 12)}. Re-read the branch and retry with that value as expected_remote_sha.`,
       );
     }
+  }
+
+  // The last check before anything leaves the machine: what this push sends,
+  // judged against the remote itself rather than the checkout's base, which
+  // need not be on the remote at all.
+  const sent = await pushedPaths(repoDir, request, remote);
+  if (sent === null) {
+    throw new CheckoutError(
+      `Could not establish what pushing ${request.commit_sha.slice(0, 12)} to ${request.branch} would send to ${full}.`,
+      409,
+      "Check the repository out again from its default branch, re-apply the change, and prepare a new commit.",
+    );
+  }
+  const ci = sent.find((file) => isCiDefinition(file, request.provider, request.ci_config_path));
+  if (ci !== undefined) {
+    throw new CheckoutError(
+      `${truncate(ci, 200)} is, or may be, a CI definition: pushing it runs CI before anyone reviews it, so this branch is not pushed.`,
+      409,
+      `Make CI changes in ${label} directly, and prepare a commit that leaves them out.`,
+    );
   }
 
   // Never `--force` and never `--force-with-lease`: a plain push is itself a
@@ -2382,10 +2510,33 @@ export function parseInstallRequest(value: unknown): InstallRequest {
   return { repo: full, provider, mutation_context: row.mutation_context };
 }
 
+/** A GitLab project's custom pipeline file, normalised; undefined when the
+ *  Gateway sent none. Only GitLab has one, and a path that cannot be
+ *  normalised is refused rather than ignored. */
+function parseCiConfigPath(value: unknown, provider: RepoProvider): string | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (provider !== "gitlab") {
+    throw new CheckoutError("ci_config_path is only meaningful for GitLab", 400);
+  }
+  // Control characters (code points below 0x20, and DEL) never belong in a path.
+  const hasControl =
+    typeof value === "string" && [...value].some((char) => char < " " || char === "\u007f");
+  if (typeof value !== "string" || value.length > 500 || hasControl) {
+    throw new CheckoutError("ci_config_path must be a repository file path", 400);
+  }
+  const normalized = normalizeRepoPath(value);
+  if (!normalized) {
+    throw new CheckoutError("ci_config_path must be a repository file path", 400);
+  }
+  return normalized;
+}
+
 export function parsePushRequest(value: unknown): PushRequest {
   const row = requireFields(
     value,
-    ["repo", "branch", "commit_sha", "expected_remote_sha", "token"],
+    ["repo", "branch", "commit_sha", "expected_remote_sha", "token", "ci_config_path"],
     "push",
   );
   if (typeof row.token !== "string" || !row.token) {
@@ -2393,7 +2544,9 @@ export function parsePushRequest(value: unknown): PushRequest {
   }
   const provider = parseProvider(row.provider);
   const { full } = parseRepo(row.repo, provider);
+  const ciConfigPath = parseCiConfigPath(row.ci_config_path, provider);
   return {
+    ...(ciConfigPath ? { ci_config_path: ciConfigPath } : {}),
     repo: full,
     provider,
     branch: parseBranch(row.branch),

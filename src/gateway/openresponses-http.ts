@@ -450,6 +450,7 @@ async function runResponsesAgentCommand(params: {
   sessionKey: string;
   runId: string;
   messageChannel: string;
+  eagerSchemaTools?: string[];
   senderIsOwner: boolean;
   deps: CliDeps;
   abortSignal?: AbortSignal;
@@ -466,6 +467,7 @@ async function runResponsesAgentCommand(params: {
       runId: params.runId,
       deliver: false,
       messageChannel: params.messageChannel,
+      eagerSchemaTools: params.eagerSchemaTools,
       bestEffortDeliver: false,
       senderIsOwner: params.senderIsOwner,
       allowModelOverride: true,
@@ -690,6 +692,7 @@ export async function handleOpenResponsesHttpRequest(
   );
   const sessionKey = previousSessionKey ?? resolved.sessionKey;
   const messageChannel = resolved.messageChannel;
+  const eagerSchemaTools = resolved.eagerSchemaTools;
 
   // Build prompt from input
   const prompt = buildAgentPrompt(payload.input);
@@ -741,6 +744,7 @@ export async function handleOpenResponsesHttpRequest(
         sessionKey,
         runId: responseId,
         messageChannel,
+        eagerSchemaTools,
         senderIsOwner,
         deps,
         abortSignal: abortController.signal,
@@ -1168,6 +1172,7 @@ export async function handleOpenResponsesHttpRequest(
         sessionKey,
         runId: responseId,
         messageChannel,
+        eagerSchemaTools,
         senderIsOwner,
         deps,
         abortSignal: abortController.signal,

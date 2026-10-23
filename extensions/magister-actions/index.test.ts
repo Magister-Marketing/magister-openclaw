@@ -265,6 +265,46 @@ describe("typed gateway execution", () => {
     expect(request?.init?.headers).not.toHaveProperty("x-magister-session-id");
   });
 
+  it("forwards the Getting Started chat's kickoff session with its id", async () => {
+    process.env.GATEWAY_TOKEN = "secret-machine-token";
+    let request: { init?: RequestInit } | undefined;
+    const tool = createMagisterActionTool(
+      api(),
+      action,
+      async (_input, init) => {
+        request = { init };
+        return new Response(JSON.stringify(envelope()), { status: 200 });
+      },
+      {
+        sessionKey: "audit_kickoff:dd2c2cfe-ad21-4d92-8958-08f1e9dba32d",
+        sessionId: "11111111-1111-4111-8111-111111111111",
+      },
+    );
+
+    await tool.execute("call-getting-started", {});
+    expect(request?.init?.headers).toMatchObject({
+      "x-magister-session-key": "audit_kickoff:dd2c2cfe-ad21-4d92-8958-08f1e9dba32d",
+      "x-magister-session-id": "11111111-1111-4111-8111-111111111111",
+    });
+  });
+
+  it("does not forward a malformed kickoff session key", async () => {
+    process.env.GATEWAY_TOKEN = "secret-machine-token";
+    let request: { init?: RequestInit } | undefined;
+    const tool = createMagisterActionTool(
+      api(),
+      action,
+      async (_input, init) => {
+        request = { init };
+        return new Response(JSON.stringify(envelope()), { status: 200 });
+      },
+      { sessionKey: "audit_kickoff:plan-1" },
+    );
+
+    await tool.execute("call-malformed-kickoff", {});
+    expect(request?.init?.headers).not.toHaveProperty("x-magister-session-key");
+  });
+
   it("forwards a trusted Slack thread session outside tool arguments", async () => {
     process.env.GATEWAY_TOKEN = "secret-machine-token";
     let request: { init?: RequestInit } | undefined;
@@ -525,6 +565,86 @@ describe("typed gateway execution", () => {
     expect((second.receipt as Record<string, unknown>).cache_freshness).toMatchObject({
       cached: true,
     });
+  });
+
+  it("reuses a cached read that showed a result card only in that card's chat", async () => {
+    process.env.GATEWAY_TOKEN = "token";
+    const workspace = mkdtempSync(join(tmpdir(), "magister-card-cache-"));
+    temporaryDirectories.push(workspace);
+    process.env.OPENCLAW_WORKSPACE_DIR = workspace;
+    process.env.FLY_APP_NAME = "project-app-card";
+    const chatA = "agent:marketing:webchat:11111111-1111-4111-8111-111111111111";
+    const chatB = "agent:marketing:webchat:22222222-2222-4222-8222-222222222222";
+    const sessions: Array<string | undefined> = [];
+    const gateway = async (_url: string | URL | Request, init?: RequestInit) => {
+      const sessionKey = (init?.headers as Record<string, string>)["x-magister-session-key"];
+      sessions.push(sessionKey);
+      return new Response(
+        JSON.stringify(
+          envelope({
+            receipt: {
+              integrations: [{ service: "ga4" }],
+              result_card: { card_key: "influencers:run-1", session_key: sessionKey },
+            },
+          }),
+        ),
+        { status: 200 },
+      );
+    };
+    const inChatA = createMagisterActionTool(api(), integrationsAction, gateway, {
+      sessionKey: chatA,
+    });
+    const inChatB = createMagisterActionTool(api(), integrationsAction, gateway, {
+      sessionKey: chatB,
+    });
+
+    const first = resultJson(await inChatA.execute("call-card-a1", {}));
+    const again = resultJson(await inChatA.execute("call-card-a2", {}));
+    const otherChat = resultJson(await inChatB.execute("call-card-b1", {}));
+
+    // Chat B reached the Gateway, which shows the card in chat B.
+    expect(sessions).toEqual([chatA, chatB]);
+    expect((first.receipt as Record<string, unknown>).cache_freshness).toMatchObject({
+      cached: false,
+    });
+    expect((again.receipt as Record<string, unknown>).cache_freshness).toMatchObject({
+      cached: true,
+    });
+    expect((otherChat.receipt as Record<string, unknown>).cache_freshness).toMatchObject({
+      cached: false,
+    });
+  });
+
+  it("reads the audit afresh every time, since a channel rescore rewrites it", async () => {
+    process.env.GATEWAY_TOKEN = "token";
+    const workspace = mkdtempSync(join(tmpdir(), "magister-audit-cache-"));
+    temporaryDirectories.push(workspace);
+    process.env.OPENCLAW_WORKSPACE_DIR = workspace;
+    process.env.FLY_APP_NAME = "project-app-audit";
+    const auditHealthAction = nativeActionContract.actions.find(
+      (row) => row.action === "get_audit_health",
+    );
+    if (!auditHealthAction) {
+      throw new Error("get_audit_health contract missing");
+    }
+    const scores = [18, 31];
+    let fetches = 0;
+    const tool = createMagisterActionTool(api(), auditHealthAction, async () => {
+      const score = scores[Math.min(fetches, scores.length - 1)];
+      fetches += 1;
+      return new Response(
+        JSON.stringify(envelope({ receipt: { plan_id: "plan-1", seo: score } })),
+        { status: 200 },
+      );
+    });
+
+    const before = resultJson(await tool.execute("call-audit-1", { plan_id: "plan-1" }));
+    const after = resultJson(await tool.execute("call-audit-2", { plan_id: "plan-1" }));
+
+    expect(fetches).toBe(2);
+    expect((before.receipt as Record<string, unknown>).seo).toBe(18);
+    expect((after.receipt as Record<string, unknown>).seo).toBe(31);
+    expect((after.receipt as Record<string, unknown>).cache_freshness).toBeUndefined();
   });
 
   it("never caches a non-terminal read result", async () => {
