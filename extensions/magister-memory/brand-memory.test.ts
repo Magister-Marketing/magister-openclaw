@@ -135,7 +135,7 @@ describe("brand memory session-start sync", () => {
     expect(await readFile(stampPath(), "utf8")).toBeTruthy();
   });
 
-  it("adds the machine's missing entries when another agent wrote first", async () => {
+  it("imports into a list another agent wrote first, skipping what it already has", async () => {
     await writeFile(
       memoryPath(),
       `${SEED}\n§\nNever call it Magister Cloud\n§\nNo paid ads before March`,
@@ -148,10 +148,33 @@ describe("brand memory session-start sync", () => {
 
     expect(gateway.calls.map((call) => [call.method, call.path, call.body])).toEqual([
       ["GET", "/api/runtime/brand-memory", undefined],
-      ["POST", "/api/runtime/brand-memory", { action: "add", content: "No paid ads before March" }],
-      ["GET", "/api/runtime/brand-memory", undefined],
+      [
+        "POST",
+        "/api/runtime/brand-memory/import",
+        { entries: ["Never call it Magister Cloud", "No paid ads before March"] },
+      ],
     ]);
     expect(await readMemory()).toBe("Never call it Magister Cloud\n§\nNo paid ads before March");
+  });
+
+  it("never brings back entries removed after an import whose reply was lost", async () => {
+    await writeFile(memoryPath(), "No paid ads before March\n§\nTone: plain", "utf8");
+    const gateway = stubBrandMemoryGateway();
+    // The Gateway commits the import, but the machine sees a failure.
+    gateway.failingAfterCommit.add("/api/runtime/brand-memory/import");
+
+    await expect(syncBrandMemory(dir)).rejects.toThrow("HTTP 500");
+    await expect(stat(stampPath())).rejects.toThrow();
+    expect(gateway.entries).toEqual(["No paid ads before March", "Tone: plain"]);
+
+    // The team removes one in the Library before the next session.
+    gateway.entries.splice(1);
+    gateway.failingAfterCommit.clear();
+    await syncBrandMemory(dir);
+
+    expect(gateway.entries).toEqual(["No paid ads before March"]);
+    expect(await readMemory()).toBe("No paid ads before March");
+    expect(await readFile(stampPath(), "utf8")).toBeTruthy();
   });
 
   it("finishes the migration when the Gateway refuses an entry, keeping it in the stamp", async () => {
@@ -164,10 +187,7 @@ describe("brand memory session-start sync", () => {
 
     await syncBrandMemory(dir);
 
-    expect(gateway.calls.map((call) => call.body)).toContainEqual({
-      action: "add",
-      content: original,
-    });
+    expect(gateway.calls.map((call) => call.body)).toContainEqual({ entries: [original] });
     expect(await readMemory()).toBe("Never call it Magister Cloud");
     expect(JSON.parse(await readFile(stampPath(), "utf8"))).toMatchObject({
       memory_md: original,

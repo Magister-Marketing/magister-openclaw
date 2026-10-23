@@ -127,15 +127,14 @@ function importStampPath(workspaceDir: string): string {
 /**
  * Move this machine's MEMORY.md entries to the Gateway, once per machine.
  * Gateway seed records are dropped: they repeat PROJECT.md, BRAND.md and the
- * plan. A project with no Gateway entries takes them through the import
- * route; one that already has entries (an MCP client or the analytics review
- * wrote first) takes each missing entry as an ordinary add, so the rewrite
- * that follows cannot erase what this machine had learned. A transport
- * failure throws before the stamp is written, so the next session retries.
- * An entry the Gateway refuses (a duplicate in other letter case, a blocked
- * threat, a full list) is dropped exactly as the import route drops it:
- * retrying could never succeed and would keep this machine's copy unsynced.
- * The stamp keeps the original file, so nothing is lost for good.
+ * plan. The Gateway imports once per brand and skips the entries it already
+ * has (an MCP client or the analytics review may have written first), so a
+ * retry after a timeout, or after the team removed every entry, adds nothing
+ * back. A transport failure throws before the stamp is written, so the next
+ * session retries. An entry the Gateway refuses (a duplicate in other letter
+ * case, a blocked threat, a full list) is dropped: retrying could never
+ * succeed and would keep this machine's copy unsynced. The stamp keeps the
+ * original file, so nothing is lost for good.
  */
 async function importLocalEntries(
   original: string,
@@ -144,23 +143,16 @@ async function importLocalEntries(
   const local = parseMemoryEntries(original)
     .map((entry) => entry.trim())
     .filter((entry) => !entry.startsWith(SEED_PREFIX));
-  if (list.entries.length === 0) {
-    return local.length === 0
-      ? list
-      : requireList(
-          await callRuntimeGateway("brand-memory/import", {
-            method: "POST",
-            body: { entries: local },
-            timeoutMs: WRITE_TIMEOUT_MS,
-          }),
-        );
+  if (local.length === 0) {
+    return list;
   }
-  const known = new Set(list.entries.map((entry) => entry.trim()));
-  const missing = local.filter((entry) => !known.has(entry));
-  for (const content of missing) {
-    await postOperation({ action: "add", content });
-  }
-  return missing.length === 0 ? list : await readList();
+  return requireList(
+    await callRuntimeGateway("brand-memory/import", {
+      method: "POST",
+      body: { entries: local },
+      timeoutMs: WRITE_TIMEOUT_MS,
+    }),
+  );
 }
 
 /**

@@ -16,8 +16,14 @@ export type GatewayCall = {
 export function stubBrandMemoryGateway(initial: string[] = []) {
   const entries = [...initial];
   const calls: GatewayCall[] = [];
-  // Paths that answer HTTP 500, to simulate a Gateway failure mid-sync.
+  // Paths that answer HTTP 500, to simulate a Gateway failure mid-sync:
+  // `failing` before the write, `failingAfterCommit` after it (a timeout the
+  // machine sees once the server has already committed).
   const failing = new Set<string>();
+  const failingAfterCommit = new Set<string>();
+  // brand_memory_imports: the upload runs once per brand.
+  let importedOnce = false;
+  const norm = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
   const list = () => {
     const content = entries.join(ENTRY_DELIMITER);
     return {
@@ -67,13 +73,17 @@ export function stubBrandMemoryGateway(initial: string[] = []) {
     }
     if (url.pathname === "/api/runtime/brand-memory/import" && method === "POST") {
       let imported = 0;
-      if (entries.length === 0) {
+      if (!importedOnce) {
+        importedOnce = true;
         for (const text of (body?.entries as string[]) ?? []) {
-          if (!text.startsWith("[magister_seed:")) {
+          if (!text.startsWith("[magister_seed:") && !entries.some((e) => norm(e) === norm(text))) {
             entries.push(text);
             imported += 1;
           }
         }
+      }
+      if (failingAfterCommit.has(url.pathname)) {
+        return new Response("{}", { status: 500 });
       }
       return reply({ ok: true, imported, ...list() });
     }
@@ -102,7 +112,7 @@ export function stubBrandMemoryGateway(initial: string[] = []) {
   });
 
   vi.stubGlobal("fetch", fetchMock);
-  return { entries, calls, failing, fetchMock };
+  return { entries, calls, failing, failingAfterCommit, fetchMock };
 }
 
 /** Point the plugin's runtime channel at the machine broker, as on a machine. */
