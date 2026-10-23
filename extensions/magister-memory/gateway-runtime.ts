@@ -36,6 +36,9 @@ export async function callRuntimeGateway(
       Authorization: `Bearer ${token}`,
     },
     ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+    // No runtime route redirects. Following one would resend the token to a
+    // same-origin target, and a 307/308 would resend the body, unchecked.
+    redirect: "error",
     signal: AbortSignal.timeout(options.timeoutMs),
   });
   if (!response.ok) {

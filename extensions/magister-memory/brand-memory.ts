@@ -64,7 +64,12 @@ function postOperation(operation: BrandMemoryOperation): Promise<Record<string, 
   });
 }
 
-/** Rewrite the machine's MEMORY.md when it differs from the Gateway's list. */
+/**
+ * Rewrite the machine's MEMORY.md when it differs from the Gateway's list.
+ * `atomicWrite` creates the file under the process umask (0027 on machines,
+ * so 0640): the sandboxed shell reads workspace files through the host's
+ * group, and a 0600 copy would hide MEMORY.md from it.
+ */
 async function writeMemoryCopy(workspaceDir: string, content: string): Promise<void> {
   const path = join(workspaceDir, "MEMORY.md");
   await withContextLock(workspaceDir, async () => {
@@ -125,14 +130,18 @@ function importStampPath(workspaceDir: string): string {
  * plan. A project with no Gateway entries takes them through the import
  * route; one that already has entries (an MCP client or the analytics review
  * wrote first) takes each missing entry as an ordinary add, so the rewrite
- * that follows cannot erase what this machine had learned. Any failure throws
- * before the stamp is written, so the next session retries.
+ * that follows cannot erase what this machine had learned. A transport
+ * failure throws before the stamp is written, so the next session retries.
+ * An entry the Gateway refuses (a duplicate in other letter case, a blocked
+ * threat, a full list) is dropped exactly as the import route drops it:
+ * retrying could never succeed and would keep this machine's copy unsynced.
+ * The stamp keeps the original file, so nothing is lost for good.
  */
 async function importLocalEntries(
-  workspaceDir: string,
+  original: string,
   list: BrandMemoryList,
 ): Promise<BrandMemoryList> {
-  const local = parseMemoryEntries((await readUtf8IfExists(join(workspaceDir, "MEMORY.md"))) ?? "")
+  const local = parseMemoryEntries(original)
     .map((entry) => entry.trim())
     .filter((entry) => !entry.startsWith(SEED_PREFIX));
   if (list.entries.length === 0) {
@@ -149,7 +158,6 @@ async function importLocalEntries(
   const known = new Set(list.entries.map((entry) => entry.trim()));
   const missing = local.filter((entry) => !known.has(entry));
   for (const content of missing) {
-    // A refusal (full, duplicate, blocked) drops that entry, as the import does.
     await postOperation({ action: "add", content });
   }
   return missing.length === 0 ? list : await readList();
@@ -164,8 +172,12 @@ export async function syncBrandMemory(workspaceDir: string): Promise<void> {
   let list = await readList();
   const stampPath = importStampPath(workspaceDir);
   if ((await readUtf8IfExists(stampPath)) === undefined) {
-    list = await importLocalEntries(workspaceDir, list);
-    await atomicWriteFile(stampPath, `${new Date().toISOString()}\n`);
+    const original = (await readUtf8IfExists(join(workspaceDir, "MEMORY.md"))) ?? "";
+    list = await importLocalEntries(original, list);
+    await atomicWriteFile(
+      stampPath,
+      `${JSON.stringify({ imported_at: new Date().toISOString(), memory_md: original })}\n`,
+    );
   }
   await writeMemoryCopy(workspaceDir, list.content);
 }

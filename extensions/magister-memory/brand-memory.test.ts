@@ -78,11 +78,8 @@ describe("brand memory session-start sync", () => {
   });
 
   it("imports the machine's own entries once, skipping Gateway seed records", async () => {
-    await writeFile(
-      memoryPath(),
-      `${SEED}\n§\n  Never call it Magister Cloud  \n§\nNo paid ads before March`,
-      "utf8",
-    );
+    const original = `${SEED}\n§\n  Never call it Magister Cloud  \n§\nNo paid ads before March`;
+    await writeFile(memoryPath(), original, "utf8");
     const gateway = stubBrandMemoryGateway();
 
     await syncBrandMemory(dir);
@@ -96,7 +93,10 @@ describe("brand memory session-start sync", () => {
       ],
     ]);
     expect(await readMemory()).toBe("Never call it Magister Cloud\n§\nNo paid ads before March");
-    expect(await readFile(stampPath(), "utf8")).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(JSON.parse(await readFile(stampPath(), "utf8"))).toEqual({
+      imported_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+      memory_md: original,
+    });
 
     // Once per machine: after the user removes everything in the Library, the
     // next session copies the empty list instead of importing again.
@@ -152,6 +152,26 @@ describe("brand memory session-start sync", () => {
       ["GET", "/api/runtime/brand-memory", undefined],
     ]);
     expect(await readMemory()).toBe("Never call it Magister Cloud\n§\nNo paid ads before March");
+  });
+
+  it("finishes the migration when the Gateway refuses an entry, keeping it in the stamp", async () => {
+    // Retrying a refusal (here a duplicate in other letter case; equally a
+    // blocked threat or a full list) could never succeed and would leave the
+    // copy unsynced on every session.
+    const original = "never call it magister cloud";
+    await writeFile(memoryPath(), original, "utf8");
+    const gateway = stubBrandMemoryGateway(["Never call it Magister Cloud"]);
+
+    await syncBrandMemory(dir);
+
+    expect(gateway.calls.map((call) => call.body)).toContainEqual({
+      action: "add",
+      content: original,
+    });
+    expect(await readMemory()).toBe("Never call it Magister Cloud");
+    expect(JSON.parse(await readFile(stampPath(), "utf8"))).toMatchObject({
+      memory_md: original,
+    });
   });
 });
 

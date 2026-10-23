@@ -109,7 +109,8 @@ describe("memory tool dispatch", () => {
     ]);
     expect(gateway.fetchMock).toHaveBeenCalledWith(
       "http://127.0.0.1:18796/api/runtime/brand-memory",
-      expect.anything(),
+      // A redirect is an error, never followed with the token and body.
+      expect.objectContaining({ method: "POST", redirect: "error" }),
     );
     const content = "Never call it Magister Cloud\n§\nNo paid ads before March";
     expect(result).toEqual({
