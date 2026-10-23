@@ -61,7 +61,7 @@ describe("MagisterMemoryContextEngine", () => {
     expect(res.systemPromptAddition).toContain("provenance=trusted_project_state");
   });
 
-  it("freezes snapshot per session — does not re-read file after first assemble", async () => {
+  it("holds one snapshot for the model calls of a run", async () => {
     await writeFile(memoryPath, "Original");
     const engine = new MagisterMemoryContextEngine({
       memoryPath,
@@ -74,14 +74,14 @@ describe("MagisterMemoryContextEngine", () => {
     const first = await engine.assemble({ sessionId: "s1", messages: [] });
     expect(first.systemPromptAddition).toContain("Original");
 
-    // File changes mid-session — engine MUST NOT pick this up for the same sessionId.
+    // The file changes during the run; this run's later calls keep its snapshot.
     await writeFile(memoryPath, "Updated");
     const second = await engine.assemble({ sessionId: "s1", messages: [] });
     expect(second.systemPromptAddition).toContain("Original");
     expect(second.systemPromptAddition).not.toContain("Updated");
   });
 
-  it("re-reads an empty snapshot on later assembles and freezes once content appears", async () => {
+  it("re-reads an empty snapshot within a run and holds it once content appears", async () => {
     const engine = new MagisterMemoryContextEngine({
       memoryPath,
       userPath,
@@ -101,11 +101,31 @@ describe("MagisterMemoryContextEngine", () => {
     const second = await engine.assemble({ sessionId: "s1", messages: [] });
     expect(second.systemPromptAddition).toContain("Seeded memory entry");
 
-    // And once non-empty, it freezes: later writes do not appear.
+    // And once non-empty, the run holds it: later writes do not appear.
     await writeFile(memoryPath, "Rewritten later");
     const third = await engine.assemble({ sessionId: "s1", messages: [] });
     expect(third.systemPromptAddition).toContain("Seeded memory entry");
     expect(third.systemPromptAddition).not.toContain("Rewritten later");
+  });
+
+  it("reads edited memory on the next turn, which gets a new engine", async () => {
+    // resolveContextEngine builds an engine per run; an edit reaches the next
+    // turn of the same session (the intended behaviour, not a frozen session).
+    const turn = () =>
+      new MagisterMemoryContextEngine({
+        memoryPath,
+        userPath,
+        projectPath,
+        brandPath,
+        inner: new LegacyContextEngine(),
+      }).assemble({ sessionId: "s1", messages: [] });
+    await writeFile(memoryPath, "Original");
+    expect((await turn()).systemPromptAddition).toContain("Original");
+
+    await writeFile(memoryPath, "Updated");
+    const next = await turn();
+    expect(next.systemPromptAddition).toContain("Updated");
+    expect(next.systemPromptAddition).not.toContain("Original");
   });
 
   it("re-reads for a new session", async () => {
