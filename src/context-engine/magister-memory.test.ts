@@ -230,6 +230,49 @@ describe("MagisterMemoryContextEngine", () => {
     expect(res.systemPromptAddition).toContain("Positioning detail.");
   });
 
+  it("keeps the full brand tier for the rest of a session once it was needed", async () => {
+    await writeFile(
+      brandPath,
+      [
+        "<!-- MAGISTER:GENERATED BRAND START -->",
+        "### Generated from the latest marketing audit",
+        "",
+        "## Voice",
+        "",
+        "Tone: precise, warm",
+        "",
+        "## Ideal customer",
+        "",
+        "Positioning detail. ".repeat(100),
+        "<!-- MAGISTER:GENERATED BRAND END -->",
+      ].join("\n"),
+    );
+    // resolveContextEngine builds a new engine for every run, so each turn
+    // here gets its own instance, as on a machine.
+    const turn = (sessionId: string, prompt: string) =>
+      new MagisterMemoryContextEngine({
+        memoryPath,
+        userPath,
+        projectPath,
+        brandPath,
+        inner: new LegacyContextEngine(),
+      }).assemble({ sessionId, messages: [], prompt });
+    const notBrand = "What is the current server uptime?";
+    const first = await turn("s1", notBrand);
+    expect(first.systemPromptAddition).not.toContain("Positioning detail.");
+
+    // A workflow's brand-shaped step steps the session up to the full tier…
+    const brand = await turn("s1", "Draft homepage copy in our brand voice");
+    expect(brand.systemPromptAddition).toContain("Positioning detail.");
+    // …and the next step keeps it byte-identical, so the prompt cache holds.
+    const next = await turn("s1", notBrand);
+    expect(next.systemPromptAddition).toBe(brand.systemPromptAddition);
+
+    // Another session still starts at the core tier.
+    const other = await turn("s2", notBrand);
+    expect(other.systemPromptAddition).toBe(first.systemPromptAddition);
+  });
+
   it("still injects a voice and visual floor when the prompt is not brand work", async () => {
     await writeFile(
       brandPath,

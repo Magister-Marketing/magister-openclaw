@@ -22,6 +22,10 @@ const DEFAULT_USER_PATH = "/data/.openclaw/workspace/USER.md";
 const DEFAULT_PROJECT_PATH = "/data/.openclaw/workspace/PROJECT.md";
 const DEFAULT_BRAND_PATH = "/data/.openclaw/workspace/BRAND.md";
 const MAX_TRACKED_SESSIONS = 200;
+// Sessions that have needed the full brand tier, keyed by brand file and
+// session id. Module state on purpose: resolveContextEngine builds a new engine
+// for every run, so anything an instance remembers is gone by the next turn.
+const brandTaskSessions = new Map<string, true>();
 // Two budget tiers. Brand-shaped work gets the whole profile; every other turn
 // still gets a floor, because the agent cannot ask for context it was never
 // told exists, and a one-turn keyword guess is wrong far more often than it is
@@ -34,11 +38,13 @@ const MAX_BRAND_CORE_CHARS = 1_200;
 const MAX_USER_BRAND_CORE_CHARS = 500;
 const BRAND_GENERATED_START = "<!-- MAGISTER:GENERATED BRAND START -->";
 const BRAND_GENERATED_END = "<!-- MAGISTER:GENERATED BRAND END -->";
-// Deliberately broad: the cost of a false positive is a few hundred cached-miss
-// characters, the cost of a false negative is a deliverable in the wrong voice
-// and the wrong colors. Verbs and artifact nouns are both listed because users
-// name the artifact ("a blog post") far more often than the discipline
-// ("content"). Kept as one alternation so the gate stays a single pass.
+// Deliberately broad: the cost of a false positive is the full block for the
+// rest of the session (the tier never steps down within one, see
+// brandTaskForSession), the cost of a false negative is a deliverable in the
+// wrong voice and the wrong colors. Verbs and artifact nouns are both listed
+// because users name the artifact ("a blog post") far more often than the
+// discipline ("content"). Kept as one alternation so the gate stays a single
+// pass.
 const BRAND_TASK_PATTERN = new RegExp(
   "\\b(" +
     [
@@ -143,7 +149,9 @@ export class MagisterMemoryContextEngine implements ContextEngine {
       }
     }
 
-    const brandContext = await this.renderBrandContext(params.prompt);
+    const brandContext = await this.renderBrandContext(
+      this.brandTaskForSession(params.sessionId, params.prompt),
+    );
     if (!snapshot && !brandContext) {
       return innerResult;
     }
@@ -231,7 +239,26 @@ export class MagisterMemoryContextEngine implements ContextEngine {
     return blocks.join("\n\n");
   }
 
-  private async renderBrandContext(prompt: string | undefined): Promise<string> {
+  // The brand block sits in the dynamic system block, ahead of the whole
+  // conversation, so a change to it moves everything after it. Picking the tier
+  // from each turn's prompt flipped it between the steps of one workflow run
+  // (one step brand-shaped, the next not), and on OpenAI every such shrink
+  // re-wrote the history after it: production, 14 days to 2026-10-22, 74 of 74
+  // shrinks inside a workflow run were full cache misses. A session that has
+  // needed the full tier keeps it; stepping up from the core tier still works.
+  private brandTaskForSession(sessionId: string, prompt: string | undefined): boolean {
+    const key = `${this.brandPath}\u0000${sessionId}`;
+    const brandTask = brandTaskSessions.has(key) || BRAND_TASK_PATTERN.test(prompt ?? "");
+    if (brandTask) {
+      // Map preserves insertion order; re-inserting on hit gives LRU eviction.
+      brandTaskSessions.delete(key);
+      brandTaskSessions.set(key, true);
+      pruneMapToMaxSize(brandTaskSessions, MAX_TRACKED_SESSIONS);
+    }
+    return brandTask;
+  }
+
+  private async renderBrandContext(brandTask: boolean): Promise<string> {
     const raw = await readTextOrEmpty(this.brandPath);
     if (!raw) {
       return "";
@@ -252,7 +279,6 @@ export class MagisterMemoryContextEngine implements ContextEngine {
       )
       .trim();
 
-    const brandTask = Boolean(prompt) && BRAND_TASK_PATTERN.test(prompt as string);
     const userBudget = brandTask ? MAX_USER_BRAND_CHARS : MAX_USER_BRAND_CORE_CHARS;
     const totalBudget = brandTask ? MAX_BRAND_CONTEXT_CHARS : MAX_BRAND_CORE_CHARS;
 
