@@ -1068,7 +1068,7 @@ describe("the CI guard at push time", () => {
     expect(remoteTip(origin, "magister/readme")).toBeNull();
   });
 
-  it("refuses when a shallow history holds no common point with the remote", async () => {
+  it("refuses a shallow checkout's workflow from a base the remote no longer holds", async () => {
     const { origin, repoDir } = checkoutOf({
       ref: "feature",
       depth: 1,
@@ -1080,7 +1080,32 @@ describe("the CI guard at push time", () => {
 
     await expect(pushRepoBranch(push({ commit_sha: receipt.commit_sha }))).rejects.toMatchObject({
       statusCode: 409,
-      message: expect.stringContaining("Could not establish"),
+      message: expect.stringContaining(".github/workflows/deploy.yml"),
+    });
+    expect(remoteTip(origin, "magister/readme")).toBeNull();
+  });
+
+  it("refuses a new branch cut from an old commit whose workflow the default branch has since changed", async () => {
+    // The base holds workflow v1; main then moves to v2. The prepared commit
+    // touches only the README, and its merge base with main is the base
+    // itself, so only a tree-to-tree comparison sees the branch would run v1.
+    const { origin, seed, repoDir } = checkoutOf({
+      ref: "feature",
+      depth: null,
+      seedFiles: { ".github/workflows/deploy.yml": "on: push # v1\n" },
+    });
+    git(seed, "checkout", "--quiet", "main");
+    git(seed, "merge", "--quiet", "--ff-only", "feature");
+    fs.writeFileSync(path.join(seed, ".github/workflows/deploy.yml"), "on: push # v2\n");
+    git(seed, "commit", "--quiet", "-am", "workflow v2");
+    git(seed, "push", "--quiet", `file://${origin}`, "main");
+    git(origin, "branch", "-D", "feature");
+    write(repoDir, "README.md", "edited\n");
+    const receipt = await prepareRepoCommit(prepare());
+
+    await expect(pushRepoBranch(push({ commit_sha: receipt.commit_sha }))).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining(".github/workflows/deploy.yml"),
     });
     expect(remoteTip(origin, "magister/readme")).toBeNull();
   });

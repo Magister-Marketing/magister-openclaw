@@ -1940,12 +1940,13 @@ export function reviewUrls(
 }
 
 /**
- * The repository paths pushing `request.commit_sha` to `request.branch` sends,
- * relative to what the remote holds: the branch's own head when the branch
- * exists, otherwise the point where the commit leaves the remote's default
- * branch. Null when that point cannot be established (the fetch fails, the ref
- * moved, or the shallow history holds no common ancestor), which the caller
- * refuses rather than guessing.
+ * The repository paths where the tree pushed to `request.branch` differs from
+ * what the remote holds now: the branch's own head when the branch exists,
+ * otherwise the remote default branch's head. Compared tree to tree, not from
+ * a merge base, because CI runs the branch's own files: a branch cut from an
+ * old commit carries that commit's workflows even when it changes none of
+ * them. Null when the remote head cannot be read (the fetch fails or the ref
+ * moved), which the caller refuses rather than guessing.
  */
 async function pushedPaths(
   repoDir: string,
@@ -1973,13 +1974,8 @@ async function pushedPaths(
   if (!SHA_RE.test(head) || (remote.tip !== null && head !== remote.tip)) {
     return null;
   }
-  const merged = await runGit(["merge-base", head, request.commit_sha], local);
-  const mergeBase = merged.stdout.trim();
-  if (merged.code !== 0 || !SHA_RE.test(mergeBase)) {
-    return null;
-  }
   const diff = await runGit(
-    ["diff", "--name-only", "--no-renames", "--no-ext-diff", "-z", mergeBase, request.commit_sha],
+    ["diff", "--name-only", "--no-renames", "--no-ext-diff", "-z", head, request.commit_sha],
     local,
   );
   if (diff.code !== 0) {
