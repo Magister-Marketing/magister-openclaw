@@ -81,16 +81,17 @@ type Options = {
 
 /**
  * Wraps another context engine (default: MagisterIntegrationsContextEngine) and
- * folds MEMORY.md + USER.md content into the system prompt as a FROZEN SNAPSHOT
- * per session.
+ * folds MEMORY.md + USER.md + PROJECT.md content into the system prompt as a
+ * snapshot read once per run.
  *
- * Why frozen: Anthropic prompt caching requires byte-identical prefixes across
- * turns. Re-reading the files every turn (as MagisterIntegrationsContextEngine
- * does for INTEGRATIONS.md, which is fine because integrations change rarely)
- * would invalidate the cache every time the agent's own memory tool wrote a
- * new entry mid-session. So we cache by sessionId on the first assemble() call
- * and never re-read for that session — mid-session writes are durable to disk
- * but only appear in the NEXT session's system prompt.
+ * resolveContextEngine builds a new engine for every run, so the snapshot is
+ * held for the model calls of one turn and read again on the next turn. That
+ * is the intended behaviour (decided 2026-10-22): files that did not change
+ * render byte-identical, so the prompt cache holds, and an edit (the agent's
+ * memory tool, another session, the Gateway rewriting PROJECT.md) reaches the
+ * next turn at the cost of one cache miss after the block. Freezing it for the
+ * whole session would keep a long chat on stale memory. The snapshot lands in
+ * the dynamic system block, below the cache boundary.
  */
 export class MagisterMemoryContextEngine implements ContextEngine {
   readonly info: ContextEngineInfo = {
@@ -138,11 +139,10 @@ export class MagisterMemoryContextEngine implements ContextEngine {
 
     let snapshot = this.snapshotBySession.get(params.sessionId);
     if (!snapshot) {
-      // Re-render while empty: a session that starts before the provision-time
-      // seed files exist must pick them up on a later turn instead of staying
-      // blind for its whole life. Freezing begins once content appears — the
-      // addition lands below the cache boundary, so the one-time
-      // empty→content flip does not invalidate the stable prefix.
+      // Re-render while empty, so seed files that appear during a run (the
+      // provision-time race) are picked up by its next model call; once there
+      // is content it is held until the run ends. The addition lands below
+      // the cache boundary, so neither change invalidates the stable prefix.
       snapshot = await this.renderSnapshot();
       if (snapshot) {
         this.rememberSnapshot(params.sessionId, snapshot);
@@ -423,9 +423,9 @@ export function createMagisterMemoryContextEngine(options?: {
 
 export function registerMagisterMemoryContextEngine(): void {
   // Compose ON TOP of magister-plan so the active 'magister-memory' slot folds
-  // MEMORY.md + USER.md (frozen per-session snapshot), the live marketing plan,
-  // WORKFLOWS.md, and INTEGRATIONS.md. The chain is:
-  //   MagisterMemoryContextEngine (frozen)
+  // MEMORY.md + USER.md + PROJECT.md (a snapshot read once per run), the live
+  // marketing plan, WORKFLOWS.md, and INTEGRATIONS.md. The chain is:
+  //   MagisterMemoryContextEngine (once per run)
   //     -> MagisterPlanContextEngine (per-turn gateway summary + PLAN.md fallback)
   //       -> MagisterWorkflowsContextEngine (per-turn)
   //         -> MagisterIntegrationsContextEngine (per-turn)
