@@ -1482,7 +1482,8 @@
         "properties": {
           "compare": {
             "default": "previous",
-            "enum": ["previous", "none"],
+            "description": "previous: the days just before the range; year: the same days a year before; none.",
+            "enum": ["previous", "year", "none"],
             "type": "string"
           },
           "range_from": {
@@ -1585,6 +1586,11 @@
         },
         "additionalProperties": false,
         "properties": {
+          "compare": {
+            "description": "year compares with the same days a year before; default: the query's own compare.",
+            "enum": ["previous", "year", "none"],
+            "type": "string"
+          },
           "query": {
             "$ref": "#/$defs/TileQuery"
           },
@@ -1704,7 +1710,7 @@
                 "items": {
                   "$ref": "#/$defs/TileQuery"
                 },
-                "maxItems": 3,
+                "maxItems": 6,
                 "minItems": 1,
                 "type": "array"
               },
@@ -1864,7 +1870,7 @@
                 "items": {
                   "$ref": "#/$defs/TileQuery"
                 },
-                "maxItems": 3,
+                "maxItems": 6,
                 "minItems": 1,
                 "type": "array"
               },
@@ -2069,7 +2075,7 @@
                 "items": {
                   "$ref": "#/$defs/TileQuery"
                 },
-                "maxItems": 3,
+                "maxItems": 6,
                 "minItems": 1,
                 "type": "array"
               },
@@ -5707,6 +5713,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "1a7dd4a9d3ee0151e5ab35944e783c10a48e2104e0ee61d672e0755f5480fecc",
+  "registry_revision": "083e64eaab1a933d7a7bc21c3c911fc6beb8b220744c5b04124bbbd949eb2e77",
   "schema_version": 1
 }
