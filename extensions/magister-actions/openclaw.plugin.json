@@ -59,6 +59,7 @@
       "magister_list_social_accounts",
       "magister_list_social_posts",
       "magister_get_social_analytics",
+      "magister_get_instagram_activity",
       "magister_list_ad_campaigns",
       "magister_get_ad_analytics",
       "magister_get_action_approval",
