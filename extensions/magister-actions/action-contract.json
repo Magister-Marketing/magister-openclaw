@@ -841,6 +841,17 @@
             "maxLength": 80,
             "type": "string"
           },
+          "after": {
+            "description": "Task ids (from magister_get_marketing_plan) this task depends on: the whole list, which replaces what it depended on; [] clears it. Each must be on the same plan and not already depend on this task.",
+            "items": {
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "maxItems": 5,
+            "type": "array"
+          },
           "channel": {
             "maxLength": 80,
             "type": "string"
@@ -921,7 +932,7 @@
       "action": "update_plan_item",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
-      "description": "Edit one marketing-plan task's fields (title, prompt, schedule, priority, connections, measure). Only the fields sent change.",
+      "description": "Edit one marketing-plan task's fields (title, prompt, schedule, priority, connections, measure, the tasks it depends on). Only the fields sent change.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "safe_retry",
       "input_schema": {
@@ -978,6 +989,17 @@
         },
         "additionalProperties": false,
         "properties": {
+          "after": {
+            "description": "Task ids (from magister_get_marketing_plan) this task depends on: the whole list, which replaces what it depended on; [] clears it. Each must be on the same plan and not already depend on this task.",
+            "items": {
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "maxItems": 5,
+            "type": "array"
+          },
           "description": {
             "maxLength": 2000,
             "type": "string"
@@ -5687,6 +5709,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "c7eecbf97a47bb5e88b790f0e03918bb9de7f340a023e27c997f53b8b8b4c5f8",
+  "registry_revision": "f3d10fa30105b42b95dc3004593c6ac3109f3424218dc63b9eef6dfd365adba5",
   "schema_version": 1
 }
