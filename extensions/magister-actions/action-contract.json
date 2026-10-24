@@ -1475,10 +1475,35 @@
       "tool_name": "magister_fetch_integration_data"
     },
     {
+      "action": "list_analytics_metrics",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "List every metric Analytics can chart, by source: meaning, format, grain, what fills it and whether this brand has data for it today.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "source": {
+            "description": "One catalog source's metrics (ga4, gsc, paid_social, website, keywords, ...); omit for every source.",
+            "maxLength": 40,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "schema_delivery": "eager",
+      "side_effect": "none",
+      "spend_limited": false,
+      "tool_name": "magister_list_analytics_metrics"
+    },
+    {
       "action": "list_analytics_views",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
-      "description": "List the project's Analytics views (Overview, Impact, Spend & return, one per source, custom) with their slugs, and the legacy tab aliases.",
+      "description": "List the brand's Analytics pages (built-in, connections, its own) with their tabs and chart ids, and the stored views with their slugs and legacy tab aliases.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "safe_retry",
       "input_schema": {
@@ -1496,7 +1521,7 @@
       "action": "get_analytics_view",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
-      "description": "Read one Analytics view by slug or legacy tab id with every tile evaluated over a date range (default the last 28 complete days): value, previous window, change, daily series, breakdown rows and a missing state that is never zero.",
+      "description": "Read one Analytics page by page id, slug or legacy tab id with every chart evaluated over a date range (default the last 28 complete days): value, previous window, change, daily series, breakdown rows, a missing state that is never zero, and each chart's id, meaning, format, source and needs.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "safe_retry",
       "input_schema": {
@@ -1533,6 +1558,46 @@
       "tool_name": "magister_get_analytics_view"
     },
     {
+      "action": "describe_analytics_chart",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "Describe one Analytics chart by id: what it measures, where its number comes from, what it needs, the pages that show it, and its current value for this brand.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "chart": {
+            "description": "A registry chart id, as list_analytics_views and get_analytics_view name them (seo.clicks_impressions).",
+            "maxLength": 120,
+            "minLength": 3,
+            "type": "string"
+          },
+          "compare": {
+            "default": "previous",
+            "description": "previous: the days just before the range; year: the same days a year before; none.",
+            "enum": ["previous", "year", "none"],
+            "type": "string"
+          },
+          "range_from": {
+            "format": "date",
+            "type": "string"
+          },
+          "range_to": {
+            "format": "date",
+            "type": "string"
+          }
+        },
+        "required": ["chart"],
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "schema_delivery": "deferred",
+      "side_effect": "none",
+      "spend_limited": false,
+      "tool_name": "magister_describe_analytics_chart"
+    },
+    {
       "action": "query_metric",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
@@ -1567,7 +1632,17 @@
                 "type": "string"
               },
               "dimension": {
-                "enum": ["channel", "page", "platform", "campaign", "stage"],
+                "enum": [
+                  "channel",
+                  "page",
+                  "platform",
+                  "campaign",
+                  "stage",
+                  "engine",
+                  "brand",
+                  "keyword",
+                  "post"
+                ],
                 "type": "string"
               },
               "external_id": {
@@ -1638,7 +1713,7 @@
       "action": "add_analytics_tile",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
-      "description": "Add a tile to an Analytics view: a number, trend, breakdown or compare over metric-catalog queries, with a reason a person would understand. Tiles you decide on go to impact or spend-return; suggest overview tiles first.",
+      "description": "Add a tile to an Analytics view: a registry chart by id, or a number, trend, breakdown or compare over metric-catalog queries, with a reason a person would understand. Tiles you decide on go to impact or spend-return; suggest overview tiles first.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "idempotency_key",
       "input_schema": {
@@ -1669,7 +1744,17 @@
                 "type": "string"
               },
               "dimension": {
-                "enum": ["channel", "page", "platform", "campaign", "stage"],
+                "enum": [
+                  "channel",
+                  "page",
+                  "platform",
+                  "campaign",
+                  "stage",
+                  "engine",
+                  "brand",
+                  "keyword",
+                  "post"
+                ],
                 "type": "string"
               },
               "external_id": {
@@ -1719,6 +1804,13 @@
                 "enum": ["line", "bars", "table"],
                 "type": "string"
               },
+              "filter": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "What narrows a list tile's rows, as its registry chart has it ({\"channel\": \"google_search\"}).",
+                "type": "object"
+              },
               "formula": {
                 "maxLength": 200,
                 "type": "string"
@@ -1728,25 +1820,40 @@
                 "enum": ["day", "week", "month"],
                 "type": "string"
               },
+              "limit": {
+                "description": "At most this many of a list tile's rows.",
+                "maximum": 200,
+                "minimum": 1,
+                "type": "integer"
+              },
               "queries": {
                 "items": {
                   "$ref": "#/$defs/TileQuery"
                 },
                 "maxItems": 6,
-                "minItems": 1,
                 "type": "array"
+              },
+              "read_model": {
+                "description": "A list tile's rows (measures, social_posts, audit_findings, ...): its registry chart's read model.",
+                "maxLength": 60,
+                "type": "string"
               },
               "unit": {
                 "enum": ["count", "currency", "percent", "ratio", "position"],
                 "type": "string"
               }
             },
-            "required": ["queries"],
             "type": "object"
           }
         },
         "additionalProperties": false,
         "properties": {
+          "chart": {
+            "description": "A registry chart id (list_analytics_views, describe_analytics_chart) instead of kind and spec: the tile is that chart.",
+            "maxLength": 120,
+            "minLength": 3,
+            "type": "string"
+          },
           "idempotency_key": {
             "description": "Use one fresh key for each new logical operation. Reuse that key only when retrying the exact same arguments; a later user request, even with identical content, needs a new key.",
             "maxLength": 256,
@@ -1755,7 +1862,7 @@
             "type": "string"
           },
           "kind": {
-            "enum": ["number", "trend", "breakdown", "compare"],
+            "enum": ["number", "trend", "breakdown", "compare", "list"],
             "type": "string"
           },
           "reason": {
@@ -1785,7 +1892,7 @@
             "type": "string"
           }
         },
-        "required": ["idempotency_key", "view", "kind", "spec"],
+        "required": ["idempotency_key", "view"],
         "type": "object"
       },
       "retry_policy": "backoff",
@@ -1798,7 +1905,7 @@
       "action": "update_analytics_tile",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
-      "description": "Change a tile's title, section, position, spec or size; only the fields sent change.",
+      "description": "Change a tile's title, section, position, spec or size; only the fields sent change. Changing what a built-in tile measures makes it the brand's own (forked).",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "safe_retry",
       "input_schema": {
@@ -1829,7 +1936,17 @@
                 "type": "string"
               },
               "dimension": {
-                "enum": ["channel", "page", "platform", "campaign", "stage"],
+                "enum": [
+                  "channel",
+                  "page",
+                  "platform",
+                  "campaign",
+                  "stage",
+                  "engine",
+                  "brand",
+                  "keyword",
+                  "post"
+                ],
                 "type": "string"
               },
               "external_id": {
@@ -1879,6 +1996,13 @@
                 "enum": ["line", "bars", "table"],
                 "type": "string"
               },
+              "filter": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "What narrows a list tile's rows, as its registry chart has it ({\"channel\": \"google_search\"}).",
+                "type": "object"
+              },
               "formula": {
                 "maxLength": 200,
                 "type": "string"
@@ -1888,20 +2012,29 @@
                 "enum": ["day", "week", "month"],
                 "type": "string"
               },
+              "limit": {
+                "description": "At most this many of a list tile's rows.",
+                "maximum": 200,
+                "minimum": 1,
+                "type": "integer"
+              },
               "queries": {
                 "items": {
                   "$ref": "#/$defs/TileQuery"
                 },
                 "maxItems": 6,
-                "minItems": 1,
                 "type": "array"
+              },
+              "read_model": {
+                "description": "A list tile's rows (measures, social_posts, audit_findings, ...): its registry chart's read model.",
+                "maxLength": 60,
+                "type": "string"
               },
               "unit": {
                 "enum": ["count", "currency", "percent", "ratio", "position"],
                 "type": "string"
               }
             },
-            "required": ["queries"],
             "type": "object"
           }
         },
@@ -1940,6 +2073,56 @@
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_update_analytics_tile"
+    },
+    {
+      "action": "reset_analytics_tile",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "Put one built-in tile back to Magister's version, clearing the brand's edits and fork.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "tile_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": ["tile_id"],
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "schema_delivery": "eager",
+      "side_effect": "internal_write",
+      "spend_limited": false,
+      "tool_name": "magister_reset_analytics_tile"
+    },
+    {
+      "action": "restore_analytics_tile",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "Bring back a tile removed from its view in the last 30 days.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "tile_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": ["tile_id"],
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "schema_delivery": "eager",
+      "side_effect": "internal_write",
+      "spend_limited": false,
+      "tool_name": "magister_restore_analytics_tile"
     },
     {
       "action": "remove_analytics_tile",
@@ -1983,8 +2166,14 @@
           "NewTile": {
             "additionalProperties": false,
             "properties": {
+              "chart": {
+                "description": "A registry chart id (list_analytics_views, describe_analytics_chart) instead of kind and spec: the tile is that chart.",
+                "maxLength": 120,
+                "minLength": 3,
+                "type": "string"
+              },
               "kind": {
-                "enum": ["number", "trend", "breakdown", "compare"],
+                "enum": ["number", "trend", "breakdown", "compare", "list"],
                 "type": "string"
               },
               "section": {
@@ -2005,7 +2194,6 @@
                 "type": "string"
               }
             },
-            "required": ["kind", "spec"],
             "type": "object"
           },
           "TileMeasureRef": {
@@ -2034,7 +2222,17 @@
                 "type": "string"
               },
               "dimension": {
-                "enum": ["channel", "page", "platform", "campaign", "stage"],
+                "enum": [
+                  "channel",
+                  "page",
+                  "platform",
+                  "campaign",
+                  "stage",
+                  "engine",
+                  "brand",
+                  "keyword",
+                  "post"
+                ],
                 "type": "string"
               },
               "external_id": {
@@ -2084,6 +2282,13 @@
                 "enum": ["line", "bars", "table"],
                 "type": "string"
               },
+              "filter": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "What narrows a list tile's rows, as its registry chart has it ({\"channel\": \"google_search\"}).",
+                "type": "object"
+              },
               "formula": {
                 "maxLength": 200,
                 "type": "string"
@@ -2093,20 +2298,29 @@
                 "enum": ["day", "week", "month"],
                 "type": "string"
               },
+              "limit": {
+                "description": "At most this many of a list tile's rows.",
+                "maximum": 200,
+                "minimum": 1,
+                "type": "integer"
+              },
               "queries": {
                 "items": {
                   "$ref": "#/$defs/TileQuery"
                 },
                 "maxItems": 6,
-                "minItems": 1,
                 "type": "array"
+              },
+              "read_model": {
+                "description": "A list tile's rows (measures, social_posts, audit_findings, ...): its registry chart's read model.",
+                "maxLength": 60,
+                "type": "string"
               },
               "unit": {
                 "enum": ["count", "currency", "percent", "ratio", "position"],
                 "type": "string"
               }
             },
-            "required": ["queries"],
             "type": "object"
           }
         },
@@ -2140,6 +2354,83 @@
       "side_effect": "internal_write",
       "spend_limited": false,
       "tool_name": "magister_create_analytics_view"
+    },
+    {
+      "action": "update_analytics_view",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "Rename, hide or show, or move an Analytics view, or order its tiles per section (layout).",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "hidden": {
+            "type": "boolean"
+          },
+          "layout": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "description": "The tiles' order per section: {section heading: [tile id or template_key, ...]}; an empty list returns that section to Magister's order.",
+            "type": "object"
+          },
+          "position": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "view": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": ["view"],
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "schema_delivery": "deferred",
+      "side_effect": "internal_write",
+      "spend_limited": false,
+      "tool_name": "magister_update_analytics_view"
+    },
+    {
+      "action": "reset_analytics_view",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "Reset a built-in Analytics view to Magister's version when the user asks: every edit cleared and the tiles added to it deleted; tiles a person added need confirm_user_tiles.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm_user_tiles": {
+            "default": false,
+            "description": "Required when the page has tiles a person added, which a reset deletes; name them to the user first.",
+            "type": "boolean"
+          },
+          "view": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": ["view"],
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "schema_delivery": "deferred",
+      "side_effect": "internal_write",
+      "spend_limited": false,
+      "tool_name": "magister_reset_analytics_view"
     },
     {
       "action": "delete_analytics_view",
@@ -5709,6 +6000,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "f3d10fa30105b42b95dc3004593c6ac3109f3424218dc63b9eef6dfd365adba5",
+  "registry_revision": "aa16453d8fe16307c49c621e295b4ba83f6be1ce2352419bc6d4f03a572bd2b2",
   "schema_version": 1
 }
