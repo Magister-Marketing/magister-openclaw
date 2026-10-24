@@ -1713,7 +1713,7 @@
       "action": "add_analytics_tile",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
-      "description": "Add a tile to an Analytics view: a registry chart by id, or a number, trend, breakdown or compare over metric-catalog queries, with a reason a person would understand. Tiles you decide on go to impact or spend-return; suggest overview tiles first.",
+      "description": "Add a tile to an Analytics view: a registry chart by id, or a number, trend, breakdown or compare over metric-catalog queries, with a reason a person would understand. Tiles you decide on go to a connection's page; suggest overview tiles first.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "idempotency_key",
       "input_schema": {
@@ -6000,6 +6000,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "aa16453d8fe16307c49c621e295b4ba83f6be1ce2352419bc6d4f03a572bd2b2",
+  "registry_revision": "fe8478a110139fac5e2cea1e719250bf4b1c5011333beea5068d3b737580559b",
   "schema_version": 1
 }
