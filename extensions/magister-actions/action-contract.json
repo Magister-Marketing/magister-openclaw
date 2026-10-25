@@ -1503,7 +1503,7 @@
       "action": "list_analytics_views",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
-      "description": "List the brand's Analytics pages (built-in, connections, its own) with their tabs and chart ids, and the stored views with their slugs and legacy tab aliases.",
+      "description": "List the brand's Analytics pages and views as an index: each registry page's tabs and chart ids, and each stored view's slug, kind, tile count and charts.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "safe_retry",
       "input_schema": {
@@ -1521,7 +1521,7 @@
       "action": "get_analytics_view",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
-      "description": "Read one Analytics page by page id, slug or legacy tab id with every chart evaluated over a date range (default the last 28 complete days): value, previous window, change, daily series, breakdown rows, a missing state that is never zero, and each chart's id, meaning, format, source and needs.",
+      "description": "Read one Analytics page by page id, slug or legacy tab id with every chart evaluated over a date range (default the last 28 complete days): value, previous window, change, breakdown rows, a missing state that is never zero, and each chart's id, meaning, format, source and needs; detail adds the daily series and every row.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "safe_retry",
       "input_schema": {
@@ -1533,6 +1533,11 @@
             "enum": ["previous", "year", "none"],
             "type": "string"
           },
+          "detail": {
+            "default": false,
+            "description": "true adds each chart's daily series, every row of a table or list, and each tile's spec.",
+            "type": "boolean"
+          },
           "range_from": {
             "format": "date",
             "type": "string"
@@ -1542,7 +1547,7 @@
             "type": "string"
           },
           "view": {
-            "description": "A view slug, legacy tab id or view id",
+            "description": "A page id, view slug, legacy tab id or view id",
             "maxLength": 200,
             "minLength": 1,
             "type": "string"
@@ -1578,6 +1583,11 @@
             "description": "previous: the days just before the range; year: the same days a year before; none.",
             "enum": ["previous", "year", "none"],
             "type": "string"
+          },
+          "detail": {
+            "default": false,
+            "description": "true adds each chart's daily series, every row of a table or list, and each tile's spec.",
+            "type": "boolean"
           },
           "range_from": {
             "format": "date",
@@ -6000,6 +6010,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "fe8478a110139fac5e2cea1e719250bf4b1c5011333beea5068d3b737580559b",
+  "registry_revision": "fc765ad55910c9f7f01cf7f78dd06c704ac9e030f6cf1b69217c643ea0bb80bd",
   "schema_version": 1
 }
