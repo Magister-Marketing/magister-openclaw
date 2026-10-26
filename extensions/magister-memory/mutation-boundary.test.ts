@@ -16,7 +16,7 @@ describe("host semantic mutation boundary", () => {
     vi.restoreAllMocks();
   });
 
-  it("attests the exact final content before the atomic memory write", async () => {
+  it("attests the exact final content before the atomic USER.md write", async () => {
     const events: string[] = [];
     vi.stubGlobal(
       "fetch",
@@ -26,6 +26,9 @@ describe("host semantic mutation boundary", () => {
         const action = url.split("/").at(-1) ?? "";
         events.push(action);
         if (action === "acquire") {
+          expect(typeof init?.body === "string" ? JSON.parse(init.body) : undefined).toMatchObject({
+            resource_class: "host:user",
+          });
           return new Response(
             JSON.stringify({
               project_id: "project-1",
@@ -42,7 +45,7 @@ describe("host semantic mutation boundary", () => {
             throw new Error("expected a JSON request body");
           }
           const body = JSON.parse(init.body) as Record<string, unknown>;
-          expect(body).toMatchObject({ resource: "MEMORY.md" });
+          expect(body).toMatchObject({ resource: "USER.md" });
           expect(body.content_hash).toMatch(/^[a-f0-9]{64}$/);
           return new Response(
             JSON.stringify({ commit_expires_at: new Date(Date.now() + 30_000).toISOString() }),
@@ -54,7 +57,7 @@ describe("host semantic mutation boundary", () => {
     );
 
     await withHostMutationBoundary(
-      { operationId: "host-memory-1", target: "memory", content: "bounded fact" },
+      { operationId: "host-memory-1", content: "bounded fact" },
       async () => {
         events.push("write");
       },
@@ -90,11 +93,8 @@ describe("host semantic mutation boundary", () => {
     );
 
     await expect(
-      withHostMutationBoundary(
-        { operationId: "host-memory-1", target: "memory", content: "must not land" },
-        write,
-      ),
-    ).rejects.toThrow("rejected attest");
+      withHostMutationBoundary({ operationId: "host-memory-1", content: "must not land" }, write),
+    ).rejects.toThrow("rejected mutations/attest");
     expect(write).not.toHaveBeenCalled();
   });
 });

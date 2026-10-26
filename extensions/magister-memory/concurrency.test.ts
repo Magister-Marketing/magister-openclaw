@@ -37,11 +37,11 @@ describe("memory tool concurrency", () => {
     // loadFromDisk() calls see the empty file and the second persist
     // clobbers the first entry (last-writer-wins).
     await Promise.all([
-      tool.execute("c1", { action: "add", target: "memory", content: "entry one" }),
-      tool.execute("c2", { action: "add", target: "memory", content: "entry two" }),
+      tool.execute("c1", { action: "add", target: "user", content: "entry one" }),
+      tool.execute("c2", { action: "add", target: "user", content: "entry two" }),
     ]);
-    const memoryMd = readFileSync(join(dir, "MEMORY.md"), "utf8");
-    expect(memoryMd).toContain("entry one");
-    expect(memoryMd).toContain("entry two");
+    const userMd = readFileSync(join(dir, "USER.md"), "utf8");
+    expect(userMd).toContain("entry one");
+    expect(userMd).toContain("entry two");
   });
 });
