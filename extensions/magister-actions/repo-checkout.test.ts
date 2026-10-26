@@ -23,8 +23,9 @@ import {
   INSTALL_POLL_SECONDS,
   installRepoDependencies,
   isCiDefinition,
-  localActionPaths,
-  localIncludePaths,
+  actionManifestReferences,
+  pipelineIncludes,
+  workflowActionDirs,
   MAX_MANIFEST_PATH_CHARS,
   makeReadableByTools,
   measureTree,
@@ -1222,62 +1223,202 @@ describe("CI code the definitions name from elsewhere in the tree", () => {
     "",
   ].join("\n");
 
-  it("reads the local actions a workflow or action runs, and refuses forms it cannot follow", () => {
-    expect(localActionPaths(WORKFLOW)).toEqual(["ci/setup"]);
-    expect(localActionPaths(COMPOSITE)).toEqual(["tools/lint"]);
+  const workflow = (steps: string) =>
+    `on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n${steps}\n`;
+
+  it("reads the local actions a workflow runs, in every YAML spelling", () => {
+    expect(workflowActionDirs(WORKFLOW, "acme/site")).toEqual(["ci/setup"]);
     expect(
-      localActionPaths(
-        [
-          "steps:",
-          "  # - uses: ./retired",
-          '  - { uses: "./Flow/Step", with: { a: 1 } }',
-          "  - uses: docker://alpine:3",
-          "  - uses: ./",
-        ].join("\n"),
+      workflowActionDirs(
+        workflow(
+          [
+            "      # - uses: ./retired",
+            '      - { uses: "./Flow/Step", with: { a: 1 } }',
+            '      - "uses": ./quoted',
+            "      - uses: docker://alpine:3",
+            "      - uses: ./",
+            "      - uses: actions/checkout@v4",
+            "      - uses: ACME/Site/tools/lint@main",
+            "      - uses: >-",
+            "          ./folded",
+          ].join("\n"),
+        ),
+        "acme/site",
       ),
-    ).toEqual(["flow/step", ""]);
+    ).toEqual(["flow/step", "quoted", "", "tools/lint", "folded"]);
+    // Two steps on one line, and steps reached through an anchor.
+    expect(
+      workflowActionDirs(
+        [
+          "jobs:",
+          "  a:",
+          "    steps: &shared [{uses: ./one}, {uses: ./two}]",
+          "  b:",
+          "    steps: *shared",
+          "  c:",
+          "    uses: ./.github/workflows/reusable.yml",
+          "",
+        ].join("\n"),
+        "acme/site",
+      ),
+    ).toEqual(["one", "two", "one", "two", ".github/workflows/reusable.yml"]);
+    expect(workflowActionDirs("on: push\n", "acme/site")).toEqual([]);
+  });
+
+  it("refuses a workflow it cannot read with certainty", () => {
     for (const unreadable of [
-      "- uses:\n    ./ci/setup",
-      "- uses: ./../outside",
-      "- uses: *setup",
-      "- uses: ./${{ matrix.action }}",
+      workflow("      - uses: ./../outside"),
+      workflow("      - uses: *setup"),
+      workflow("      - uses: ./${{ matrix.action }}"),
+      workflow("      - uses: $ACTION"),
+      workflow("      - uses: 42"),
+      workflow("      - uses: not-an-action"),
+      workflow("      - uses: ./a\n      - uses: ./b\n    steps: []"),
+      "jobs: [build]\n",
+      "jobs:\n  build: run\n",
+      "jobs:\n  build:\n    steps: notalist\n",
+      "jobs:\n  build:\n    steps:\n      - just a string\n",
+      "jobs:\n  build:\n    steps: [{uses: ./x",
+      "jobs:\n  build:\n    steps:\n      - uses: !custom ./x\n",
+      "jobs:\n  ? [a, b]\n  : {}\n",
     ]) {
-      expect(localActionPaths(unreadable)).toBeNull();
+      expect(workflowActionDirs(unreadable, "acme/site")).toBeNull();
     }
   });
 
-  it("reads a GitLab pipeline's local includes at any depth, and refuses forms it cannot follow", () => {
+  it("reads what an action manifest runs, from its own directory", () => {
+    expect(actionManifestReferences(COMPOSITE, "ci/setup", "acme/site")).toEqual({
+      dirs: ["tools/lint"],
+      files: [],
+    });
+    expect(
+      actionManifestReferences(
+        [
+          "runs:",
+          "  using: node20",
+          "  main: dist/index.js",
+          "  pre: ../../outside.js",
+          "  post: ./cleanup.js",
+          "",
+        ].join("\n"),
+        "ci/setup",
+        "acme/site",
+      ),
+    ).toEqual({ dirs: [], files: ["ci/setup/dist/index.js", "outside.js", "ci/setup/cleanup.js"] });
+    expect(
+      actionManifestReferences(
+        [
+          "runs:",
+          "  using: docker",
+          "  image: ../shared/Dockerfile",
+          "  entrypoint: entrypoint.sh",
+          "  post-entrypoint: /usr/bin/cleanup",
+          "",
+        ].join("\n"),
+        "ci/docker",
+        "acme/site",
+      ),
+    ).toEqual({ dirs: [], files: ["ci/shared/dockerfile", "ci/docker/entrypoint.sh"] });
+    expect(
+      actionManifestReferences(
+        "runs:\n  using: docker\n  image: docker://alpine\n",
+        "",
+        "acme/site",
+      ),
+    ).toEqual({ dirs: [], files: [] });
+    expect(actionManifestReferences("name: no runs\n", "ci/x", "acme/site")).toEqual({
+      dirs: [],
+      files: [],
+    });
+  });
+
+  it("refuses an action manifest it cannot read with certainty", () => {
+    for (const unreadable of [
+      "runs:\n  using: node20\n  main: ../../../escapes.js\n",
+      "runs:\n  using: node20\n  main: $MAIN\n",
+      "runs:\n  using: [composite]\n",
+      "runs:\n  using: composite\n  steps:\n    - uses: ./${{ inputs.action }}\n",
+      "runs:\n  using: composite\n  steps: {uses: ./x}\n",
+      "runs: composite\n",
+      "runs:\n  main: a.js\nruns:\n  main: b.js\n",
+    ]) {
+      expect(actionManifestReferences(unreadable, "ci/setup", "acme/site")).toBeNull();
+    }
+  });
+
+  it("reads a GitLab pipeline's local includes, in every form and at any depth", () => {
     const pipeline = [
+      "spec:",
+      "  inputs:",
+      "    stage:",
+      "      default: test",
+      "---",
       "include:",
       "  - local: '/templates/build.yml'",
       "    rules:",
-      "      - exists:",
-      "          - Dockerfile",
+      '      - if: $CI_COMMIT_BRANCH == "main"',
       "  - '/templates/test.yml'",
       "  - remote: 'https://example.com/ci.yml'",
       "  - project: 'group/other'",
+      "    ref: main",
       "    file:",
       "      - '/shared.yml'",
       "  - template: Auto-DevOps.gitlab-ci.yml",
-      "deploy:",
+      "  - artifact: generated.yml",
+      "    job: generate",
+      ".child: &child",
       "  trigger:",
       "    include: ci/child-*.yml",
+      "deploy:",
+      "  <<: *child",
+      "  stage: $[[ inputs.stage ]]",
+      "nested:",
+      "  deeper:",
+      "    trigger:",
+      "      include: { local: configs/**.yml }",
       "",
     ].join("\n");
-    expect(localIncludePaths(pipeline)).toEqual([
+    // The hidden `.child` template and the job merged from it both carry the include.
+    expect(pipelineIncludes(pipeline, "acme/site")).toEqual([
       "templates/build.yml",
       "templates/test.yml",
       "ci/child-*.yml",
+      "ci/child-*.yml",
+      "configs/**.yml",
     ]);
-    expect(localIncludePaths("include:\n  local: configs/**.yml\n")).toEqual(["configs/**.yml"]);
-    expect(localIncludePaths("include: 'https://example.com/ci.yml'\n")).toEqual([]);
+    expect(pipelineIncludes("include: [a.yml, {local: b.yml}]\n", "acme/site")).toEqual([
+      "a.yml",
+      "b.yml",
+    ]);
+    expect(pipelineIncludes("include: 'https://example.com/ci.yml'\n", "acme/site")).toEqual([]);
+    expect(pipelineIncludes("", "acme/site")).toEqual([]);
+  });
+
+  it("refuses a pipeline it cannot read with certainty", () => {
     for (const unreadable of [
-      "include: [a.yml]",
-      "include:\n  - local: $CI_DIR/build.yml",
-      "include:\n  - local:\n      build.yml",
+      "include:\n  - local: $CI_DIR/build.yml\n",
+      "include:\n  - project: acme/site\n    file: /ci.yml\n",
+      "include:\n  - project: /ACME/Site/\n    file: /ci.yml\n",
+      "include:\n  - project: $CI_PROJECT_PATH\n    file: /ci.yml\n",
+      "include:\n  - project: group/other\n    file: $FILE\n",
+      "include:\n  - project: group/other\n    ref: $REF\n    file: /ci.yml\n",
+      "include:\n  - component: $CI_SERVER_FQDN/acme/site/comp@1.0\n",
+      "include:\n  - component: gitlab.com/acme/site/comp@1.0\n",
+      "include:\n  - local: ../outside.yml\n",
+      "include:\n  - local: a.yml\n    unknown: 1\n",
+      "include: 1\n",
+      "include:\n",
+      "include: [a.yml\n",
+      "include: a.yml\ninclude: b.yml\n",
+      "include: *missing\n",
+      "build:\n  script: !reference [.base, script]\n",
+      "deploy:\n  trigger:\n    include: [{local: a.yml}, 3]\n",
     ]) {
-      expect(localIncludePaths(unreadable)).toBeNull();
+      expect(pipelineIncludes(unreadable, "acme/site")).toBeNull();
     }
+    expect(
+      pipelineIncludes("include:\n  - component: gitlab.com/group/other/comp@1.0\n", "acme/site"),
+    ).toEqual([]);
   });
 
   it("refuses a push that edits a local action a workflow runs, outside .github", async () => {
@@ -1306,6 +1447,20 @@ describe("CI code the definitions name from elsewhere in the tree", () => {
 
     await expect(pushEdit(repoDir, "tools/lint/index.js")).rejects.toMatchObject({
       message: expect.stringContaining("tools/lint/index.js"),
+    });
+    expect(remoteTip(origin, "magister/readme")).toBeNull();
+  });
+
+  it("refuses a push that edits a file a manifest's runs names outside its directory", async () => {
+    const { origin, repoDir } = checkoutWith({
+      ".github/workflows/ci.yml": "jobs:\n  build:\n    steps: [{uses: ./ci/setup}]\n",
+      "ci/setup/action.yml": "runs:\n  using: node20\n  main: ../../outside.js\n",
+      "outside.js": "run()\n",
+    });
+
+    await expect(pushEdit(repoDir, "outside.js")).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining("outside.js is, or may be, a CI definition"),
     });
     expect(remoteTip(origin, "magister/readme")).toBeNull();
   });
@@ -1346,7 +1501,7 @@ describe("CI code the definitions name from elsewhere in the tree", () => {
 
   it("refuses any push when a pipeline's includes cannot be read", async () => {
     const { origin, repoDir } = checkoutWith(
-      { ".gitlab-ci.yml": "include: [ci/a.yml]\n" },
+      { ".gitlab-ci.yml": "include: ci/a.yml\ninclude: ci/b.yml\n" },
       "gitlab",
     );
 

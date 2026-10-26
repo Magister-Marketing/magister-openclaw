@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
+import { parseAllDocuments } from "yaml";
 import { reportHostRouteFailure, type HostRoute } from "./host-route-telemetry.js";
 import { mirrorReadBits } from "./tool-readable.js";
 
@@ -210,139 +211,381 @@ export function isCiDefinition(
   );
 }
 
+/** Aliases one CI file may resolve; GitLab allows about this many jobs. */
+const MAX_CI_ALIASES = 1_000;
+
 /**
- * One YAML scalar as a CI file writes a value: plain, single- or
- * double-quoted, up to a comment. Null for every other form (a block scalar,
- * an anchor, alias or tag, a flow collection, an escape, a value on the next
- * line), which the caller treats as unreadable rather than guessing.
+ * The documents in one CI file as plain values (mappings as `Map`s), every
+ * alias resolved and every `<<` merged. Null when the file cannot be read
+ * with certainty: a parse error, a duplicate or non-string key, an alias
+ * with no anchor or past the budget, or a tag the core schema does not know
+ * (GitLab's `!reference`), which the parser reports as a warning.
  */
-function yamlScalar(raw: string): string | null {
-  const value = raw.trim();
-  const single = /^'((?:[^']|'')*)'\s*(?:#.*)?$/.exec(value);
-  if (single) {
-    return single[1].replace(/''/g, "'");
-  }
-  const double = /^"([^"\\]*)"\s*(?:#.*)?$/.exec(value);
-  if (double) {
-    return double[1];
-  }
-  if (value === "" || /^["'|>&*!{[%@`]/.test(value)) {
+function readCiYaml(text: string): unknown[] | null {
+  const values: unknown[] = [];
+  try {
+    for (const document of parseAllDocuments(text, { merge: true, stringKeys: true })) {
+      if (document.errors.length > 0 || document.warnings.length > 0) {
+        return null;
+      }
+      values.push(document.toJS({ mapAsMap: true, maxAliasCount: MAX_CI_ALIASES }));
+    }
+  } catch {
     return null;
   }
-  return value.replace(/\s+#.*$/, "").trim() || null;
+  return values;
 }
 
-/** A local path a CI file names, normalised; null when it cannot be resolved
- *  here (a CI variable, a `..` segment). */
-function localCiPath(value: string): string | null {
-  return value.includes("$") ? null : normalizeRepoPath(value);
+/** A string a CI file can mean literally: not a CI variable or expression. */
+function literal(value: unknown): value is string {
+  return typeof value === "string" && !value.includes("$");
+}
+
+/** The same project, as `owner/repo` or `group/.../project` in a CI file. */
+function namesRepo(value: string, repo: string): boolean {
+  return value.replace(/^\/+|\/+$/g, "").toLowerCase() === repo.toLowerCase();
+}
+
+type UsesTarget = { kind: "local"; dir: string } | { kind: "external" };
+
+/**
+ * Where a `uses:` points: a directory of this repository (`./dir`, or
+ * `owner/repo/dir@ref` naming this repository), or code from elsewhere
+ * (another repository, a Docker image). Null when it cannot be told: not a
+ * string, a CI variable, a `..` segment, or a form this reader does not know.
+ */
+function usesTarget(value: unknown, repo: string): UsesTarget | null {
+  if (!literal(value)) {
+    return null;
+  }
+  const spec = value.trim();
+  if (spec === "." || spec.startsWith("./")) {
+    const dir = normalizeRepoPath(spec);
+    return dir === null ? null : { kind: "local", dir };
+  }
+  if (spec.startsWith("docker://")) {
+    return { kind: "external" };
+  }
+  const at = spec.lastIndexOf("@");
+  if (at <= 0) {
+    return null;
+  }
+  const [owner, name, ...rest] = spec.slice(0, at).split("/");
+  if (!owner || !name) {
+    return null;
+  }
+  if (!namesRepo(`${owner}/${name}`, repo)) {
+    return { kind: "external" };
+  }
+  const dir = normalizeRepoPath(rest.join("/"));
+  return dir === null ? null : { kind: "local", dir };
+}
+
+/** Collect the local action a job or step `uses`, if any; false when it cannot be told. */
+function collectUses(entry: Map<unknown, unknown>, repo: string, dirs: string[]): boolean {
+  if (!entry.has("uses")) {
+    return true;
+  }
+  const target = usesTarget(entry.get("uses"), repo);
+  if (target === null) {
+    return false;
+  }
+  if (target.kind === "local") {
+    dirs.push(target.dir);
+  }
+  return true;
 }
 
 /**
- * The local actions a GitHub workflow or action manifest runs: each
- * `uses: ./dir` as a normalised directory (`""` for the repository root).
- * Null when a `uses:` is written in a form this reader does not follow.
+ * The directories of this repository a workflow runs as actions: each job's
+ * `uses` (a reusable workflow) and each step's. Null for a workflow this
+ * reader cannot read with certainty: an unreadable file, or `jobs`, a job, its
+ * `steps`, a step or a `uses` of a shape it does not know.
  */
-export function localActionPaths(text: string): string[] | null {
-  const paths: string[] = [];
-  for (const line of text.split(/\r?\n/)) {
-    const key = line.trimStart().startsWith("#")
-      ? null
-      : /(?:^|[\s{,])["']?uses["']?\s*:(?:\s+(.*))?$/.exec(line);
-    if (!key) {
+export function workflowActionDirs(text: string, repo: string): string[] | null {
+  const documents = readCiYaml(text);
+  if (documents === null) {
+    return null;
+  }
+  const dirs: string[] = [];
+  for (const document of documents) {
+    if (document === null || document === undefined) {
       continue;
     }
-    // In a flow mapping (`{ uses: ./x, with: … }`) the value ends at `,`/`}`.
-    const scalar = yamlScalar((key[1] ?? "").split(/[,}]/, 1)[0]);
-    if (scalar === null || scalar.includes("${{")) {
+    if (!(document instanceof Map)) {
       return null;
     }
-    if (scalar !== "." && !scalar.startsWith("./")) {
-      continue; // `owner/repo@ref` or `docker://…`: not this repository's code.
+    const jobs = document.get("jobs");
+    if (jobs === null || jobs === undefined) {
+      continue;
     }
-    const dir = localCiPath(scalar);
-    if (dir === null) {
+    if (!(jobs instanceof Map)) {
       return null;
     }
-    paths.push(dir);
+    for (const job of jobs.values()) {
+      if (!(job instanceof Map) || !collectUses(job, repo, dirs)) {
+        return null;
+      }
+      const steps = job.get("steps");
+      if (steps === null || steps === undefined) {
+        continue;
+      }
+      if (!Array.isArray(steps)) {
+        return null;
+      }
+      for (const step of steps) {
+        if (!(step instanceof Map) || !collectUses(step, repo, dirs)) {
+          return null;
+        }
+      }
+    }
   }
-  return paths;
+  return dirs;
+}
+
+/** The `runs` keys that name a file by a path from the action's directory. */
+const ACTION_FILE_KEYS = ["main", "pre", "post", "image"] as const;
+/** The `runs` keys that name a Docker entrypoint: a container path when
+ *  absolute, otherwise a file the action directory holds. */
+const ACTION_ENTRYPOINT_KEYS = ["entrypoint", "pre-entrypoint", "post-entrypoint"] as const;
+
+/**
+ * `relative`, as a manifest in `actionDir` names a file, from the repository
+ * root. Null when it cannot be resolved here: a CI variable, or a path that
+ * climbs out of the repository.
+ */
+function fileFromActionDir(actionDir: string, relative: string): string | null {
+  if (relative.includes("$")) {
+    return null;
+  }
+  const joined = path.posix.normalize(path.posix.join(actionDir, relative.replace(/\\/g, "/")));
+  if (joined === ".." || joined.startsWith("../")) {
+    return null;
+  }
+  return normalizeRepoPath(joined);
 }
 
 /**
- * The repository files a GitLab pipeline file includes, from every `include:`
- * (top level or a `trigger:`'s child pipeline): `local:` entries and bare
- * path strings, as normalised paths that may hold `*` wildcards. Remote,
- * template, component and other-project includes are not this repository's
- * files. Null when an include is written in a form this reader does not
- * follow, or names a path through a CI variable.
+ * What an action manifest in `actionDir` runs: the directories of this
+ * repository its composite steps use, and the files its `runs` names (`main`,
+ * `pre`, `post`, a Dockerfile `image`, a relative entrypoint), resolved from
+ * the action's own directory so one that reaches outside it is still named.
+ * Null for a manifest this reader cannot read with certainty, or a file that
+ * climbs out of the repository.
  */
-export function localIncludePaths(text: string): string[] | null {
-  const lines = text.split(/\r?\n/);
-  const paths: string[] = [];
-  const add = (value: string | null, local: boolean): boolean => {
-    if (value === null) {
+export function actionManifestReferences(
+  text: string,
+  actionDir: string,
+  repo: string,
+): { dirs: string[]; files: string[] } | null {
+  const documents = readCiYaml(text);
+  if (documents === null) {
+    return null;
+  }
+  const dirs: string[] = [];
+  const files: string[] = [];
+  for (const document of documents) {
+    if (document === null || document === undefined) {
+      continue;
+    }
+    if (!(document instanceof Map)) {
+      return null;
+    }
+    const runs = document.get("runs");
+    if (runs === null || runs === undefined) {
+      continue;
+    }
+    if (!(runs instanceof Map) || (runs.has("using") && typeof runs.get("using") !== "string")) {
+      return null;
+    }
+    for (const key of ACTION_FILE_KEYS) {
+      if (!runs.has(key)) {
+        continue;
+      }
+      const value = runs.get(key);
+      if (!literal(value)) {
+        return null;
+      }
+      if (key === "image" && value.includes("://")) {
+        continue;
+      }
+      const file = fileFromActionDir(actionDir, value);
+      if (file === null) {
+        return null;
+      }
+      files.push(file);
+    }
+    for (const key of ACTION_ENTRYPOINT_KEYS) {
+      if (!runs.has(key)) {
+        continue;
+      }
+      const value = runs.get(key);
+      if (!literal(value)) {
+        return null;
+      }
+      if (value.startsWith("/")) {
+        continue;
+      }
+      const file = fileFromActionDir(actionDir, value);
+      if (file === null) {
+        return null;
+      }
+      files.push(file);
+    }
+    const steps = runs.get("steps");
+    if (steps === null || steps === undefined) {
+      continue;
+    }
+    if (!Array.isArray(steps)) {
+      return null;
+    }
+    for (const step of steps) {
+      if (!(step instanceof Map) || !collectUses(step, repo, dirs)) {
+        return null;
+      }
+    }
+  }
+  return { dirs, files };
+}
+
+/** The keys one GitLab `include` entry may carry, in any of its forms. */
+const INCLUDE_KEYS = new Set([
+  "local",
+  "project",
+  "file",
+  "ref",
+  "remote",
+  "integrity",
+  "template",
+  "component",
+  "artifact",
+  "job",
+  "rules",
+  "inputs",
+]);
+/** The include keys whose value names what is included; a CI variable in one
+ *  leaves the included file unknown. `rules` and `inputs` carry variables by
+ *  design and name nothing. */
+const INCLUDE_TARGET_KEYS = [
+  "local",
+  "project",
+  "file",
+  "ref",
+  "remote",
+  "template",
+  "component",
+  "artifact",
+  "job",
+] as const;
+
+/**
+ * The project a component include names: `<server>/<project path>/<name>@<version>`.
+ */
+function componentProject(value: string): string {
+  const segments = value
+    .replace(/^[a-z]+:\/\//i, "")
+    .split("@", 1)[0]
+    .split("/");
+  return segments.slice(1, -1).join("/");
+}
+
+/**
+ * Read one `include` entry into `paths`; false when it cannot be read with
+ * certainty: a key or shape this reader does not know, a CI variable where a
+ * file is named, a `project` or `component` that is this project (its files
+ * at some ref), or a path with a `..` segment.
+ */
+function collectIncludeEntry(entry: Map<unknown, unknown>, repo: string, paths: string[]): boolean {
+  for (const key of entry.keys()) {
+    if (!INCLUDE_KEYS.has(key as string)) {
       return false;
     }
-    if (!local && value.includes("://")) {
-      return true;
+  }
+  for (const key of INCLUDE_TARGET_KEYS) {
+    if (!entry.has(key)) {
+      continue;
     }
-    const file = localCiPath(value);
+    const value = entry.get(key);
+    const values = key === "file" && Array.isArray(value) ? value : [value];
+    if (!values.every(literal)) {
+      return false;
+    }
+  }
+  if (entry.has("local")) {
+    const file = normalizeRepoPath(entry.get("local") as string);
     if (file === null) {
       return false;
     }
     paths.push(file);
+  }
+  if (entry.has("project") && namesRepo(entry.get("project") as string, repo)) {
+    return false;
+  }
+  if (
+    entry.has("component") &&
+    namesRepo(componentProject(entry.get("component") as string), repo)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/** Read one `include` value, in any of its forms, into `paths`. */
+function collectInclude(value: unknown, repo: string, paths: string[]): boolean {
+  if (Array.isArray(value)) {
+    return value.every((item) => collectInclude(item, repo, paths));
+  }
+  if (value instanceof Map) {
+    return collectIncludeEntry(value, repo, paths);
+  }
+  if (!literal(value)) {
+    return false;
+  }
+  if (value.includes("://")) {
     return true;
-  };
-  for (let i = 0; i < lines.length; i += 1) {
-    const key = /^(\s*)(?:-\s+)?["']?include["']?\s*:(?:\s+(.*))?$/.exec(lines[i]);
-    if (!key) {
-      continue;
+  }
+  const file = normalizeRepoPath(value);
+  if (file === null) {
+    return false;
+  }
+  paths.push(file);
+  return true;
+}
+
+/** Read every `include` under `value`, at any depth, into `paths`. */
+function collectIncludes(value: unknown, repo: string, paths: string[]): boolean {
+  if (Array.isArray(value)) {
+    return value.every((item) => collectIncludes(item, repo, paths));
+  }
+  if (!(value instanceof Map)) {
+    return true;
+  }
+  for (const [key, child] of value) {
+    if (key === "include" && !collectInclude(child, repo, paths)) {
+      return false;
     }
-    const indent = key[1].length;
-    const inline = (key[2] ?? "").replace(/^\s*#.*$/, "");
-    if (inline.trim() !== "") {
-      if (!add(yamlScalar(inline), false)) {
-        return null;
-      }
-      continue;
-    }
-    // The block: deeper lines, plus list items at the key's own indent.
-    let itemIndent: number | undefined;
-    for (let j = i + 1; j < lines.length; j += 1) {
-      const body = lines[j].trimStart();
-      if (body === "" || body.startsWith("#")) {
-        continue;
-      }
-      const lineIndent = lines[j].length - body.length;
-      const item = /^-(?:\s|$)/.test(body);
-      if (lineIndent < indent || (lineIndent === indent && !item)) {
-        break;
-      }
-      if (item) {
-        itemIndent ??= lineIndent;
-      }
-      const local = /^(?:-\s+)?["']?local["']?\s*:(?:\s+(.*))?$/.exec(body);
-      if (local) {
-        if (!add(yamlScalar(local[1] ?? ""), true)) {
-          return null;
-        }
-        continue;
-      }
-      if (!item) {
-        continue;
-      }
-      const entry = body.replace(/^-\s*/, "");
-      // A list item one level in that is not a mapping (`- project: …`) is a
-      // bare path; deeper items belong to the entry's own keys (`rules:`).
-      if (lineIndent === itemIndent && !/^["']?[\w-]+["']?\s*:(?:\s|$)/.test(entry)) {
-        if (!add(yamlScalar(entry), false)) {
-          return null;
-        }
-      }
+    if (!collectIncludes(child, repo, paths)) {
+      return false;
     }
   }
-  return paths;
+  return true;
+}
+
+/**
+ * The repository files a GitLab pipeline file includes, from every `include`
+ * in it at any depth (the top level, a `trigger`'s child pipeline, a merged
+ * anchor): `local:` entries and bare paths, normalised, `*` wildcards kept.
+ * Remote and template includes, and other projects' files, are not this
+ * repository's. Null when an include cannot be read with certainty (see
+ * `collectIncludeEntry`), and for a file the parser cannot read.
+ */
+export function pipelineIncludes(text: string, repo: string): string[] | null {
+  const documents = readCiYaml(text);
+  if (documents === null) {
+    return null;
+  }
+  const paths: string[] = [];
+  return documents.every((document) => collectIncludes(document, repo, paths)) ? paths : null;
 }
 
 export type CheckoutRequest = {
@@ -2130,17 +2373,19 @@ const MAX_CI_FILE_CHARS = 1024 * 1024;
 
 /**
  * The CI code the pushed commit's own definitions name from outside the fixed
- * CI paths, as a test of a normalised path: on GitHub every local action a
- * workflow or another local action runs (`uses: ./ci/setup` makes all of
- * `ci/setup/` CI code) and any action manifest anywhere; on GitLab every file
- * the pipeline includes locally, at any depth, wildcards included. Read at
- * the pushed commit, whose definitions are the ones CI runs. Null when a
- * definition cannot be read or is written in a form `localActionPaths` /
- * `localIncludePaths` does not follow: the push then cannot be shown not to
- * change CI, and is refused.
+ * CI paths, as a test of a normalised path: on GitHub every directory a
+ * workflow or a local action runs as an action (`uses: ./ci/setup` makes all
+ * of `ci/setup/` CI code), every file an action manifest's `runs` names, and
+ * any action manifest anywhere; on GitLab every file the pipeline includes
+ * locally, at any depth, wildcards included. Read at the pushed commit, whose
+ * definitions are the ones CI runs. Null when a definition cannot be read with
+ * certainty (`workflowActionDirs`, `actionManifestReferences`,
+ * `pipelineIncludes`): the push then cannot be shown not to change CI, and is
+ * refused.
  */
 async function localCiCode(
   repoDir: string,
+  full: string,
   request: PushRequest,
 ): Promise<((normalized: string) => boolean) | null> {
   const local = { cwd: repoDir, timeoutMs: GIT_COMMAND_TIMEOUT_MS };
@@ -2163,6 +2408,12 @@ async function localCiCode(
   const enqueue = (file: string) => {
     if (tree.has(file)) {
       queue.push(file);
+    }
+  };
+  const guardActionDir = (dir: string) => {
+    dirs.push(dir);
+    for (const manifest of ACTION_MANIFESTS) {
+      enqueue(dir === "" ? manifest : `${dir}/${manifest}`);
     }
   };
   if (request.provider === "github") {
@@ -2197,19 +2448,26 @@ async function localCiCode(
       return null;
     }
     if (request.provider === "github") {
-      const actions = localActionPaths(shown.stdout);
-      if (actions === null) {
+      if (file.startsWith(".github/workflows/")) {
+        const used = workflowActionDirs(shown.stdout, full);
+        if (used === null) {
+          return null;
+        }
+        used.forEach(guardActionDir);
+        continue;
+      }
+      const actionDir = path.posix.dirname(file);
+      const refs = actionManifestReferences(shown.stdout, actionDir === "." ? "" : actionDir, full);
+      if (refs === null) {
         return null;
       }
-      for (const dir of actions) {
-        dirs.push(dir);
-        for (const manifest of ACTION_MANIFESTS) {
-          enqueue(dir === "" ? manifest : `${dir}/${manifest}`);
-        }
+      refs.dirs.forEach(guardActionDir);
+      for (const named of refs.files) {
+        exact.add(named);
       }
       continue;
     }
-    const includes = localIncludePaths(shown.stdout);
+    const includes = pipelineIncludes(shown.stdout, full);
     if (includes === null) {
       return null;
     }
@@ -2342,7 +2600,7 @@ async function pushFrozenCommit(
   }
   let ci = sent.find((file) => isCiDefinition(file, request.provider, request.ci_config_path));
   if (ci === undefined && sent.length > 0) {
-    const localCi = await localCiCode(repoDir, request);
+    const localCi = await localCiCode(repoDir, full, request);
     if (localCi === null) {
       throw new CheckoutError(
         `The CI definitions in ${request.commit_sha.slice(0, 12)} could not be read, so this push cannot be shown to leave CI unchanged; this branch is not pushed.`,
