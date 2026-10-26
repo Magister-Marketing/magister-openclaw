@@ -109,6 +109,8 @@
       "magister_send_email",
       "magister_create_gmail_draft",
       "magister_request_network_access",
+      "magister_list_mcp_tools",
+      "magister_call_mcp_tool",
       "magister_send_agent_email",
       "magister_create_social_draft",
       "magister_schedule_social_post",
