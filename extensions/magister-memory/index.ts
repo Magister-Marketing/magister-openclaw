@@ -18,7 +18,7 @@ import { resolveConversationCheckpointConfig } from "./conversation-config.js";
 import { ConversationCheckpointManager } from "./conversation-manager.js";
 import { type MemoryResult, UserMemoryStore } from "./memory-store.js";
 import { memoryOperationId, withHostMutationBoundary } from "./mutation-boundary.js";
-import { resolveTurnBudgetConfig, TurnBudget } from "./turn-budget.js";
+import { isInteractiveSession, resolveTurnBudgetConfig, TurnBudget } from "./turn-budget.js";
 
 /**
  * Where session recall lands in the system prompt.
@@ -235,7 +235,9 @@ export default definePluginEntry({
       });
     });
     api.on("before_prompt_build", async (_event, ctx) => {
-      turnBudget.start(ctx.runId);
+      if (isInteractiveSession(ctx.sessionKey)) {
+        turnBudget.start(ctx.runId);
+      }
       try {
         const recentContext = await checkpointManager.buildPromptContext(ctx);
         return buildPromptBuildHookResult(recentContext);
@@ -244,16 +246,26 @@ export default definePluginEntry({
         return undefined;
       }
     });
-    // Turn budget (turn-budget.ts): once a run has worked N minutes or M tool
-    // calls without replying, the next tool call is vetoed with the nudge as
-    // its result, the way the tool-loop detector delivers its warning.
+    // Turn budget (turn-budget.ts): once a run in a chat has worked N minutes
+    // or M tool calls without replying, the next tool call is vetoed with the
+    // nudge as its result, the way the tool-loop detector delivers its warning.
     api.on("before_tool_call", (event, ctx) => {
-      const nudge = turnBudget.noteToolCall(event.runId ?? ctx.runId, event.toolName);
+      if (!isInteractiveSession(ctx.sessionKey)) {
+        return undefined;
+      }
+      const nudge = turnBudget.noteToolCall(
+        event.runId ?? ctx.runId,
+        event.toolName,
+        event.toolCallId ?? ctx.toolCallId,
+      );
       if (!nudge) {
         return undefined;
       }
       api.logger.info(`magister-memory: turn budget nudge for ${event.toolName}`);
       return { block: true, blockReason: nudge };
+    });
+    api.on("after_tool_call", (event, ctx) => {
+      turnBudget.noteToolEnd(event.runId ?? ctx.runId, event.toolCallId ?? ctx.toolCallId);
     });
     api.registerService({
       id: "magister-memory-conversation-checkpoints",

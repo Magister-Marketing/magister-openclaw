@@ -23,6 +23,8 @@ import {
   INSTALL_POLL_SECONDS,
   installRepoDependencies,
   isCiDefinition,
+  localActionPaths,
+  localIncludePaths,
   MAX_MANIFEST_PATH_CHARS,
   makeReadableByTools,
   measureTree,
@@ -1155,6 +1157,204 @@ describe("the CI guard at push time", () => {
     expect(() =>
       parsePushRequest({ ...base, provider: "gitlab", ci_config_path: "a/../ci.yml" }),
     ).toThrow(CheckoutError);
+  });
+});
+
+describe("CI code the definitions name from elsewhere in the tree", () => {
+  /** A bare remote whose default branch `main` holds `files`, and a checkout of it. */
+  function checkoutWith(
+    files: Record<string, string>,
+    provider: "github" | "gitlab" = "github",
+  ): { origin: string; repoDir: string } {
+    const seed = scratch("magister-seed-");
+    git(seed, "init", "--quiet", "--initial-branch=main");
+    for (const [file, body] of Object.entries({ "README.md": "first\n", ...files })) {
+      fs.mkdirSync(path.dirname(path.join(seed, file)), { recursive: true });
+      fs.writeFileSync(path.join(seed, file), body);
+    }
+    git(seed, "add", ".");
+    git(seed, "commit", "--quiet", "-m", "first");
+    const origin = scratch("magister-bare-");
+    git(origin, "init", "--quiet", "--bare", "--initial-branch=main");
+    git(seed, "push", "--quiet", `file://${origin}`, "main");
+    process.env.MAGISTER_REPO_ROOT = scratch("magister-repos-");
+    const repoDir = resolveRepoDir(parseRepo("acme/site", provider));
+    fs.mkdirSync(path.dirname(repoDir), { recursive: true });
+    git(path.dirname(repoDir), "clone", "--quiet", "--depth", "1", `file://${origin}`, repoDir);
+    git(repoDir, "checkout", "--quiet", "--detach", "HEAD");
+    return { origin, repoDir };
+  }
+
+  async function pushEdit(
+    repoDir: string,
+    file: string,
+    provider: "github" | "gitlab" = "github",
+  ): Promise<unknown> {
+    fs.mkdirSync(path.dirname(path.join(repoDir, file)), { recursive: true });
+    fs.writeFileSync(path.join(repoDir, file), "edited\n");
+    const receipt = await prepareRepoCommit(prepare({ provider }));
+    return pushRepoBranch(
+      push({
+        provider,
+        commit_sha: receipt.commit_sha,
+        ...(provider === "gitlab" ? { token: "glpat_test" } : {}),
+      }),
+    );
+  }
+
+  const WORKFLOW = [
+    "on: push",
+    "jobs:",
+    "  build:",
+    "    runs-on: ubuntu-latest",
+    "    steps:",
+    "      - uses: actions/checkout@v4",
+    "      - uses: ./ci/setup # the team's composite action",
+    "",
+  ].join("\n");
+  const COMPOSITE = [
+    "runs:",
+    "  using: composite",
+    "  steps:",
+    "    - run: ${{ github.action_path }}/install.sh",
+    "      shell: bash",
+    "    - uses: './tools/lint'",
+    "",
+  ].join("\n");
+
+  it("reads the local actions a workflow or action runs, and refuses forms it cannot follow", () => {
+    expect(localActionPaths(WORKFLOW)).toEqual(["ci/setup"]);
+    expect(localActionPaths(COMPOSITE)).toEqual(["tools/lint"]);
+    expect(
+      localActionPaths(
+        [
+          "steps:",
+          "  # - uses: ./retired",
+          '  - { uses: "./Flow/Step", with: { a: 1 } }',
+          "  - uses: docker://alpine:3",
+          "  - uses: ./",
+        ].join("\n"),
+      ),
+    ).toEqual(["flow/step", ""]);
+    for (const unreadable of [
+      "- uses:\n    ./ci/setup",
+      "- uses: ./../outside",
+      "- uses: *setup",
+      "- uses: ./${{ matrix.action }}",
+    ]) {
+      expect(localActionPaths(unreadable)).toBeNull();
+    }
+  });
+
+  it("reads a GitLab pipeline's local includes at any depth, and refuses forms it cannot follow", () => {
+    const pipeline = [
+      "include:",
+      "  - local: '/templates/build.yml'",
+      "    rules:",
+      "      - exists:",
+      "          - Dockerfile",
+      "  - '/templates/test.yml'",
+      "  - remote: 'https://example.com/ci.yml'",
+      "  - project: 'group/other'",
+      "    file:",
+      "      - '/shared.yml'",
+      "  - template: Auto-DevOps.gitlab-ci.yml",
+      "deploy:",
+      "  trigger:",
+      "    include: ci/child-*.yml",
+      "",
+    ].join("\n");
+    expect(localIncludePaths(pipeline)).toEqual([
+      "templates/build.yml",
+      "templates/test.yml",
+      "ci/child-*.yml",
+    ]);
+    expect(localIncludePaths("include:\n  local: configs/**.yml\n")).toEqual(["configs/**.yml"]);
+    expect(localIncludePaths("include: 'https://example.com/ci.yml'\n")).toEqual([]);
+    for (const unreadable of [
+      "include: [a.yml]",
+      "include:\n  - local: $CI_DIR/build.yml",
+      "include:\n  - local:\n      build.yml",
+    ]) {
+      expect(localIncludePaths(unreadable)).toBeNull();
+    }
+  });
+
+  it("refuses a push that edits a local action a workflow runs, outside .github", async () => {
+    const { origin, repoDir } = checkoutWith({
+      ".github/workflows/ci.yml": WORKFLOW,
+      "ci/setup/action.yml": COMPOSITE,
+      "ci/setup/install.sh": "echo setup\n",
+      "tools/lint/action.yaml": "runs:\n  using: node20\n  main: index.js\n",
+      "tools/lint/index.js": "lint()\n",
+    });
+
+    await expect(pushEdit(repoDir, "ci/setup/install.sh")).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining("ci/setup/install.sh is, or may be, a CI definition"),
+    });
+    expect(remoteTip(origin, "magister/readme")).toBeNull();
+  });
+
+  it("follows a local action into the actions it runs", async () => {
+    const { origin, repoDir } = checkoutWith({
+      ".github/workflows/ci.yml": WORKFLOW,
+      "ci/setup/action.yml": COMPOSITE,
+      "tools/lint/action.yaml": "runs:\n  using: node20\n  main: index.js\n",
+      "tools/lint/index.js": "lint()\n",
+    });
+
+    await expect(pushEdit(repoDir, "tools/lint/index.js")).rejects.toMatchObject({
+      message: expect.stringContaining("tools/lint/index.js"),
+    });
+    expect(remoteTip(origin, "magister/readme")).toBeNull();
+  });
+
+  it("refuses an action manifest anywhere, and pushes code no definition names", async () => {
+    const manifest = checkoutWith({ ".github/workflows/ci.yml": WORKFLOW });
+    await expect(pushEdit(manifest.repoDir, "packages/deploy/action.yml")).rejects.toMatchObject({
+      message: expect.stringContaining("packages/deploy/action.yml"),
+    });
+
+    const clean = checkoutWith({ ".github/workflows/ci.yml": WORKFLOW });
+    await expect(pushEdit(clean.repoDir, "src/app.ts")).resolves.toMatchObject({
+      status: "pushed",
+    });
+  });
+
+  it("refuses a push that edits a file the GitLab pipeline includes, nested or by wildcard", async () => {
+    const files = {
+      ".gitlab-ci.yml": "include:\n  - local: ci/build.yml\n  - local: 'ci/jobs/*.yml'\n",
+      "ci/build.yml": "include: '/scripts/more.yml'\n",
+      "ci/jobs/test.yml": "test:\n  script: [make test]\n",
+      "scripts/more.yml": "lint:\n  script: [make lint]\n",
+    };
+    for (const file of ["ci/build.yml", "scripts/more.yml", "ci/jobs/deploy.yml"]) {
+      const { origin, repoDir } = checkoutWith(files, "gitlab");
+      await expect(pushEdit(repoDir, file, "gitlab")).rejects.toMatchObject({
+        statusCode: 409,
+        message: expect.stringContaining(`${file} is, or may be, a CI definition`),
+      });
+      expect(remoteTip(origin, "magister/readme")).toBeNull();
+    }
+
+    const { repoDir } = checkoutWith(files, "gitlab");
+    await expect(pushEdit(repoDir, "README.md", "gitlab")).resolves.toMatchObject({
+      status: "pushed",
+    });
+  });
+
+  it("refuses any push when a pipeline's includes cannot be read", async () => {
+    const { origin, repoDir } = checkoutWith(
+      { ".gitlab-ci.yml": "include: [ci/a.yml]\n" },
+      "gitlab",
+    );
+
+    await expect(pushEdit(repoDir, "README.md", "gitlab")).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining("could not be read"),
+    });
+    expect(remoteTip(origin, "magister/readme")).toBeNull();
   });
 });
 

@@ -50,7 +50,7 @@ export type AgentContextPruningConfig = {
   ttl?: string;
   /** Token budget the ratios are measured against (default: the model's context window). */
   windowTokens?: number;
-  /** Tool results from before the latest user message: keep, soft-trim, or clear them (default: keep). */
+  /** Tool results from turns that closed with a reply: keep, soft-trim, or clear them (default: keep). */
   completedTurns?: "keep" | "trim" | "clear";
   /** Session key prefixes the completed-turns rule applies to, without the `agent:<id>:` qualifier (empty: every session). */
   completedTurnsSessionKeys?: string[];

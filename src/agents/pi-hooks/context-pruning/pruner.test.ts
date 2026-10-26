@@ -84,6 +84,9 @@ function buildToolTrimSettings() {
   return {
     mode: DEFAULT_CONTEXT_PRUNING_SETTINGS.mode,
     ttlMs: DEFAULT_CONTEXT_PRUNING_SETTINGS.ttlMs,
+    windowTokens: DEFAULT_CONTEXT_PRUNING_SETTINGS.windowTokens,
+    completedTurns: DEFAULT_CONTEXT_PRUNING_SETTINGS.completedTurns,
+    completedTurnsSessionKeys: DEFAULT_CONTEXT_PRUNING_SETTINGS.completedTurnsSessionKeys,
     keepLastAssistants: 1,
     softTrimRatio: 0.5,
     hardClearRatio: DEFAULT_CONTEXT_PRUNING_SETTINGS.hardClearRatio,
@@ -556,6 +559,83 @@ describe("pruneContextMessages", () => {
       expect((second.content[0] as { text: string }).text).toBe(BIG);
       // The reply that closed the turn is untouched.
       expect(result[2]).toBe(messages[2]);
+    });
+
+    describe("a turn that ended without a reply keeps its results", () => {
+      const fetchCall = { type: "toolCall", id: "c1", name: "web_fetch", arguments: {} } as const;
+      const stopped = (stopReason: "aborted" | "error", text?: string): AgentMessage => ({
+        ...(makeAssistant(text ? [{ type: "text", text }] : [fetchCall]) as AssistantMessage),
+        stopReason,
+      });
+      const clearAll = (messages: AgentMessage[]) =>
+        pruneContextMessages({
+          messages,
+          settings: { ...settings, completedTurns: "clear" as const },
+          ctx: CONTEXT_WINDOW_1M,
+        });
+      const resultText = (messages: AgentMessage[], i: number) =>
+        (
+          (messages[i] as Extract<AgentMessage, { role: "toolResult" }>).content[0] as {
+            text: string;
+          }
+        ).text;
+
+      it("after Stop, so 'give me what you have' still sees what the turn found", () => {
+        const messages = [
+          makeUser("research competitors"),
+          makeAssistant([fetchCall]),
+          makeToolResult([{ type: "text", text: BIG }]),
+          stopped("aborted"),
+          makeUser("just give me what you have"),
+        ];
+        expect(clearAll(messages)).toBe(messages);
+      });
+
+      it("after a failed reply, even one the transcript repair gave fallback text", () => {
+        const messages = [
+          makeUser("research competitors"),
+          makeToolResult([{ type: "text", text: BIG }]),
+          stopped("error", "The model failed to respond."),
+          makeUser("try again"),
+        ];
+        expect(clearAll(messages)).toBe(messages);
+      });
+
+      it("when an approval decision arrives after a turn that ended on its card", () => {
+        const messages = [
+          makeUser("post it"),
+          makeAssistant([fetchCall]),
+          makeToolResult([{ type: "text", text: BIG }]),
+          // The approval card is the last thing in the turn: nothing is written after it.
+          makeAssistant([]),
+          makeUser("Approved: Instagram post. Published.\nReceipt: url=https://instagram.com/p/1"),
+        ];
+        expect(clearAll(messages)).toBe(messages);
+      });
+
+      it("when a subagent result is steered into the turn after a tool result", () => {
+        const messages = [
+          makeUser("audit the site"),
+          makeAssistant([{ type: "text", text: "Checking the pages now." }, fetchCall]),
+          makeToolResult([{ type: "text", text: BIG }]),
+          makeUser("[Subagent result] The competitor scan finished: ..."),
+          makeAssistant([fetchCall]),
+        ];
+        expect(clearAll(messages)).toBe(messages);
+      });
+
+      it("until a later turn replies, then both turns' results clear", () => {
+        const messages = [
+          makeUser("research competitors"),
+          makeToolResult([{ type: "text", text: BIG }]),
+          stopped("aborted"),
+          makeUser("just give me what you have"),
+          makeAssistant([{ type: "text", text: "Here is what I found so far." }]),
+          makeUser("thanks, now draft the post"),
+        ];
+        const result = clearAll(messages);
+        expect(resultText(result, 1)).toBe(settings.hardClear.placeholder);
+      });
     });
 
     it("trim: soft-trims the tool results of finished turns", () => {

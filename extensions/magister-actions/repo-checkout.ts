@@ -188,9 +188,11 @@ export function normalizeRepoPath(value: string): string | null {
   return segments.join("/").toLowerCase();
 }
 
-/** Whether `file` is, or cannot be shown not to be, a CI definition on the
- *  host. `ciConfigPath` is a GitLab project's custom pipeline file, already
- *  normalised, as the Gateway sends it. */
+/** Whether `file` is one of the host's fixed CI paths, or cannot be shown not
+ *  to be (a `..` path). `ciConfigPath` is a GitLab project's custom pipeline
+ *  file, already normalised, as the Gateway sends it. CI code the definitions
+ *  name from elsewhere in the tree (a local action, a local include) is found
+ *  at push time by `localCiCode`. */
 export function isCiDefinition(
   file: string,
   provider: RepoProvider,
@@ -206,6 +208,141 @@ export function isCiDefinition(
   return CI_DEFINITION_PATHS[provider].some(
     ([prefix, exact]) => normalized === exact || (prefix !== "" && normalized.startsWith(prefix)),
   );
+}
+
+/**
+ * One YAML scalar as a CI file writes a value: plain, single- or
+ * double-quoted, up to a comment. Null for every other form (a block scalar,
+ * an anchor, alias or tag, a flow collection, an escape, a value on the next
+ * line), which the caller treats as unreadable rather than guessing.
+ */
+function yamlScalar(raw: string): string | null {
+  const value = raw.trim();
+  const single = /^'((?:[^']|'')*)'\s*(?:#.*)?$/.exec(value);
+  if (single) {
+    return single[1].replace(/''/g, "'");
+  }
+  const double = /^"([^"\\]*)"\s*(?:#.*)?$/.exec(value);
+  if (double) {
+    return double[1];
+  }
+  if (value === "" || /^["'|>&*!{[%@`]/.test(value)) {
+    return null;
+  }
+  return value.replace(/\s+#.*$/, "").trim() || null;
+}
+
+/** A local path a CI file names, normalised; null when it cannot be resolved
+ *  here (a CI variable, a `..` segment). */
+function localCiPath(value: string): string | null {
+  return value.includes("$") ? null : normalizeRepoPath(value);
+}
+
+/**
+ * The local actions a GitHub workflow or action manifest runs: each
+ * `uses: ./dir` as a normalised directory (`""` for the repository root).
+ * Null when a `uses:` is written in a form this reader does not follow.
+ */
+export function localActionPaths(text: string): string[] | null {
+  const paths: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const key = line.trimStart().startsWith("#")
+      ? null
+      : /(?:^|[\s{,])["']?uses["']?\s*:(?:\s+(.*))?$/.exec(line);
+    if (!key) {
+      continue;
+    }
+    // In a flow mapping (`{ uses: ./x, with: … }`) the value ends at `,`/`}`.
+    const scalar = yamlScalar((key[1] ?? "").split(/[,}]/, 1)[0]);
+    if (scalar === null || scalar.includes("${{")) {
+      return null;
+    }
+    if (scalar !== "." && !scalar.startsWith("./")) {
+      continue; // `owner/repo@ref` or `docker://…`: not this repository's code.
+    }
+    const dir = localCiPath(scalar);
+    if (dir === null) {
+      return null;
+    }
+    paths.push(dir);
+  }
+  return paths;
+}
+
+/**
+ * The repository files a GitLab pipeline file includes, from every `include:`
+ * (top level or a `trigger:`'s child pipeline): `local:` entries and bare
+ * path strings, as normalised paths that may hold `*` wildcards. Remote,
+ * template, component and other-project includes are not this repository's
+ * files. Null when an include is written in a form this reader does not
+ * follow, or names a path through a CI variable.
+ */
+export function localIncludePaths(text: string): string[] | null {
+  const lines = text.split(/\r?\n/);
+  const paths: string[] = [];
+  const add = (value: string | null, local: boolean): boolean => {
+    if (value === null) {
+      return false;
+    }
+    if (!local && value.includes("://")) {
+      return true;
+    }
+    const file = localCiPath(value);
+    if (file === null) {
+      return false;
+    }
+    paths.push(file);
+    return true;
+  };
+  for (let i = 0; i < lines.length; i += 1) {
+    const key = /^(\s*)(?:-\s+)?["']?include["']?\s*:(?:\s+(.*))?$/.exec(lines[i]);
+    if (!key) {
+      continue;
+    }
+    const indent = key[1].length;
+    const inline = (key[2] ?? "").replace(/^\s*#.*$/, "");
+    if (inline.trim() !== "") {
+      if (!add(yamlScalar(inline), false)) {
+        return null;
+      }
+      continue;
+    }
+    // The block: deeper lines, plus list items at the key's own indent.
+    let itemIndent: number | undefined;
+    for (let j = i + 1; j < lines.length; j += 1) {
+      const body = lines[j].trimStart();
+      if (body === "" || body.startsWith("#")) {
+        continue;
+      }
+      const lineIndent = lines[j].length - body.length;
+      const item = /^-(?:\s|$)/.test(body);
+      if (lineIndent < indent || (lineIndent === indent && !item)) {
+        break;
+      }
+      if (item) {
+        itemIndent ??= lineIndent;
+      }
+      const local = /^(?:-\s+)?["']?local["']?\s*:(?:\s+(.*))?$/.exec(body);
+      if (local) {
+        if (!add(yamlScalar(local[1] ?? ""), true)) {
+          return null;
+        }
+        continue;
+      }
+      if (!item) {
+        continue;
+      }
+      const entry = body.replace(/^-\s*/, "");
+      // A list item one level in that is not a mapping (`- project: …`) is a
+      // bare path; deeper items belong to the entry's own keys (`rules:`).
+      if (lineIndent === itemIndent && !/^["']?[\w-]+["']?\s*:(?:\s|$)/.test(entry)) {
+        if (!add(yamlScalar(entry), false)) {
+          return null;
+        }
+      }
+    }
+  }
+  return paths;
 }
 
 export type CheckoutRequest = {
@@ -1984,6 +2121,129 @@ async function pushedPaths(
   return diff.stdout.split("\0").filter((file) => file !== "");
 }
 
+/** A local action's manifest, GitHub's own two names for it. */
+const ACTION_MANIFESTS = ["action.yml", "action.yaml"] as const;
+/** CI files one push may read, and the largest one; past either the push is
+ *  refused as unreadable. GitLab caps a pipeline at 150 includes. */
+const MAX_CI_FILES = 200;
+const MAX_CI_FILE_CHARS = 1024 * 1024;
+
+/**
+ * The CI code the pushed commit's own definitions name from outside the fixed
+ * CI paths, as a test of a normalised path: on GitHub every local action a
+ * workflow or another local action runs (`uses: ./ci/setup` makes all of
+ * `ci/setup/` CI code) and any action manifest anywhere; on GitLab every file
+ * the pipeline includes locally, at any depth, wildcards included. Read at
+ * the pushed commit, whose definitions are the ones CI runs. Null when a
+ * definition cannot be read or is written in a form `localActionPaths` /
+ * `localIncludePaths` does not follow: the push then cannot be shown not to
+ * change CI, and is refused.
+ */
+async function localCiCode(
+  repoDir: string,
+  request: PushRequest,
+): Promise<((normalized: string) => boolean) | null> {
+  const local = { cwd: repoDir, timeoutMs: GIT_COMMAND_TIMEOUT_MS };
+  const listed = await runGit(["ls-tree", "-r", "-z", "--name-only", request.commit_sha], local);
+  if (listed.code !== 0) {
+    return null;
+  }
+  const tree = new Map<string, string>();
+  for (const file of listed.stdout.split("\0")) {
+    const normalized = file === "" ? null : normalizeRepoPath(file);
+    if (normalized !== null && !tree.has(normalized)) {
+      tree.set(normalized, file);
+    }
+  }
+
+  const exact = new Set<string>();
+  const dirs: string[] = [];
+  const patterns: RegExp[] = [];
+  const queue: string[] = [];
+  const enqueue = (file: string) => {
+    if (tree.has(file)) {
+      queue.push(file);
+    }
+  };
+  if (request.provider === "github") {
+    for (const file of tree.keys()) {
+      if (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(file)) {
+        enqueue(file);
+      }
+    }
+  } else {
+    enqueue(request.ci_config_path ?? ".gitlab-ci.yml");
+    for (const file of tree.keys()) {
+      if (file.startsWith(".gitlab/ci/")) {
+        enqueue(file);
+      }
+    }
+  }
+
+  const read = new Set<string>();
+  for (let file = queue.shift(); file !== undefined; file = queue.shift()) {
+    if (read.has(file)) {
+      continue;
+    }
+    read.add(file);
+    if (read.size > MAX_CI_FILES) {
+      return null;
+    }
+    const shown = await runGit(
+      ["cat-file", "blob", `${request.commit_sha}:${tree.get(file)}`],
+      local,
+    );
+    if (shown.code !== 0 || shown.stdout.length > MAX_CI_FILE_CHARS) {
+      return null;
+    }
+    if (request.provider === "github") {
+      const actions = localActionPaths(shown.stdout);
+      if (actions === null) {
+        return null;
+      }
+      for (const dir of actions) {
+        dirs.push(dir);
+        for (const manifest of ACTION_MANIFESTS) {
+          enqueue(dir === "" ? manifest : `${dir}/${manifest}`);
+        }
+      }
+      continue;
+    }
+    const includes = localIncludePaths(shown.stdout);
+    if (includes === null) {
+      return null;
+    }
+    for (const include of includes) {
+      if (!include.includes("*")) {
+        exact.add(include);
+        enqueue(include);
+        continue;
+      }
+      // GitLab's `*` stays in a directory and `**` crosses them; matching
+      // across directories for both only ever refuses more.
+      const pattern = new RegExp(
+        `^${include
+          .split("*")
+          .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+          .join(".*")}$`,
+      );
+      patterns.push(pattern);
+      for (const candidate of tree.keys()) {
+        if (pattern.test(candidate)) {
+          enqueue(candidate);
+        }
+      }
+    }
+  }
+
+  return (normalized) =>
+    exact.has(normalized) ||
+    patterns.some((pattern) => pattern.test(normalized)) ||
+    dirs.some((dir) => dir === "" || normalized === dir || normalized.startsWith(`${dir}/`)) ||
+    (request.provider === "github" &&
+      ACTION_MANIFESTS.some((manifest) => path.posix.basename(normalized) === manifest));
+}
+
 async function performPush(request: PushRequest): Promise<PushReceipt> {
   const { repoDir, full } = await requireCheckout(request.repo, request.provider);
   return withCheckoutLock(repoDir, "host:push", () => pushFrozenCommit(repoDir, full, request));
@@ -2080,7 +2340,22 @@ async function pushFrozenCommit(
       "Check the repository out again from its default branch, re-apply the change, and prepare a new commit.",
     );
   }
-  const ci = sent.find((file) => isCiDefinition(file, request.provider, request.ci_config_path));
+  let ci = sent.find((file) => isCiDefinition(file, request.provider, request.ci_config_path));
+  if (ci === undefined && sent.length > 0) {
+    const localCi = await localCiCode(repoDir, request);
+    if (localCi === null) {
+      throw new CheckoutError(
+        `The CI definitions in ${request.commit_sha.slice(0, 12)} could not be read, so this push cannot be shown to leave CI unchanged; this branch is not pushed.`,
+        409,
+        `Push this change in ${label} directly.`,
+      );
+    }
+    // isCiDefinition refused every `..` path, so each of these normalises.
+    ci = sent.find((file) => {
+      const normalized = normalizeRepoPath(file);
+      return normalized !== null && localCi(normalized);
+    });
+  }
   if (ci !== undefined) {
     throw new CheckoutError(
       `${truncate(ci, 200)} is, or may be, a CI definition: pushing it runs CI before anyone reviews it, so this branch is not pushed.`,

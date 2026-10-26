@@ -13,9 +13,10 @@ export type ContextPruningToolMatch = {
  */
 export type ContextPruningMode = "off" | "cache-ttl" | "always";
 /**
- * What happens to tool results from turns before the latest user message: `keep` leaves them to
- * the ratio rules, `trim` soft-trims them on every request, `clear` replaces them with the
- * placeholder. The assistant reply that closed each turn always stays.
+ * What happens to tool results from turns that closed with an assistant reply, once the next user
+ * message arrives: `keep` leaves them to the ratio rules, `trim` soft-trims them on every request,
+ * `clear` replaces them with the placeholder. The reply that closed each turn always stays, and a
+ * turn that ended without one (stopped, failed, or ended on an approval card) keeps its results.
  */
 export type ContextPruningCompletedTurns = "keep" | "trim" | "clear";
 

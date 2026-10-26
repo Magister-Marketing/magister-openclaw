@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BrandMemorySessions, syncBrandMemory } from "./brand-memory.js";
+import { applyBrandMemory, BrandMemorySessions, syncBrandMemory } from "./brand-memory.js";
 import { stubBrandMemoryGateway, useMachineGatewayEnv } from "./brand-memory.test-helpers.js";
 import plugin from "./index.js";
 
@@ -133,6 +133,38 @@ describe("brand memory session-start sync", () => {
 
     expect(gateway.entries).toEqual(["No paid ads before March"]);
     expect(await readFile(stampPath(), "utf8")).toBeTruthy();
+  });
+
+  it("keeps an unimported MEMORY.md through a write until the next sync imports it", async () => {
+    const original = "Never call it Magister Cloud\n§\nNo paid ads before March";
+    await writeFile(memoryPath(), original, "utf8");
+    const gateway = stubBrandMemoryGateway();
+    // The first session's sync times out, so nothing was imported yet.
+    gateway.failing.add("/api/runtime/brand-memory");
+    await expect(syncBrandMemory(dir)).rejects.toThrow("HTTP 500");
+    gateway.failing.clear();
+
+    const added = await applyBrandMemory(dir, { action: "add", content: "Tone: plain" });
+
+    expect(added).toMatchObject({ success: true, entries: ["Tone: plain"] });
+    expect(await readMemory()).toBe(original);
+    await expect(stat(stampPath())).rejects.toThrow();
+
+    await syncBrandMemory(dir);
+
+    expect(gateway.entries).toEqual([
+      "Tone: plain",
+      "Never call it Magister Cloud",
+      "No paid ads before March",
+    ]);
+    expect(await readMemory()).toBe(gateway.entries.join("\n§\n"));
+    expect(JSON.parse(await readFile(stampPath(), "utf8"))).toMatchObject({
+      memory_md: original,
+    });
+
+    // Imported: a write now refreshes the copy straight away.
+    await applyBrandMemory(dir, { action: "remove", old_text: "Tone" });
+    expect(await readMemory()).toBe("Never call it Magister Cloud\n§\nNo paid ads before March");
   });
 
   it("imports into a list another agent wrote first, skipping what it already has", async () => {

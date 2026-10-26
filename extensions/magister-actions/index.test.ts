@@ -41,11 +41,9 @@ const completionAction = nativeActionContract.actions.find(
 if (!completionAction) {
   throw new Error("submit_workflow_completion contract missing");
 }
-const integrationsAction = nativeActionContract.actions.find(
-  (row) => row.action === "list_integrations",
-);
-if (!integrationsAction) {
-  throw new Error("list_integrations contract missing");
+const skillsAction = nativeActionContract.actions.find((row) => row.action === "list_skills");
+if (!skillsAction) {
+  throw new Error("list_skills contract missing");
 }
 const temporaryDirectories: string[] = [];
 
@@ -540,17 +538,17 @@ describe("typed gateway execution", () => {
     }
   });
 
-  it("reuses only freshness-valid cached integration reads", async () => {
+  it("reuses only freshness-valid cached catalog reads", async () => {
     process.env.GATEWAY_TOKEN = "token";
     const workspace = mkdtempSync(join(tmpdir(), "magister-read-cache-"));
     temporaryDirectories.push(workspace);
     process.env.OPENCLAW_WORKSPACE_DIR = workspace;
     process.env.FLY_APP_NAME = "project-app-1";
     let fetches = 0;
-    const tool = createMagisterActionTool(api(), integrationsAction, async () => {
+    const tool = createMagisterActionTool(api(), skillsAction, async () => {
       fetches += 1;
       return new Response(
-        JSON.stringify(envelope({ receipt: { integrations: [{ service: "ga4" }] } })),
+        JSON.stringify(envelope({ receipt: { skills: [{ name: "seo-audit" }] } })),
         { status: 200 },
       );
     });
@@ -583,7 +581,7 @@ describe("typed gateway execution", () => {
         JSON.stringify(
           envelope({
             receipt: {
-              integrations: [{ service: "ga4" }],
+              skills: [{ name: "seo-audit" }],
               result_card: { card_key: "influencers:run-1", session_key: sessionKey },
             },
           }),
@@ -591,10 +589,10 @@ describe("typed gateway execution", () => {
         { status: 200 },
       );
     };
-    const inChatA = createMagisterActionTool(api(), integrationsAction, gateway, {
+    const inChatA = createMagisterActionTool(api(), skillsAction, gateway, {
       sessionKey: chatA,
     });
-    const inChatB = createMagisterActionTool(api(), integrationsAction, gateway, {
+    const inChatB = createMagisterActionTool(api(), skillsAction, gateway, {
       sessionKey: chatB,
     });
 
@@ -647,6 +645,105 @@ describe("typed gateway execution", () => {
     expect((after.receipt as Record<string, unknown>).cache_freshness).toBeUndefined();
   });
 
+  it("reads Magister state afresh after the write that changes it", async () => {
+    process.env.GATEWAY_TOKEN = "token";
+    const workspace = mkdtempSync(join(tmpdir(), "magister-write-cache-"));
+    temporaryDirectories.push(workspace);
+    process.env.OPENCLAW_WORKSPACE_DIR = workspace;
+    process.env.FLY_APP_NAME = "project-app-writes";
+    const contractAction = (name: string) => {
+      const row = nativeActionContract.actions.find((candidate) => candidate.action === name);
+      if (!row) {
+        throw new Error(`${name} contract missing`);
+      }
+      return row;
+    };
+    let tiles = 1;
+    let rules = ["rule-1", "rule-2"];
+    const reads: string[] = [];
+    const gateway = async (input: string | URL | Request, init?: RequestInit) => {
+      const name = requestUrl(input).split("/").at(-1) ?? "";
+      if (name === "add_analytics_tile") {
+        tiles += 1;
+      } else if (name === "delete_firehose_rule") {
+        const ruleId = (requestBody(init).arguments as Record<string, unknown>).rule_id;
+        rules = rules.filter((rule) => rule !== ruleId);
+      } else {
+        reads.push(name);
+      }
+      return new Response(JSON.stringify(envelope({ receipt: { tiles, rules } })), {
+        status: 200,
+      });
+    };
+    const tool = (name: string) => createMagisterActionTool(api(), contractAction(name), gateway);
+    const view = { view: "seo", detail: true };
+
+    const pageBefore = resultJson(await tool("get_analytics_view").execute("view-1", view));
+    await tool("add_analytics_tile").execute("tile-1", { view: "seo" });
+    const pageAfter = resultJson(await tool("get_analytics_view").execute("view-2", view));
+    const rulesBefore = resultJson(await tool("list_firehose_rules").execute("rules-1", {}));
+    await tool("delete_firehose_rule").execute("delete-1", {
+      rule_id: "rule-1",
+      confirmed: true,
+    });
+    const rulesAfter = resultJson(await tool("list_firehose_rules").execute("rules-2", {}));
+
+    expect((pageBefore.receipt as Record<string, unknown>).tiles).toBe(1);
+    expect((pageAfter.receipt as Record<string, unknown>).tiles).toBe(2);
+    expect((rulesBefore.receipt as Record<string, unknown>).rules).toEqual(["rule-1", "rule-2"]);
+    expect((rulesAfter.receipt as Record<string, unknown>).rules).toEqual(["rule-2"]);
+    expect((pageAfter.receipt as Record<string, unknown>).cache_freshness).toBeUndefined();
+    expect((rulesAfter.receipt as Record<string, unknown>).cache_freshness).toBeUndefined();
+
+    // The other reads a Magister write rewrites reach the Gateway every time.
+    const writtenStateReads = [
+      "list_analytics_views",
+      "describe_analytics_chart",
+      "list_analytics_metrics",
+      "list_analytics_properties",
+      "read_analytics_snapshots",
+      "read_analytics_breakdown",
+      "list_firehose_matches",
+      "list_aeo_audits",
+      "list_integrations",
+    ];
+    reads.length = 0;
+    for (const name of writtenStateReads) {
+      await tool(name).execute(`${name}-1`, {});
+      await tool(name).execute(`${name}-2`, {});
+    }
+    expect(reads).toEqual(writtenStateReads.flatMap((name) => [name, name]));
+  });
+
+  it("caches a provider read that no Magister write changes", async () => {
+    process.env.GATEWAY_TOKEN = "token";
+    const workspace = mkdtempSync(join(tmpdir(), "magister-keyword-cache-"));
+    temporaryDirectories.push(workspace);
+    process.env.OPENCLAW_WORKSPACE_DIR = workspace;
+    process.env.FLY_APP_NAME = "project-app-keywords";
+    const keywordAction = nativeActionContract.actions.find(
+      (row) => row.action === "keyword_research",
+    );
+    if (!keywordAction) {
+      throw new Error("keyword_research contract missing");
+    }
+    let fetches = 0;
+    const tool = createMagisterActionTool(api(), keywordAction, async () => {
+      fetches += 1;
+      return new Response(JSON.stringify(envelope({ receipt: { keywords: ["crm"] } })), {
+        status: 200,
+      });
+    });
+
+    await tool.execute("keyword-1", { seed: "crm software" });
+    const again = resultJson(await tool.execute("keyword-2", { seed: "crm software" }));
+
+    expect(fetches).toBe(1);
+    expect((again.receipt as Record<string, unknown>).cache_freshness).toMatchObject({
+      cached: true,
+    });
+  });
+
   it("never caches a non-terminal read result", async () => {
     process.env.GATEWAY_TOKEN = "token";
     const workspace = mkdtempSync(join(tmpdir(), "magister-running-cache-"));
@@ -654,7 +751,7 @@ describe("typed gateway execution", () => {
     process.env.OPENCLAW_WORKSPACE_DIR = workspace;
     process.env.FLY_APP_NAME = "project-app-running";
     let fetches = 0;
-    const tool = createMagisterActionTool(api(), integrationsAction, async () => {
+    const tool = createMagisterActionTool(api(), skillsAction, async () => {
       fetches += 1;
       return new Response(
         JSON.stringify(
@@ -668,7 +765,7 @@ describe("typed gateway execution", () => {
                 },
                 receipt: { stage: "running" },
               })
-            : envelope({ receipt: { integrations: [{ service: "ga4" }] } }),
+            : envelope({ receipt: { skills: [{ name: "seo-audit" }] } }),
         ),
         { status: 200 },
       );
@@ -699,7 +796,7 @@ describe("typed gateway execution", () => {
     const source = recordFetchedCorpusSource({
       workspace,
       projectScope: "project-app-legacy-running",
-      url: `magister-action:list_integrations:${inputHash}`,
+      url: `magister-action:list_skills:${inputHash}`,
       contentHash: "a".repeat(64),
       provenance: "integration_discovery",
       fetchedAt,
@@ -725,9 +822,9 @@ describe("typed gateway execution", () => {
       }),
     );
     let fetches = 0;
-    const tool = createMagisterActionTool(api(), integrationsAction, async () => {
+    const tool = createMagisterActionTool(api(), skillsAction, async () => {
       fetches += 1;
-      return new Response(JSON.stringify(envelope({ receipt: { integrations: [] } })), {
+      return new Response(JSON.stringify(envelope({ receipt: { skills: [] } })), {
         status: 200,
       });
     });
@@ -1336,7 +1433,7 @@ describe("hold-the-turn approvals", () => {
 
   it("retries transport failures within the hold instead of surrendering it", async () => {
     let attempts = 0;
-    const fetchImpl = async (input: unknown, init?: RequestInit) => {
+    const fetchImpl = async (input: unknown) => {
       const url = requestUrl(input as string);
       if (url.endsWith("/approval_resolution_ack")) {
         return new Response("{}", { status: 200 });

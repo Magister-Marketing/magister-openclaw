@@ -11,8 +11,9 @@ import { atomicWrite, type MemoryResult, parseMemoryEntries } from "./memory-sto
  * The Gateway applies the rules the file store used to (2,200-char budget,
  * duplicate and unique-match checks, threat scan) inside the project's fence,
  * so a machine that lost its project cannot write. MEMORY.md is this
- * machine's copy, rewritten from every reply and once per session at the
- * start; the context engine reads that copy into the system prompt.
+ * machine's copy, rewritten once per session at the start and, after the
+ * one-time import, from every reply; the context engine reads that copy into
+ * the system prompt.
  */
 
 const READ_TIMEOUT_MS = 3_000;
@@ -79,6 +80,23 @@ async function writeMemoryCopy(workspaceDir: string, content: string): Promise<v
   });
 }
 
+function importStampPath(workspaceDir: string): string {
+  return join(workspaceDir, ".magister", "state", "brand-memory-import");
+}
+
+/**
+ * Rewrite MEMORY.md from a write's reply once the one-time import has run.
+ * Before it (no stamp), MEMORY.md is the only record of the entries this
+ * machine held before brand memory moved to the Gateway, so it is left for the
+ * next session-start sync: that imports it, then rewrites it from the
+ * Gateway's list, which by then holds this write too.
+ */
+async function writeCopyAfterImport(workspaceDir: string, content: string): Promise<void> {
+  if ((await readUtf8IfExists(importStampPath(workspaceDir))) !== undefined) {
+    await writeMemoryCopy(workspaceDir, content);
+  }
+}
+
 function unavailable(error: unknown): MemoryResult {
   const reason = error instanceof Error ? error.message : String(error);
   return {
@@ -112,16 +130,12 @@ export async function applyBrandMemory(
   if (list) {
     // The Gateway already holds the change; a failed local copy is rewritten
     // at the next session start and must not report the write as failed.
-    await writeMemoryCopy(workspaceDir, list.content).catch(() => undefined);
+    await writeCopyAfterImport(workspaceDir, list.content).catch(() => undefined);
   }
   if (reply.ok !== true || !list) {
     return { success: false, target: "memory", message: String(reply.error) };
   }
   return { success: true, target: "memory", entries: list.entries, charCount: list.charCount };
-}
-
-function importStampPath(workspaceDir: string): string {
-  return join(workspaceDir, ".magister", "state", "brand-memory-import");
 }
 
 /**

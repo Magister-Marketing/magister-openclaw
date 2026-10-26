@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import plugin from "./index.js";
 import {
   DEFAULT_TURN_BUDGET,
+  isInteractiveSession,
   resolveTurnBudgetConfig,
   TurnBudget,
   turnBudgetNudge,
@@ -85,6 +86,48 @@ describe("TurnBudget", () => {
     expect(budget.noteToolCall(undefined, "read")).toBeUndefined();
   });
 
+  it("stops the clock while a tool runs, such as an approval the person takes minutes on", () => {
+    const c = clock();
+    const budget = new TurnBudget({ minutes: 5, toolCalls: 25 }, c.now);
+    budget.start("run-1");
+    c.advanceMinutes(2);
+    expect(budget.noteToolCall("run-1", "magister_publish_social_post", "call-1")).toBeUndefined();
+    c.advanceMinutes(4);
+    budget.noteToolEnd("run-1", "call-1");
+    // Two minutes of the agent's own time, not six.
+    expect(budget.noteToolCall("run-1", "magister_update_plan_item_status", "call-2")).toBe(
+      undefined,
+    );
+    budget.noteToolEnd("run-1", "call-2");
+    c.advanceMinutes(3);
+    expect(budget.noteToolCall("run-1", "read", "call-3")).toContain("worked 5 minutes");
+  });
+
+  it("restarts the clock only once every parallel call has ended", () => {
+    const c = clock();
+    const budget = new TurnBudget({ minutes: 5, toolCalls: 25 }, c.now);
+    budget.start("run-1");
+    budget.noteToolCall("run-1", "web_fetch", "call-1");
+    budget.noteToolCall("run-1", "web_fetch", "call-2");
+    c.advanceMinutes(10);
+    budget.noteToolEnd("run-1", "call-1");
+    c.advanceMinutes(10);
+    budget.noteToolEnd("run-1", "call-2");
+    // The end of a call the budget never saw run (a vetoed one) changes nothing.
+    budget.noteToolEnd("run-1", "call-unknown");
+    c.advanceMinutes(4);
+    expect(budget.noteToolCall("run-1", "read", "call-3")).toBeUndefined();
+  });
+
+  it("keeps the clock running through a call it cannot match to its end", () => {
+    const c = clock();
+    const budget = new TurnBudget({ minutes: 5, toolCalls: 25 }, c.now);
+    budget.start("run-1");
+    expect(budget.noteToolCall("run-1", "read")).toBeUndefined();
+    c.advanceMinutes(5);
+    expect(budget.noteToolCall("run-1", "read")).toContain("without replying");
+  });
+
   it("is off when both limits are zero", () => {
     const c = clock();
     const budget = new TurnBudget({ minutes: 0, toolCalls: 0 }, c.now);
@@ -113,7 +156,33 @@ describe("TurnBudget", () => {
   });
 });
 
+describe("isInteractiveSession", () => {
+  it("is a chat a person waits in: web chat, Slack, the Getting Started chat", () => {
+    expect(
+      isInteractiveSession("agent:marketing:webchat:11111111-1111-4111-8111-111111111111"),
+    ).toBe(true);
+    expect(isInteractiveSession("agent:main:slack:channel:c123:thread:1700000000.000100")).toBe(
+      true,
+    );
+    expect(isInteractiveSession("audit_kickoff:11111111-1111-4111-8111-111111111111")).toBe(true);
+  });
+
+  it("is never a workflow run, cron job, subagent or unknown session", () => {
+    expect(isInteractiveSession("workflow_run:11111111-1111-4111-8111-111111111111")).toBe(false);
+    expect(isInteractiveSession("agent:main:cron:daily-brief:run:abc")).toBe(false);
+    expect(isInteractiveSession("agent:main:subagent:11111111-1111-4111-8111-111111111111")).toBe(
+      false,
+    );
+    expect(isInteractiveSession("agent:main:main")).toBe(false);
+    expect(isInteractiveSession(undefined)).toBe(false);
+  });
+});
+
 describe("registration", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   function register(pluginConfig: Record<string, unknown>) {
     const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
     plugin.register({
@@ -143,5 +212,58 @@ describe("registration", () => {
     const end = handlers.get("agent_end")!;
     void end({ runId: "run-9", messages: [], success: true }, ctx);
     expect(before({ toolName: "read", params: {}, runId: "run-9" }, ctx)).toBeUndefined();
+  });
+
+  it("never nudges a workflow step, cron job or subagent", () => {
+    const handlers = register({ turnBudget: { minutes: 0, toolCalls: 1 } });
+    const before = handlers.get("before_tool_call")!;
+    for (const sessionKey of [
+      "workflow_run:11111111-1111-4111-8111-111111111111",
+      "agent:main:cron:daily-brief:run:abc",
+      "agent:main:subagent:11111111-1111-4111-8111-111111111111",
+    ]) {
+      const ctx = { runId: `run-${sessionKey}`, sessionKey };
+      for (let i = 0; i < 30; i += 1) {
+        expect(
+          before({ toolName: "web_fetch", params: {}, runId: ctx.runId, toolCallId: `c${i}` }, ctx),
+        ).toBeUndefined();
+      }
+    }
+  });
+
+  it("does not count an approval hold in a plan-task chat as working without replying", () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const handlers = register({});
+    const prompt = handlers.get("before_prompt_build")!;
+    const before = handlers.get("before_tool_call")!;
+    const after = handlers.get("after_tool_call")!;
+    const ctx = {
+      runId: "run-plan",
+      sessionKey: "agent:marketing:webchat:11111111-1111-4111-8111-111111111111",
+    };
+    void prompt({ prompt: "post it", messages: [] }, ctx);
+    vi.advanceTimersByTime(2 * 60_000);
+    const publish = {
+      toolName: "magister_publish_social_post",
+      params: {},
+      runId: "run-plan",
+      toolCallId: "call-publish",
+    };
+    expect(before(publish, ctx)).toBeUndefined();
+    // The person decides the approval card four minutes later.
+    vi.advanceTimersByTime(4 * 60_000);
+    after({ ...publish, result: {}, durationMs: 4 * 60_000 }, ctx);
+
+    expect(
+      before(
+        {
+          toolName: "magister_update_plan_item_status",
+          params: {},
+          runId: "run-plan",
+          toolCallId: "call-status",
+        },
+        ctx,
+      ),
+    ).toBeUndefined();
   });
 });

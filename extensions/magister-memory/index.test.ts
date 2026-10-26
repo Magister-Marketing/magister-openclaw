@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,6 +52,7 @@ describe("manifest tool contract", () => {
       "session_end",
       "before_prompt_build",
       "before_tool_call",
+      "after_tool_call",
     ]);
     expect(registerService).toHaveBeenCalledWith(
       expect.objectContaining({ id: "magister-memory-conversation-checkpoints" }),
@@ -66,6 +67,13 @@ describe("memory tool dispatch", () => {
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), "magister-memory-tool-test-"));
     restoreEnv = useMachineGatewayEnv();
+    // A machine whose MEMORY.md entries already moved to the Gateway; before
+    // that import, writes leave MEMORY.md alone (brand-memory.test.ts).
+    await mkdir(join(dir, ".magister", "state"), { recursive: true });
+    await writeFile(
+      join(dir, ".magister", "state", "brand-memory-import"),
+      "2026-10-22T00:00:00.000Z\n",
+    );
   });
 
   afterEach(async () => {

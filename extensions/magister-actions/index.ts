@@ -163,26 +163,29 @@ type ReadCachePolicy = {
 
 const contract = contractJson as Contract;
 
+/**
+ * The reads replayed from the local cache, by exact name; any other read asks
+ * the Gateway every time, so a new action is uncached until it is listed here.
+ * A read is listed only when nothing the agent or the person does inside the
+ * window changes its answer: a provider read, a terminal job read by id, or the
+ * skill catalog. Reads of Magister's own state stay out, because a write
+ * rewrites them and nothing here clears the cache: Analytics pages after a tile
+ * or view edit, stored series after `fetch_integration_data`, Firehose rules and
+ * matches after a rule change, the audit list after `run_aeo_audit`, the audit
+ * score after a rescore, and connection readiness after a refresh or connect.
+ */
+const READ_CACHE_POLICIES: Readonly<Record<string, ReadCachePolicy>> = {
+  keyword_research: { provenance: "seo", ttlSeconds: 1800 },
+  get_aeo_audit: { provenance: "seo", ttlSeconds: 1800 },
+  get_influencer_discovery: { provenance: "research", ttlSeconds: 900 },
+  get_social_analytics: { provenance: "analytics", ttlSeconds: 300 },
+  get_ad_analytics: { provenance: "analytics", ttlSeconds: 300 },
+  list_skills: { provenance: "integration_discovery", ttlSeconds: 300 },
+  get_skill: { provenance: "integration_discovery", ttlSeconds: 300 },
+};
+
 function readCachePolicy(action: string): ReadCachePolicy | undefined {
-  if (action === "get_audit_health") {
-    // One database read on the Gateway, and rewritten when a channel of the
-    // audit is rescored (`run_site_audit` with a channel): a cached copy would
-    // tell the agent the score from before the rescore.
-    return undefined;
-  }
-  if (action === "list_integrations" || action.includes("skill")) {
-    return { provenance: "integration_discovery", ttlSeconds: 300 };
-  }
-  if (action.includes("analytics")) {
-    return { provenance: "analytics", ttlSeconds: 300 };
-  }
-  if (action.includes("seo") || action.includes("audit") || action.includes("keyword")) {
-    return { provenance: "seo", ttlSeconds: 1800 };
-  }
-  if (action.includes("discover") || action.includes("firehose")) {
-    return { provenance: "research", ttlSeconds: 900 };
-  }
-  return undefined;
+  return Object.hasOwn(READ_CACHE_POLICIES, action) ? READ_CACHE_POLICIES[action] : undefined;
 }
 
 /**

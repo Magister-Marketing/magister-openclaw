@@ -245,13 +245,44 @@ function findFirstUserIndex(messages: AgentMessage[]): number | null {
   return null;
 }
 
-function findLastUserIndex(messages: AgentMessage[]): number | null {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]?.role === "user") {
-      return i;
+/**
+ * Whether a message closes its turn with a reply: an assistant message with text that neither
+ * failed nor was stopped. A turn that ended any other way (Stop pressed mid-turn, a model error,
+ * an approval card with nothing said after it) has no reply holding what its tools found.
+ */
+function isClosingReply(message: AgentMessage | undefined): boolean {
+  if (
+    message?.role !== "assistant" ||
+    message.stopReason === "aborted" ||
+    message.stopReason === "error"
+  ) {
+    return false;
+  }
+  return message.content.some(
+    (block) => block?.type === "text" && typeof block.text === "string" && block.text.trim() !== "",
+  );
+}
+
+/**
+ * The end of the completed turns: the latest user message whose turn before it closed with a
+ * reply, or `start` when none did. A user message that arrives while a turn is still open
+ * continues that turn instead: a subagent result steered in after a tool result, an approval
+ * decision after a turn that ended on its card, or "give me what you have" after Stop.
+ */
+function findCompletedTurnsEnd(messages: AgentMessage[], start: number): number {
+  let end = start;
+  let lastWork: AgentMessage | undefined;
+  for (let i = start; i < messages.length; i++) {
+    const msg = messages[i];
+    if (msg?.role === "user") {
+      if (isClosingReply(lastWork)) {
+        end = i;
+      }
+    } else if (msg?.role === "assistant" || msg?.role === "toolResult") {
+      lastWork = msg;
     }
   }
-  return null;
+  return end;
 }
 
 /** Ids of the `read` calls in messages[start, end) whose path starts with one of the prefixes. */
@@ -391,15 +422,14 @@ export function pruneContextMessages(params: {
     totalChars += estimateMessageChars(updated as unknown as AgentMessage) - before;
   };
 
-  // Completed turns: a tool result from before the latest user message has already fed the
-  // reply that closed its turn, so it is pruned on every request, whatever the ratios say. In a
-  // workflow run each step is one user message, so this clears a step's fetched pages the moment
-  // the next step starts; the step's own reply stays. Reads under completedTurnsKeepReads (skills)
-  // stay too: the agent reuses them every turn, and clearing them made it read the same skills
-  // again on later chat turns.
+  // Completed turns: a tool result from a turn that closed with a reply has already fed that
+  // reply, so it is pruned on every request, whatever the ratios say. In a workflow run each step
+  // is one user message, so this clears a step's fetched pages the moment the next step starts;
+  // the step's own reply stays. A turn that ended without a reply keeps its results until a
+  // later turn replies. Reads under completedTurnsKeepReads (skills) stay too: the agent reuses
+  // them every turn, and clearing them made it read the same skills again on later chat turns.
   if (settings.completedTurns !== "keep") {
-    const lastUserIndex = findLastUserIndex(messages);
-    const completedEnd = lastUserIndex === null ? pruneStartIndex : lastUserIndex;
+    const completedEnd = findCompletedTurnsEnd(messages, pruneStartIndex);
     const keptReads = readCallIdsUnder(
       messages,
       pruneStartIndex,
