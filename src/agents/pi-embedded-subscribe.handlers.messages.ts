@@ -21,6 +21,7 @@ import {
   normalizeTextForComparison,
 } from "./pi-embedded-helpers.js";
 import type { BlockReplyPayload } from "./pi-embedded-payloads.js";
+import { noteRunDeliveredWork } from "./pi-embedded-runner/attempt-retry-registry.js";
 import type {
   EmbeddedPiSubscribeContext,
   EmbeddedPiSubscribeState,
@@ -615,6 +616,7 @@ export function handleMessageUpdate(
         mediaUrls,
         phase: deliveryPhase ?? assistantPhase,
       });
+      if (cleanedText || mediaUrls?.length) noteRunDeliveredWork(ctx.params.runId);
       emitAgentEvent({
         runId: ctx.params.runId,
         stream: "assistant",
@@ -749,6 +751,7 @@ export function handleMessageEnd(
       mediaUrls,
       phase: assistantPhase,
     });
+    noteRunDeliveredWork(ctx.params.runId);
     emitAgentEvent({
       runId: ctx.params.runId,
       stream: "assistant",

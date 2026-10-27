@@ -217,6 +217,11 @@ export function consumeWithheldTerminal(runId: string | undefined): Record<strin
   }
   const withheld = entry.withheldTerminal;
   entry.withheldTerminal = null;
+  // Buffered text can be flushed after agent_end recorded the timeout. Judge
+  // no-output evidence at emission, after those delivery callbacks have run.
+  if (withheld.failure_reason === "model_timeout" && entry.deliveredWork) {
+    return { ...withheld, no_output: false };
+  }
   return withheld;
 }
 

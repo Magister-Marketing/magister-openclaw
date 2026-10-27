@@ -245,6 +245,16 @@ describe("timeouts await the outer run and retain work evidence", () => {
     expect(consumeWithheldTerminal(RUN_ID)).toEqual(timeout);
     expect(consumeWithheldTerminal(RUN_ID)).toBeNull();
   });
+  it("revokes no-output proof when buffered text is delivered after the timeout", () => {
+    arm();
+    withholdTimeoutTerminal(RUN_ID, {
+      phase: "error",
+      failure_reason: "model_timeout",
+      no_output: true,
+    });
+    noteRunDeliveredWork(RUN_ID);
+    expect(consumeWithheldTerminal(RUN_ID)).toMatchObject({ no_output: false });
+  });
   it("never loses delivered work evidence on internal retry", () => {
     expect(timeoutHasNoOutput(RUN_ID)).toBe(false);
     arm();
