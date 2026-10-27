@@ -9,6 +9,10 @@ import {
 } from "./pi-embedded-error-observation.js";
 import { classifyFailoverReason, formatAssistantErrorText } from "./pi-embedded-helpers.js";
 import {
+  consumeWithheldTerminal,
+  noteRunDeliveredWork,
+  timeoutHasNoOutput,
+  withholdTimeoutTerminal,
   shouldSuppressTerminalOverflowError,
   withholdTerminalForPendingRetry,
 } from "./pi-embedded-runner/attempt-retry-registry.js";
@@ -107,6 +111,18 @@ export function handleAgentEnd(
     ctx.state.hadDeterministicSideEffect === true ||
     hasCommittedMessagingToolDeliveryEvidence(ctx.state) ||
     (ctx.state.successfulCronAdds ?? 0) > 0;
+  // Never restore an attempt that emitted useful work or invoked any tool.
+  // The registry keeps this evidence across internal retries.
+  if (
+    hasAssistantVisibleText ||
+    hadDeterministicSideEffect ||
+    ctx.state.deltaBuffer?.trim() ||
+    ctx.state.lastStreamedAssistantCleaned?.trim() ||
+    ctx.state.pendingToolMediaUrls?.length ||
+    ctx.state.replayState.hadPotentialSideEffects
+  ) {
+    noteRunDeliveredWork(ctx.params.runId);
+  }
   const incompleteTerminalAssistant = isIncompleteTerminalAssistantTurn({
     hasAssistantVisibleText,
     lastAssistant: isAssistantMessage(lastAssistant) ? lastAssistant : null,
@@ -210,6 +226,31 @@ export function handleAgentEnd(
         return;
       }
     }
+    const abortReason = ctx.params.getTerminalAbortReason?.();
+    if (
+      ctx.state.yielded !== true &&
+      (abortReason === "idle_timeout" || abortReason === "run_timeout")
+    ) {
+      const data = {
+        ...terminalMeta,
+        phase: "error",
+        error: "The model timed out before completing this step.",
+        terminalCode: "provider_error",
+        status: 504,
+        stopReason: "error",
+        aborted: false,
+        failure_reason: "model_timeout",
+        no_output: timeoutHasNoOutput(ctx.params.runId),
+      };
+      if (withholdTimeoutTerminal(ctx.params.runId, data)) return;
+      emitAgentEvent({
+        runId: ctx.params.runId,
+        stream: "lifecycle",
+        data: { ...data, endedAt: Date.now() },
+      });
+      void ctx.params.onAgentEvent?.({ stream: "lifecycle", data });
+      return;
+    }
     if (isError || isAborted) {
       // Cancellation is terminal, not successful completion. Keep it out of
       // provider-error warnings and retry/empty-answer recovery above/below.
@@ -226,6 +267,21 @@ export function handleAgentEnd(
         : resolveTerminalErrorStamp(
             isAssistantMessage(lastAssistant) ? lastAssistant.errorMessage : undefined,
           );
+      // SDK transport timeouts can also recover in the outer loop. Keep
+      // their terminal ordering correct without inventing refund evidence.
+      if (
+        isError &&
+        classifyFailoverReason(
+          isAssistantMessage(lastAssistant) ? (lastAssistant.errorMessage ?? "") : "",
+        ) === "timeout" &&
+        withholdTimeoutTerminal(ctx.params.runId, {
+          phase: "error",
+          error: terminalError,
+          ...terminalMeta,
+          ...terminalStamp,
+        })
+      )
+        return;
       emitAgentEvent({
         runId: ctx.params.runId,
         stream: "lifecycle",
@@ -332,6 +388,11 @@ export function handleAgentEnd(
         },
       });
       return;
+    }
+    // The SDK can recover inside one outer attempt, without calling
+    // noteRetryAttemptStarted. A real answer supersedes its earlier timeout.
+    if (hasAssistantVisibleText || hadDeterministicSideEffect) {
+      consumeWithheldTerminal(ctx.params.runId);
     }
     emitAgentEvent({
       runId: ctx.params.runId,

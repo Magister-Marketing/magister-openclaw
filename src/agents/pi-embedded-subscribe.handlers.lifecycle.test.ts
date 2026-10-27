@@ -1089,3 +1089,125 @@ describe("handleAgentEnd cut-tool-chain withholding (Magister fork)", () => {
     });
   });
 });
+
+describe("model timeout terminal", () => {
+  it("clears an SDK timeout when the same attempt later delivers an answer", async () => {
+    armAttemptRetryRecovery("run-1", {
+      hasOverflowBudget: () => false,
+      hasNoVisibleAnswerRetryBudget: () => false,
+    });
+    await handleAgentEnd(
+      createContext({
+        role: "assistant",
+        stopReason: "error",
+        errorMessage: "request timed out",
+        content: [],
+      }),
+    );
+    const recovered = createContext({
+      role: "assistant",
+      stopReason: "stop",
+      content: [{ type: "text", text: "Recovered" }],
+    });
+    recovered.state.assistantTexts = ["Recovered"];
+    await handleAgentEnd(recovered);
+    expect(consumeWithheldTerminal("run-1")).toBeNull();
+    disarmAttemptRetryRecovery("run-1");
+  });
+
+  it("reports a run timeout even when the SDK never created an assistant message", async () => {
+    const { emitAgentEvent } = await import("../infra/agent-events.js");
+    vi.mocked(emitAgentEvent).mockClear();
+    armAttemptRetryRecovery("run-1", {
+      hasOverflowBudget: () => false,
+      hasNoVisibleAnswerRetryBudget: () => false,
+    });
+    const ctx = createContext(undefined);
+    ctx.params.getTerminalAbortReason = () => "run_timeout";
+    await handleAgentEnd(ctx);
+    expect(emitAgentEvent).not.toHaveBeenCalled();
+    expect(consumeWithheldTerminal("run-1")).toMatchObject({
+      phase: "error",
+      failure_reason: "model_timeout",
+      no_output: true,
+    });
+    disarmAttemptRetryRecovery("run-1");
+  });
+
+  it("withholds an SDK timeout without claiming machine-owned restoration proof", async () => {
+    const { emitAgentEvent } = await import("../infra/agent-events.js");
+    vi.mocked(emitAgentEvent).mockClear();
+    armAttemptRetryRecovery("run-1", {
+      hasOverflowBudget: () => false,
+      hasNoVisibleAnswerRetryBudget: () => false,
+    });
+    const ctx = createContext({
+      role: "assistant",
+      stopReason: "error",
+      errorMessage: "request timed out",
+      content: [],
+    });
+    await handleAgentEnd(ctx);
+    expect(emitAgentEvent).not.toHaveBeenCalled();
+    const terminal = consumeWithheldTerminal("run-1");
+    expect(terminal).toMatchObject({ phase: "error" });
+    expect(terminal).not.toHaveProperty("failure_reason");
+    disarmAttemptRetryRecovery("run-1");
+  });
+
+  afterEach(() => disarmAttemptRetryRecovery("run-1"));
+  it("waits for runner recovery instead of falsely announcing a user abort", async () => {
+    armAttemptRetryRecovery("run-1", {
+      hasOverflowBudget: () => false,
+      hasNoVisibleAnswerRetryBudget: () => false,
+    });
+    const onAgentEvent = vi.fn();
+    const ctx = createContext(
+      { role: "assistant", stopReason: "aborted", content: [] },
+      { onAgentEvent },
+    );
+    ctx.params.getTerminalAbortReason = () => "idle_timeout";
+    await handleAgentEnd(ctx);
+    expect(onAgentEvent).not.toHaveBeenCalled();
+    expect(consumeWithheldTerminal("run-1")).toMatchObject({
+      phase: "error",
+      terminalCode: "provider_error",
+      status: 504,
+      failure_reason: "model_timeout",
+      no_output: true,
+      aborted: false,
+    });
+    expect(consumeWithheldTerminal("run-1")).toBeNull();
+  });
+  it("keeps external cancellation terminal and financially ineligible", async () => {
+    armAttemptRetryRecovery("run-1", {
+      hasOverflowBudget: () => true,
+      hasNoVisibleAnswerRetryBudget: () => true,
+    });
+    const onAgentEvent = vi.fn();
+    const ctx = createContext(
+      { role: "assistant", stopReason: "aborted", content: [] },
+      { onAgentEvent },
+    );
+    ctx.params.getTerminalAbortReason = () => "external_abort";
+    await handleAgentEnd(ctx);
+    expect(onAgentEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ terminalCode: "aborted" }) }),
+    );
+    expect(consumeWithheldTerminal("run-1")).toBeNull();
+  });
+  it("does not certify no output when run coordination is missing", async () => {
+    const onAgentEvent = vi.fn();
+    const ctx = createContext(
+      { role: "assistant", stopReason: "aborted", content: [] },
+      { onAgentEvent },
+    );
+    ctx.params.getTerminalAbortReason = () => "idle_timeout";
+    await handleAgentEnd(ctx);
+    expect(onAgentEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ failure_reason: "model_timeout", no_output: false }),
+      }),
+    );
+  });
+});

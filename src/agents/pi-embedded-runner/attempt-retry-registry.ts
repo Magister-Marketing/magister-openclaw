@@ -51,8 +51,9 @@ type Entry = {
   hasOverflowBudget: () => boolean;
   hasNoVisibleAnswerRetryBudget: () => boolean;
   suppressed: boolean;
+  deliveredWork: boolean;
   /**
-   * The `data` of a withheld non-error terminal, minus `phase`/`endedAt`, so
+   * The `data` of a withheld terminal, optionally including `phase: error`, so
    * the flusher reproduces the emission the handler would have made.
    */
   withheldTerminal: Record<string, unknown> | null;
@@ -74,6 +75,7 @@ export function armAttemptRetryRecovery(
     hasOverflowBudget: budgets.hasOverflowBudget,
     hasNoVisibleAnswerRetryBudget: budgets.hasNoVisibleAnswerRetryBudget,
     suppressed: false,
+    deliveredWork: false,
     withheldTerminal: null,
   });
 }
@@ -215,5 +217,32 @@ export function consumeWithheldTerminal(runId: string | undefined): Record<strin
   }
   const withheld = entry.withheldTerminal;
   entry.withheldTerminal = null;
+  // Buffered text can be flushed after agent_end recorded the timeout. Judge
+  // no-output evidence at emission, after those delivery callbacks have run.
+  if (withheld.failure_reason === "model_timeout" && entry.deliveredWork) {
+    return { ...withheld, no_output: false };
+  }
   return withheld;
+}
+
+/** Conservative evidence across every internal retry of one logical turn. */
+export function noteRunDeliveredWork(runId: string | undefined): void {
+  const entry = runId ? entries.get(runId) : undefined;
+  if (entry) entry.deliveredWork = true;
+}
+
+export function timeoutHasNoOutput(runId: string | undefined): boolean {
+  const entry = runId ? entries.get(runId) : undefined;
+  return entry !== undefined && !entry.deliveredWork;
+}
+
+/** Only the outer loop can decide that timeout recovery is exhausted. */
+export function withholdTimeoutTerminal(
+  runId: string | undefined,
+  terminalData: Record<string, unknown>,
+): boolean {
+  const entry = runId ? entries.get(runId) : undefined;
+  if (!entry) return false;
+  entry.withheldTerminal = terminalData;
+  return true;
 }
