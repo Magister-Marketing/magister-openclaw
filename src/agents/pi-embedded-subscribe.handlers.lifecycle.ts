@@ -227,7 +227,6 @@ export function handleAgentEnd(
     }
     const abortReason = ctx.params.getTerminalAbortReason?.();
     if (
-      isAborted &&
       ctx.state.yielded !== true &&
       (abortReason === "idle_timeout" || abortReason === "run_timeout")
     ) {
