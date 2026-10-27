@@ -180,6 +180,7 @@ import { shouldAllowProviderOwnedThinkingReplay } from "../../transcript-policy.
 import { normalizeUsage, type NormalizedUsage } from "../../usage.js";
 import { DEFAULT_BOOTSTRAP_FILENAME } from "../../workspace.js";
 import { isRunnerAbortError } from "../abort.js";
+import { noteRunDeliveredWork } from "../attempt-retry-registry.js";
 import { isCacheTtlEligibleProvider, readLastCacheTtlTimestamp } from "../cache-ttl.js";
 import { resolveCompactionTimeoutMs } from "../compaction-safety-timeout.js";
 import { runContextEngineMaintenance } from "../context-engine-maintenance.js";
@@ -2408,6 +2409,11 @@ export async function runEmbeddedAttempt(
       const abortRun = (isTimeout = false, reason?: unknown) => {
         aborted = true;
         if (isTimeout) {
+          // A compaction timeout cannot establish that all useful work was
+          // absent from the transcript being compacted.
+          if (timedOutDuringCompaction || activeSession.isCompacting) {
+            noteRunDeliveredWork(params.runId);
+          }
           timedOut = true;
           if (!timedOutDuringCompaction && countActiveToolExecutions(params.runId) > 0) {
             timedOutDuringToolExecution = true;
