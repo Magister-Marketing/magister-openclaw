@@ -267,6 +267,21 @@ export function handleAgentEnd(
         : resolveTerminalErrorStamp(
             isAssistantMessage(lastAssistant) ? lastAssistant.errorMessage : undefined,
           );
+      // SDK transport timeouts can also recover in the outer loop. Keep
+      // their terminal ordering correct without inventing refund evidence.
+      if (
+        isError &&
+        classifyFailoverReason(
+          isAssistantMessage(lastAssistant) ? (lastAssistant.errorMessage ?? "") : "",
+        ) === "timeout" &&
+        withholdTimeoutTerminal(ctx.params.runId, {
+          phase: "error",
+          error: terminalError,
+          ...terminalMeta,
+          ...terminalStamp,
+        })
+      )
+        return;
       emitAgentEvent({
         runId: ctx.params.runId,
         stream: "lifecycle",
