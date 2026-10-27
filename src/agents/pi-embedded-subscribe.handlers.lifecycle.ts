@@ -9,6 +9,7 @@ import {
 } from "./pi-embedded-error-observation.js";
 import { classifyFailoverReason, formatAssistantErrorText } from "./pi-embedded-helpers.js";
 import {
+  consumeWithheldTerminal,
   noteRunDeliveredWork,
   timeoutHasNoOutput,
   withholdTimeoutTerminal,
@@ -387,6 +388,11 @@ export function handleAgentEnd(
         },
       });
       return;
+    }
+    // The SDK can recover inside one outer attempt, without calling
+    // noteRetryAttemptStarted. A real answer supersedes its earlier timeout.
+    if (hasAssistantVisibleText || hadDeterministicSideEffect) {
+      consumeWithheldTerminal(ctx.params.runId);
     }
     emitAgentEvent({
       runId: ctx.params.runId,

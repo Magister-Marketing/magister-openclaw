@@ -1091,6 +1091,30 @@ describe("handleAgentEnd cut-tool-chain withholding (Magister fork)", () => {
 });
 
 describe("model timeout terminal", () => {
+  it("clears an SDK timeout when the same attempt later delivers an answer", async () => {
+    armAttemptRetryRecovery("run-1", {
+      hasOverflowBudget: () => false,
+      hasNoVisibleAnswerRetryBudget: () => false,
+    });
+    await handleAgentEnd(
+      createContext({
+        role: "assistant",
+        stopReason: "error",
+        errorMessage: "request timed out",
+        content: [],
+      }),
+    );
+    const recovered = createContext({
+      role: "assistant",
+      stopReason: "stop",
+      content: [{ type: "text", text: "Recovered" }],
+    });
+    recovered.state.assistantTexts = ["Recovered"];
+    await handleAgentEnd(recovered);
+    expect(consumeWithheldTerminal("run-1")).toBeNull();
+    disarmAttemptRetryRecovery("run-1");
+  });
+
   it("reports a run timeout even when the SDK never created an assistant message", async () => {
     const { emitAgentEvent } = await import("../infra/agent-events.js");
     vi.mocked(emitAgentEvent).mockClear();
