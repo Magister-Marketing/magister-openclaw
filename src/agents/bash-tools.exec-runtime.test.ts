@@ -579,6 +579,28 @@ describe("buildExecExitOutcome", () => {
     });
   });
 
+  it("appends the sandbox rule to a non-zero exit the sandbox caused", () => {
+    const outcome = buildExecExitOutcome({
+      exit: {
+        reason: "exit",
+        exitCode: 2,
+        exitSignal: null,
+        durationMs: 5,
+        stdout: "",
+        stderr: "",
+        timedOut: false,
+        noOutputTimedOut: false,
+      },
+      aggregated: "sh: 1: cannot create resources/x/an.py: Read-only file system",
+      durationMs: 5,
+      timeoutSec: 30,
+      env: { MAGISTER_TOOL_SANDBOX_LAUNCHER: "/usr/local/bin/magister-tool-sandbox" },
+    });
+    expect(outcome.status).toBe("completed");
+    expect(outcome.aggregated).toContain("(Command exited with code 2)\n");
+    expect(outcome.aggregated).toContain("The workspace is read-only inside exec");
+  });
+
   it("classifies timed out exits as failures with a reason", () => {
     expect(
       buildExecExitOutcome({

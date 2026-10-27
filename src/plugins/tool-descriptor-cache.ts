@@ -5,14 +5,16 @@ import type { JsonObject, ToolDescriptor } from "../tools/types.js";
 import type { PluginLoadOptions } from "./loader.js";
 import type { OpenClawPluginToolContext } from "./types.js";
 
-const PLUGIN_TOOL_DESCRIPTOR_CACHE_VERSION = 3;
+const PLUGIN_TOOL_DESCRIPTOR_CACHE_VERSION = 4;
 const PLUGIN_TOOL_DESCRIPTOR_CACHE_LIMIT = 256;
 
 export type CachedPluginToolDescriptor = {
   descriptor: ToolDescriptor;
   displaySummary?: string;
+  sharedPromptGuidance?: string;
   ownerOnly?: boolean;
   sideEffect?: AnyAgentTool["sideEffect"];
+  schemaDelivery?: AnyAgentTool["schemaDelivery"];
   optional: boolean;
 };
 
@@ -171,8 +173,12 @@ export function capturePluginToolDescriptor(params: {
   const title = typeof label === "string" && label.trim() ? label.trim() : undefined;
   return {
     ...(params.tool.displaySummary ? { displaySummary: params.tool.displaySummary } : {}),
+    ...(params.tool.sharedPromptGuidance
+      ? { sharedPromptGuidance: params.tool.sharedPromptGuidance }
+      : {}),
     ...(params.tool.ownerOnly === true ? { ownerOnly: true } : {}),
     ...(params.tool.sideEffect ? { sideEffect: params.tool.sideEffect } : {}),
+    ...(params.tool.schemaDelivery ? { schemaDelivery: params.tool.schemaDelivery } : {}),
     optional: params.optional,
     descriptor: {
       name: params.tool.name,

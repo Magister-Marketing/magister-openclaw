@@ -332,6 +332,29 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("sessions_send");
   });
 
+  it("lists deferred-schema tools with the tool_describe instruction and keys the prefix cache on them", () => {
+    const withDeferred = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["exec", "tool_describe"],
+      deferredToolLines: ["- magister_send_brief: Send a brief. Asks the user for permission."],
+    });
+    expect(withDeferred).toContain(
+      "Deferred-schema tools (listed by name; their schemas are not loaded).",
+    );
+    expect(withDeferred).toContain("call tool_describe with its exact name");
+    expect(withDeferred).toContain(
+      "- magister_send_brief: Send a brief. Asks the user for permission.",
+    );
+    expect(withDeferred).toContain("- tool_describe: Load a deferred-schema tool's full schema");
+
+    const without = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["exec", "tool_describe"],
+    });
+    expect(without).not.toContain("Deferred-schema tools");
+    expect(without).not.toBe(withDeferred);
+  });
+
   it("uses provider-neutral web_search prompt metadata", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
@@ -648,7 +671,7 @@ describe("buildAgentSystemPrompt", () => {
     );
     expect(prompt).toContain("- Read a partially relevant skill rather than skip it.");
     expect(prompt).toContain(
-      "- You MUST use the exact <location> value from <available_skills>; never guess, fabricate, or hard-code a skill file path.",
+      "- You MUST use the exact location from the skill catalog; never guess, fabricate, or hard-code a skill file path.",
     );
     // The hedged upstream rules that let the model skip skills are gone.
     expect(prompt).not.toContain("If none clearly apply");

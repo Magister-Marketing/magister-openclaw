@@ -1,4 +1,3 @@
-import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
 import type { SourceReplyDeliveryMode } from "../../auto-reply/get-reply-options.types.js";
 import type { MemoryCitationsMode } from "../../config/types.memory.js";
@@ -8,6 +7,11 @@ import type { EmbeddedContextFile } from "../pi-embedded-helpers.js";
 import type { ProviderSystemPromptContribution } from "../system-prompt-contribution.js";
 import { buildAgentSystemPrompt } from "../system-prompt.js";
 import type { PromptMode, SilentReplyPromptMode } from "../system-prompt.types.js";
+import {
+  appendToolPromptGuidance,
+  type ToolWithSharedPromptGuidance,
+} from "../tool-prompt-guidance.js";
+import { buildDeferredToolDirectoryLines } from "../tool-schema-deferral.js";
 import type { EmbeddedSandboxInfo } from "./types.js";
 import type { ReasoningLevel, ThinkLevel } from "./utils.js";
 
@@ -59,7 +63,9 @@ export function buildEmbeddedSystemPrompt(params: {
   };
   messageToolHints?: string[];
   sandboxInfo?: EmbeddedSandboxInfo;
-  tools: AgentTool[];
+  tools: ToolWithSharedPromptGuidance[];
+  /** Deferred-schema tools: named in the prompt, schema loaded on demand (tool-schema-deferral.ts). */
+  deferredTools?: ToolWithSharedPromptGuidance[];
   modelAliasLines: string[];
   userTimezone: string;
   userTime?: string;
@@ -71,7 +77,7 @@ export function buildEmbeddedSystemPrompt(params: {
   memoryCitationsMode?: MemoryCitationsMode;
   promptContribution?: ProviderSystemPromptContribution;
 }): string {
-  return buildAgentSystemPrompt({
+  const systemPrompt = buildAgentSystemPrompt({
     workspaceDir: params.workspaceDir,
     defaultThinkLevel: params.defaultThinkLevel,
     reasoningLevel: params.reasoningLevel,
@@ -98,6 +104,7 @@ export function buildEmbeddedSystemPrompt(params: {
     messageToolHints: params.messageToolHints,
     sandboxInfo: params.sandboxInfo,
     toolNames: params.tools.map((tool) => tool.name),
+    deferredToolLines: buildDeferredToolDirectoryLines(params.deferredTools ?? []),
     modelAliasLines: params.modelAliasLines,
     userTimezone: params.userTimezone,
     userTime: params.userTime,
@@ -109,6 +116,9 @@ export function buildEmbeddedSystemPrompt(params: {
     memoryCitationsMode: params.memoryCitationsMode,
     promptContribution: params.promptContribution,
   });
+  // A deferred tool's shared guidance must already be in the prompt when the
+  // tool is promoted mid-turn; the prompt does not change between requests.
+  return appendToolPromptGuidance(systemPrompt, [...params.tools, ...(params.deferredTools ?? [])]);
 }
 
 export function createSystemPromptOverride(

@@ -170,10 +170,17 @@ import {
   collectExplicitToolAllowlistSources,
 } from "../../tool-allowlist-guard.js";
 import { UNKNOWN_TOOL_THRESHOLD } from "../../tool-loop-detection.js";
+import {
+  activateToolSchemaDeferral,
+  applyConfiguredSchemaDeferral,
+  applyRequestedEagerSchemas,
+  planToolSchemaDelivery,
+} from "../../tool-schema-deferral.js";
 import { shouldAllowProviderOwnedThinkingReplay } from "../../transcript-policy.js";
 import { normalizeUsage, type NormalizedUsage } from "../../usage.js";
 import { DEFAULT_BOOTSTRAP_FILENAME } from "../../workspace.js";
 import { isRunnerAbortError } from "../abort.js";
+import { noteRunDeliveredWork } from "../attempt-retry-registry.js";
 import { isCacheTtlEligibleProvider, readLastCacheTtlTimestamp } from "../cache-ttl.js";
 import { resolveCompactionTimeoutMs } from "../compaction-safety-timeout.js";
 import { runContextEngineMaintenance } from "../context-engine-maintenance.js";
@@ -344,6 +351,7 @@ import {
 } from "./midturn-precheck.js";
 import {
   PREEMPTIVE_OVERFLOW_ERROR_TEXT,
+  isPreemptiveOverflowSignal,
   resolveProactiveCompactionThresholdRatio,
   shouldPreemptivelyCompactBeforePrompt,
 } from "./preemptive-compaction.js";
@@ -727,14 +735,15 @@ export async function runEmbeddedAttempt(
   let timedOutDuringToolExecution = false;
   let promptError: unknown = null;
   // Snapshot the mutable terminal flags at read time; the closures below run
-  // after the flags have settled.
-  const runCompletionFlags = (): RunCompletionFlags => ({
+  // after the flags have settled. `err` is the error the run ends with.
+  const runCompletionFlags = (err: unknown): RunCompletionFlags => ({
     externalAbortRequested: externalAbort || Boolean(params.abortSignal?.aborted),
     aborted,
     timedOut,
     idleTimedOut,
     timedOutDuringCompaction,
     timedOutDuringToolExecution,
+    precheckCompactionHandoff: isPreemptiveOverflowSignal(err),
   });
   let emitDiagnosticRunCompleted:
     | ((outcome: "completed" | "aborted" | "error", err?: unknown) => void)
@@ -823,7 +832,7 @@ export async function runEmbeddedAttempt(
         ...resolveRunCompletionDiagnostic({
           outcome,
           err,
-          flags: runCompletionFlags(),
+          flags: runCompletionFlags(err),
           provider: params.provider,
           model: params.modelId,
         }),
@@ -1147,7 +1156,23 @@ export async function runEmbeddedAttempt(
       ownerOnlyToolAllowlist: params.ownerOnlyToolAllowlist,
       warn: (message) => log.warn(message),
     });
-    const effectiveTools = [...tools, ...filteredBundledTools];
+    // Every tool stays registered under its real name (policy, hooks, approvals
+    // and the ledger are unchanged); the plan only decides which schemas ride
+    // in each request and which the model loads with tool_describe. Hosted
+    // actions bring their delivery from the contract; tools.deferredSchemas
+    // adds the native ones the image config names; the request's
+    // x-magister-eager-schemas (a Magister task chat's own tools) wins for
+    // exactly the tools it names.
+    const toolSchemaDelivery = planToolSchemaDelivery(
+      applyRequestedEagerSchemas(
+        applyConfiguredSchemaDeferral(
+          [...tools, ...filteredBundledTools],
+          params.config?.tools?.deferredSchemas,
+        ),
+        params.eagerSchemaTools,
+      ),
+    );
+    const effectiveTools = toolSchemaDelivery.tools;
     prepStages.mark("bundle-tools");
     const allowedToolNames = collectAllowedToolNames({
       tools: effectiveTools,
@@ -1357,7 +1382,8 @@ export async function runEmbeddedAttempt(
         runtimeInfo,
         messageToolHints,
         sandboxInfo,
-        tools: effectiveTools,
+        tools: toolSchemaDelivery.promptTools,
+        deferredTools: toolSchemaDelivery.deferredTools,
         modelAliasLines: buildModelAliasLines(params.config),
         userTimezone,
         userTime,
@@ -1540,6 +1566,7 @@ export async function runEmbeddedAttempt(
         provider: params.provider,
         modelId: params.modelId,
         model: params.model,
+        sessionKey: params.sessionKey,
       });
       const resourceLoader = new DefaultResourceLoader({
         cwd: resolvedWorkspace,
@@ -1701,6 +1728,15 @@ export async function runEmbeddedAttempt(
         throw new Error("Embedded agent session missing");
       }
       session.setActiveToolsByName(sessionToolAllowlist);
+      // Deferred schemas: activate the eager tools plus the deferred ones this
+      // conversation already loaded, and let tool_describe promote the rest.
+      const toolSchemaActivation = activateToolSchemaDeferral({
+        session,
+        plan: toolSchemaDelivery,
+        registeredToolNames: sessionToolAllowlist,
+        transcriptEntries:
+          typeof sessionManager.getEntries === "function" ? sessionManager.getEntries() : [],
+      });
       // createAgentSession never tells the core Agent its session id, so the
       // loop forwards sessionId=undefined and cache-affinity fields gated on
       // options.sessionId (prompt_cache_key) silently drop off every request.
@@ -2014,7 +2050,7 @@ export async function runEmbeddedAttempt(
 
       const cacheObservabilityEnabled = Boolean(cacheTrace) || log.isEnabled("debug");
       const promptCacheToolNames = collectPromptCacheToolNames(
-        allCustomTools as Array<{ name?: string }>,
+        toolSchemaActivation.activeToolNames.map((name) => ({ name })),
       );
       let promptCacheChangesForTurn: PromptCacheChange[] | null = null;
 
@@ -2373,6 +2409,11 @@ export async function runEmbeddedAttempt(
       const abortRun = (isTimeout = false, reason?: unknown) => {
         aborted = true;
         if (isTimeout) {
+          // A compaction timeout cannot establish that all useful work was
+          // absent from the transcript being compacted.
+          if (timedOutDuringCompaction || activeSession.isCompacting) {
+            noteRunDeliveredWork(params.runId);
+          }
           timedOut = true;
           if (!timedOutDuringCompaction && countActiveToolExecutions(params.runId) > 0) {
             timedOutDuringToolExecution = true;
@@ -2397,6 +2438,14 @@ export async function runEmbeddedAttempt(
       const subscription = subscribeEmbeddedPiSession(
         buildEmbeddedSubscriptionParams({
           session: activeSession,
+          getTerminalAbortReason: () =>
+            externalAbort || params.abortSignal?.aborted
+              ? "external_abort"
+              : idleTimedOut
+                ? "idle_timeout"
+                : timedOut
+                  ? "run_timeout"
+                  : undefined,
           runId: params.runId,
           initialReplayState: params.initialReplayState,
           hookRunner: getGlobalHookRunner() ?? undefined,
@@ -2697,9 +2746,9 @@ export async function runEmbeddedAttempt(
           }
           const legacySystemPrompt = normalizeOptionalString(hookResult?.systemPrompt) ?? "";
           if (legacySystemPrompt) {
-            applySystemPromptOverrideToSession(activeSession, legacySystemPrompt);
-            systemPromptText = legacySystemPrompt;
-            log.debug(`hooks: applied systemPrompt override (${legacySystemPrompt.length} chars)`);
+            systemPromptText = appendToolPromptGuidance(legacySystemPrompt, effectiveTools);
+            applySystemPromptOverrideToSession(activeSession, systemPromptText);
+            log.debug(`hooks: applied systemPrompt override (${systemPromptText.length} chars)`);
           }
           const prependedOrAppendedSystemPrompt = composeSystemPromptWithHookContext({
             baseSystemPrompt: systemPromptText,
@@ -2776,7 +2825,10 @@ export async function runEmbeddedAttempt(
                 !shouldUseWebSocketTransport &&
                 !googlePromptCacheStreamFn &&
                 !effectiveAgentTransport.startsWith("websocket"),
-              maxRepairMs: idleTimeoutMs > 0 ? Math.min(30_000, idleTimeoutMs - 1_000) : 30_000,
+              // The wrapper caps each kind of correction itself (30 s for a
+              // request-side fix, longer for a pasted-data analysis); the idle
+              // watchdog is the only bound that belongs here.
+              maxRepairMs: idleTimeoutMs > 0 ? idleTimeoutMs - 1_000 : undefined,
             },
           );
         }
@@ -3778,7 +3830,10 @@ export async function runEmbeddedAttempt(
         cleanupError = err;
       }
       emitDiagnosticRunCompleted?.(
-        resolveRunCompletionOutcome(runCompletionFlags(), cleanupError ?? promptError),
+        resolveRunCompletionOutcome(
+          runCompletionFlags(cleanupError ?? promptError),
+          cleanupError ?? promptError,
+        ),
         cleanupError ?? promptError,
       );
       if (cleanupError) {
@@ -3793,3 +3848,4 @@ export async function runEmbeddedAttempt(
     restoreSkillEnv?.();
   }
 }
+import { appendToolPromptGuidance } from "../../tool-prompt-guidance.js";

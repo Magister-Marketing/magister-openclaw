@@ -16,8 +16,16 @@ export type AgentToolWithMeta<TParameters extends TSchema, TResult> = AgentTool<
 > & {
   ownerOnly?: boolean;
   displaySummary?: string;
+  /** Shared instructions, included once in the system prompt while this tool is available. */
+  sharedPromptGuidance?: string;
   /** Trusted runtime metadata; never derived from model-provided arguments. */
   sideEffect?: "none" | "draft" | "internal_write" | "external_write" | "spend" | "delete";
+  /**
+   * "deferred": the prompt lists the name and a summary; the schema ships only
+   * after `tool_describe` loads it (see tool-schema-deferral.ts). Prompt
+   * composition only, never availability.
+   */
+  schemaDelivery?: "eager" | "deferred";
 };
 
 type ErasedAgentToolExecute = {
@@ -34,8 +42,12 @@ export type AnyAgentTool = Omit<AgentTool<TSchema, unknown>, "execute"> &
   ErasedAgentToolExecute & {
     ownerOnly?: boolean;
     displaySummary?: string;
+    /** Shared instructions, included once in the system prompt while this tool is available. */
+    sharedPromptGuidance?: string;
     /** Trusted runtime metadata; never derived from model-provided arguments. */
     sideEffect?: "none" | "draft" | "internal_write" | "external_write" | "spend" | "delete";
+    /** See the `AgentTool` extension above. */
+    schemaDelivery?: "eager" | "deferred";
   };
 
 export function asToolParamsRecord(params: unknown): Record<string, unknown> {

@@ -84,11 +84,15 @@ function buildToolTrimSettings() {
   return {
     mode: DEFAULT_CONTEXT_PRUNING_SETTINGS.mode,
     ttlMs: DEFAULT_CONTEXT_PRUNING_SETTINGS.ttlMs,
+    windowTokens: DEFAULT_CONTEXT_PRUNING_SETTINGS.windowTokens,
+    completedTurns: DEFAULT_CONTEXT_PRUNING_SETTINGS.completedTurns,
+    completedTurnsSessionKeys: DEFAULT_CONTEXT_PRUNING_SETTINGS.completedTurnsSessionKeys,
     keepLastAssistants: 1,
     softTrimRatio: 0.5,
     hardClearRatio: DEFAULT_CONTEXT_PRUNING_SETTINGS.hardClearRatio,
     minPrunableToolChars: DEFAULT_CONTEXT_PRUNING_SETTINGS.minPrunableToolChars,
     tools: DEFAULT_CONTEXT_PRUNING_SETTINGS.tools,
+    completedTurnsKeepReads: DEFAULT_CONTEXT_PRUNING_SETTINGS.completedTurnsKeepReads,
     softTrim: { maxChars: 200, headChars: 100, tailChars: 50 },
     hardClear: { ...DEFAULT_CONTEXT_PRUNING_SETTINGS.hardClear, enabled: false },
   };
@@ -469,5 +473,277 @@ describe("pruneContextMessages", () => {
 
     const toolResult = result[1] as Extract<AgentMessage, { role: "toolResult" }>;
     expect(toolResult.content).toEqual([{ type: "text", text: placeholder }]);
+  });
+
+  describe("completedTurns", () => {
+    const BIG = "P".repeat(5_000);
+    // Ratios at 1 so only the completed-turn rule can change anything.
+    const settings = {
+      ...buildToolTrimSettings(),
+      softTrimRatio: 1,
+      hardClearRatio: 1,
+    };
+    const twoTurns = () => [
+      makeUser("step 1"),
+      makeToolResult([{ type: "text", text: BIG }]),
+      makeAssistant([{ type: "text", text: "step 1 report" }]),
+      makeUser("step 2"),
+      makeToolResult([{ type: "text", text: BIG }]),
+      makeAssistant([{ type: "text", text: "working" }]),
+    ];
+
+    it("clear: keeps reads under completedTurnsKeepReads and clears the rest", () => {
+      const call = (id: string, name: string, path: string) =>
+        ({ type: "toolCall", id, name, arguments: { path } }) as const;
+      const result = (id: string, toolName: string) =>
+        ({
+          role: "toolResult",
+          toolCallId: id,
+          toolName,
+          content: [{ type: "text", text: BIG }],
+          timestamp: Date.now(),
+        }) as unknown as AgentMessage;
+      const messages = [
+        makeUser("turn 1"),
+        makeAssistant([
+          call("c1", "read", "/data/.openclaw/skills/cro/SKILL.md"),
+          call("c2", "read", "/data/.openclaw/workspace/BRAND.md"),
+          call("c3", "web_fetch", "/data/.openclaw/skills/not-a-read"),
+        ]),
+        result("c1", "read"),
+        result("c2", "read"),
+        result("c3", "web_fetch"),
+        makeAssistant([{ type: "text", text: "turn 1 reply" }]),
+        makeUser("turn 2"),
+      ];
+      const pruned = pruneContextMessages({
+        messages,
+        settings: {
+          ...settings,
+          completedTurns: "clear" as const,
+          completedTurnsKeepReads: ["/data/.openclaw/skills/"],
+        },
+        ctx: CONTEXT_WINDOW_1M,
+      });
+      const text = (i: number) =>
+        (
+          (pruned[i] as Extract<AgentMessage, { role: "toolResult" }>).content[0] as {
+            text: string;
+          }
+        ).text;
+      expect(text(2)).toBe(BIG);
+      expect(text(3)).toBe(settings.hardClear.placeholder);
+      expect(text(4)).toBe(settings.hardClear.placeholder);
+    });
+
+    it("keep: leaves finished turns to the ratios", () => {
+      const messages = twoTurns();
+      const result = pruneContextMessages({
+        messages,
+        settings: { ...settings, completedTurns: "keep" as const },
+        ctx: CONTEXT_WINDOW_1M,
+      });
+      expect(result).toBe(messages);
+    });
+
+    it("clear: replaces the tool results of finished turns and keeps the current turn", () => {
+      const messages = twoTurns();
+      const result = pruneContextMessages({
+        messages,
+        settings: { ...settings, completedTurns: "clear" as const },
+        ctx: CONTEXT_WINDOW_1M,
+      });
+      const first = result[1] as Extract<AgentMessage, { role: "toolResult" }>;
+      const second = result[4] as Extract<AgentMessage, { role: "toolResult" }>;
+      expect((first.content[0] as { text: string }).text).toBe(settings.hardClear.placeholder);
+      expect((second.content[0] as { text: string }).text).toBe(BIG);
+      // The reply that closed the turn is untouched.
+      expect(result[2]).toBe(messages[2]);
+    });
+
+    describe("a turn that ended without a reply keeps its results", () => {
+      const fetchCall = { type: "toolCall", id: "c1", name: "web_fetch", arguments: {} } as const;
+      const stopped = (stopReason: "aborted" | "error", text?: string): AgentMessage => ({
+        ...(makeAssistant(text ? [{ type: "text", text }] : [fetchCall]) as AssistantMessage),
+        stopReason,
+      });
+      const clearAll = (messages: AgentMessage[]) =>
+        pruneContextMessages({
+          messages,
+          settings: { ...settings, completedTurns: "clear" as const },
+          ctx: CONTEXT_WINDOW_1M,
+        });
+      const resultText = (messages: AgentMessage[], i: number) =>
+        (
+          (messages[i] as Extract<AgentMessage, { role: "toolResult" }>).content[0] as {
+            text: string;
+          }
+        ).text;
+
+      it("after Stop, so 'give me what you have' still sees what the turn found", () => {
+        const messages = [
+          makeUser("research competitors"),
+          makeAssistant([fetchCall]),
+          makeToolResult([{ type: "text", text: BIG }]),
+          stopped("aborted"),
+          makeUser("just give me what you have"),
+        ];
+        expect(clearAll(messages)).toBe(messages);
+      });
+
+      it("after a failed reply, even one the transcript repair gave fallback text", () => {
+        const messages = [
+          makeUser("research competitors"),
+          makeToolResult([{ type: "text", text: BIG }]),
+          stopped("error", "The model failed to respond."),
+          makeUser("try again"),
+        ];
+        expect(clearAll(messages)).toBe(messages);
+      });
+
+      it("when an approval decision arrives after a turn that ended on its card", () => {
+        const messages = [
+          makeUser("post it"),
+          makeAssistant([fetchCall]),
+          makeToolResult([{ type: "text", text: BIG }]),
+          // The approval card is the last thing in the turn: nothing is written after it.
+          makeAssistant([]),
+          makeUser("Approved: Instagram post. Published.\nReceipt: url=https://instagram.com/p/1"),
+        ];
+        expect(clearAll(messages)).toBe(messages);
+      });
+
+      it("when a subagent result is steered into the turn after a tool result", () => {
+        const messages = [
+          makeUser("audit the site"),
+          makeAssistant([{ type: "text", text: "Checking the pages now." }, fetchCall]),
+          makeToolResult([{ type: "text", text: BIG }]),
+          makeUser("[Subagent result] The competitor scan finished: ..."),
+          makeAssistant([fetchCall]),
+        ];
+        expect(clearAll(messages)).toBe(messages);
+      });
+
+      it("until a later turn replies, then both turns' results clear", () => {
+        const messages = [
+          makeUser("research competitors"),
+          makeToolResult([{ type: "text", text: BIG }]),
+          stopped("aborted"),
+          makeUser("just give me what you have"),
+          makeAssistant([{ type: "text", text: "Here is what I found so far." }]),
+          makeUser("thanks, now draft the post"),
+        ];
+        const result = clearAll(messages);
+        expect(resultText(result, 1)).toBe(settings.hardClear.placeholder);
+      });
+    });
+
+    it("trim: soft-trims the tool results of finished turns", () => {
+      const result = pruneContextMessages({
+        messages: twoTurns(),
+        settings: { ...settings, completedTurns: "trim" as const },
+        ctx: CONTEXT_WINDOW_1M,
+      });
+      const first = result[1] as Extract<AgentMessage, { role: "toolResult" }>;
+      const second = result[4] as Extract<AgentMessage, { role: "toolResult" }>;
+      expect((first.content[0] as { text: string }).text).toContain("[Tool result trimmed:");
+      expect((second.content[0] as { text: string }).text).toBe(BIG);
+    });
+
+    it("is idempotent, so a pruned context keeps the same prefix on the next request", () => {
+      const once = pruneContextMessages({
+        messages: twoTurns(),
+        settings: { ...settings, completedTurns: "clear" as const },
+        ctx: CONTEXT_WINDOW_1M,
+      });
+      const twice = pruneContextMessages({
+        messages: once,
+        settings: { ...settings, completedTurns: "clear" as const },
+        ctx: CONTEXT_WINDOW_1M,
+      });
+      expect(twice).toBe(once);
+    });
+
+    it("respects the tool allow/deny match", () => {
+      const result = pruneContextMessages({
+        messages: twoTurns(),
+        settings: { ...settings, completedTurns: "clear" as const },
+        ctx: CONTEXT_WINDOW_1M,
+        isToolPrunable: () => false,
+      });
+      const first = result[1] as Extract<AgentMessage, { role: "toolResult" }>;
+      expect((first.content[0] as { text: string }).text).toBe(BIG);
+    });
+
+    it("counts the cleared turns before deciding whether the ratios apply", () => {
+      // 5K window = 20K chars. Two 5K-char results plus text sit at ~50% of it; clearing the
+      // finished turn brings the context under the soft-trim ratio, so the current turn's result
+      // is left whole even though the raw total was over the line.
+      const result = pruneContextMessages({
+        messages: twoTurns(),
+        settings: {
+          ...settings,
+          completedTurns: "clear" as const,
+          keepLastAssistants: 0,
+          softTrimRatio: 0.4,
+        },
+        ctx: CONTEXT_WINDOW_5K,
+      });
+      const second = result[4] as Extract<AgentMessage, { role: "toolResult" }>;
+      expect((second.content[0] as { text: string }).text).toBe(BIG);
+    });
+  });
+
+  describe("hard clear in always mode", () => {
+    const BIG = "Q".repeat(3_000);
+    // 5K window = 20K chars. Soft trim is switched off (nothing exceeds maxChars) so the
+    // hard-clear line, 50% of the window, is what the five 3K results cross.
+    const settings = {
+      ...buildToolTrimSettings(),
+      softTrimRatio: 0.1,
+      hardClearRatio: 0.5,
+      minPrunableToolChars: 0,
+      softTrim: { maxChars: 100_000, headChars: 1, tailChars: 1 },
+      hardClear: { ...DEFAULT_CONTEXT_PRUNING_SETTINGS.hardClear, enabled: true },
+    };
+    const messages = () => [
+      makeUser("go"),
+      makeToolResult([{ type: "text", text: BIG }]),
+      makeAssistant([{ type: "text", text: "a" }]),
+      makeToolResult([{ type: "text", text: BIG }]),
+      makeAssistant([{ type: "text", text: "b" }]),
+      makeToolResult([{ type: "text", text: BIG }]),
+      makeAssistant([{ type: "text", text: "c" }]),
+      makeToolResult([{ type: "text", text: BIG }]),
+      makeAssistant([{ type: "text", text: "d" }]),
+      makeToolResult([{ type: "text", text: BIG }]),
+      makeAssistant([{ type: "text", text: "e" }]),
+    ];
+    const clearedCount = (result: AgentMessage[]) =>
+      result.filter(
+        (m) =>
+          m.role === "toolResult" &&
+          (m.content[0] as { text?: string }).text === settings.hardClear.placeholder,
+      ).length;
+
+    it("cache-ttl clears one old result at a time, until the ratio is back under the line", () => {
+      const result = pruneContextMessages({
+        messages: messages(),
+        settings: { ...settings, mode: "cache-ttl" as const },
+        ctx: CONTEXT_WINDOW_5K,
+      });
+      // 15K of 20K chars: the first clear leaves 12K (still 60%), the second 9K, under 50%.
+      expect(clearedCount(result)).toBe(2);
+    });
+
+    it("always clears every prunable result before the tail, so the prefix stays stable", () => {
+      const result = pruneContextMessages({
+        messages: messages(),
+        settings: { ...settings, mode: "always" as const },
+        ctx: CONTEXT_WINDOW_5K,
+      });
+      // keepLastAssistants is 1, so every result before the last assistant is prunable.
+      expect(clearedCount(result)).toBe(5);
+    });
   });
 });

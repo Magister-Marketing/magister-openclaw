@@ -83,7 +83,10 @@ export function createCodexDynamicToolBridge(params: {
   return {
     specs: tools.map((tool) => ({
       name: tool.name,
-      description: tool.description,
+      // This harness does not receive the embedded runner's shared prompt section.
+      description: tool.sharedPromptGuidance
+        ? `${tool.description}\n\n${tool.sharedPromptGuidance}`
+        : tool.description,
       inputSchema: toJsonValue(tool.parameters),
     })),
     telemetry,

@@ -632,7 +632,10 @@ const CommonToolPolicyFields = {
 };
 
 const DraftVerificationSchema = z
-  .object({ mode: z.enum(["off", "shadow", "repair"]).optional() })
+  .object({
+    mode: z.enum(["off", "shadow", "repair"]).optional(),
+    pastedData: z.enum(["off", "shadow", "repair"]).optional(),
+  })
   .strict()
   .optional();
 
@@ -929,6 +932,7 @@ export const AgentEntrySchema = z
 export const ToolsSchema = z
   .object({
     ...CommonToolPolicyFields,
+    deferredSchemas: z.array(z.string()).optional(),
     web: ToolsWebSchema,
     media: ToolsMediaSchema,
     links: ToolsLinksSchema,

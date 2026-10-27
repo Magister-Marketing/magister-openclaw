@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { callRuntimeGateway } from "./gateway-runtime.js";
 
 type LocalMutationContext = {
   project_id: string;
@@ -9,44 +10,13 @@ type LocalMutationContext = {
   mode: "observe" | "enforce";
 };
 
-function endpoint(pathname: string): string {
-  const raw = (process.env.GATEWAY_INTERNAL_URL ?? "http://magister-gateway.internal:8081").replace(
-    /\/+$/,
-    "",
-  );
-  const url = new URL(raw);
-  const trusted =
-    url.protocol === "http:" &&
-    (url.hostname === "magister-gateway.internal" ||
-      (url.hostname === "127.0.0.1" && url.port === "18796"));
-  if (!trusted || (url.pathname !== "/" && url.pathname !== "")) {
-    throw new Error("memory mutation gateway endpoint is not trusted");
-  }
-  return `${raw}/api/runtime/mutations/${pathname}`;
-}
+// USER.md is the one memory file the machine still owns. MEMORY.md is brand
+// memory, written by the Gateway under the same project fence
+// (brand-memory.ts), so it needs no local lease.
+const RESOURCE = "USER.md";
 
-async function post(pathname: string, body: unknown): Promise<Record<string, unknown>> {
-  const token = process.env.GATEWAY_TOKEN ?? "";
-  if (!token) {
-    throw new Error("memory mutation gateway credential is unavailable");
-  }
-  const response = await fetch(endpoint(pathname), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(5000),
-  });
-  if (!response.ok) {
-    throw new Error(`memory mutation gateway rejected ${pathname}: HTTP ${response.status}`);
-  }
-  const result: unknown = await response.json();
-  if (!result || typeof result !== "object" || Array.isArray(result)) {
-    throw new Error("memory mutation gateway returned an invalid response");
-  }
-  return result as Record<string, unknown>;
+function post(pathname: string, body: unknown): Promise<Record<string, unknown>> {
+  return callRuntimeGateway(`mutations/${pathname}`, { method: "POST", body, timeoutMs: 5000 });
 }
 
 function parseContext(value: Record<string, unknown>): LocalMutationContext {
@@ -80,7 +50,6 @@ export function memoryOperationId(callId: string, action: string, target: string
 export async function withHostMutationBoundary(
   options: {
     operationId: string;
-    target: "memory" | "user";
     content: string;
   },
   write: () => Promise<void>,
@@ -90,18 +59,17 @@ export async function withHostMutationBoundary(
     return;
   }
   const contentHash = createHash("sha256").update(options.content).digest("hex");
-  const resource = options.target === "memory" ? "MEMORY.md" : "USER.md";
   const context = parseContext(
     await post("acquire", {
       operation_id: options.operationId,
-      resource_class: options.target === "memory" ? "host:memory" : "host:user",
+      resource_class: "host:user",
     }),
   );
   let attested = false;
   try {
     const result = await post("attest", {
       context,
-      resource,
+      resource: RESOURCE,
       content_hash: contentHash,
     });
     const deadline =
@@ -113,11 +81,13 @@ export async function withHostMutationBoundary(
     }
     attested = true;
     await write();
-    await post("complete", { context, resource, content_hash: contentHash });
+    await post("complete", { context, resource: RESOURCE, content_hash: contentHash });
     attested = false;
   } finally {
     if (attested) {
-      await post("complete", { context, resource, content_hash: contentHash }).catch(() => {});
+      await post("complete", { context, resource: RESOURCE, content_hash: contentHash }).catch(
+        () => {},
+      );
     }
     await post("release", { context });
   }

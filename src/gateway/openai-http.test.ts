@@ -923,6 +923,79 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
     );
   });
 
+  describe.each([false, true])("selected-answer termination with stream=%s", (stream) => {
+    it.each([
+      ["length", "length"],
+      ["max_tokens", "length"],
+      ["stop", "stop"],
+      ["end_turn", "stop"],
+      [undefined, "stop"],
+    ] as const)("maps selected stop reason %s to %s", async (stopReason, finishReason) => {
+      const content = "The selected answer";
+      agentCommand.mockClear();
+      agentCommand.mockImplementationOnce((async (opts: unknown) => {
+        const result = buildAssistantDeltaResult({
+          opts,
+          emit: emitAgentEvent,
+          deltas: [content],
+          text: content,
+        });
+        // An earlier lifecycle/verification reason must not override the
+        // command's selected final answer when the command settles.
+        const otherReason = finishReason === "length" ? "stop" : "length";
+        emitAgentEvent({
+          runId: (opts as { runId: string }).runId,
+          stream: "lifecycle",
+          data: { phase: "end", stopReason: otherReason },
+        });
+        return {
+          ...result,
+          meta: { stopReason, draftVerification: { stop_reason: otherReason } },
+        };
+      }) as never);
+
+      const response = await postChatCompletions(enabledPort, {
+        stream,
+        model: "openclaw",
+        messages: [{ role: "user", content: "hi" }],
+      });
+      expect(response.status).toBe(200);
+      expect(agentCommand).toHaveBeenCalledTimes(1);
+      if (!stream) {
+        const body = (await response.json()) as {
+          choices: Array<{ message: { content: string }; finish_reason: string }>;
+        };
+        expect(body.choices[0]).toMatchObject({
+          message: { content },
+          finish_reason: finishReason,
+        });
+        return;
+      }
+
+      const text = await response.text();
+      expect(text).not.toContain("event: error");
+      const data = parseSseDataLines(text);
+      expect(data.at(-1)).toBe("[DONE]");
+      const choices = data
+        .filter((line) => line !== "[DONE]")
+        .flatMap(
+          (line) =>
+            (
+              JSON.parse(line) as {
+                choices?: Array<{
+                  delta: { content?: string };
+                  finish_reason?: string | null;
+                }>;
+              }
+            ).choices ?? [],
+        );
+      expect(choices.map((choice) => choice.delta.content ?? "").join("")).toBe(content);
+      expect(choices.filter((choice) => typeof choice.finish_reason === "string")).toEqual([
+        { index: 0, delta: {}, finish_reason: finishReason },
+      ]);
+    });
+  });
+
   it("streams SSE chunks when stream=true", async () => {
     const port = enabledPort;
     try {
@@ -1429,6 +1502,37 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
     expect(text.match(/event: error/g)).toHaveLength(1);
     expect(text).toContain('"code":"aborted"');
     expect(text).not.toContain("event: yield");
+  });
+
+  it("carries timeout proof to the Gateway without calling it cancellation", async () => {
+    agentCommand.mockClear();
+    agentCommand.mockImplementationOnce((async (opts: unknown) => {
+      emitAgentEvent({
+        runId: (opts as { runId: string }).runId,
+        stream: "lifecycle",
+        data: {
+          phase: "error",
+          error: "The model timed out before completing this step.",
+          terminalCode: "provider_error",
+          status: 504,
+          aborted: false,
+          stopReason: "error",
+          failure_reason: "model_timeout",
+          no_output: true,
+        },
+      });
+      return { payloads: [] };
+    }) as never);
+    const response = await postChatCompletions(enabledPort, {
+      stream: true,
+      model: "openclaw",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    const text = await response.text();
+    expect(text.match(/event: error/g)).toHaveLength(1);
+    expect(text).toContain('"failure_reason":"model_timeout"');
+    expect(text).toContain('"no_output":true');
+    expect(text).not.toContain('"code":"aborted"');
   });
 
   it("reads a stamped provider status off a friendly lifecycle error", async () => {

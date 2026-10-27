@@ -581,11 +581,17 @@ function createCachedDescriptorPluginTool(params: {
   if (params.descriptor.displaySummary) {
     tool.displaySummary = params.descriptor.displaySummary;
   }
+  if (params.descriptor.sharedPromptGuidance) {
+    tool.sharedPromptGuidance = params.descriptor.sharedPromptGuidance;
+  }
   if (params.descriptor.ownerOnly === true) {
     tool.ownerOnly = true;
   }
   if (params.descriptor.sideEffect) {
     tool.sideEffect = params.descriptor.sideEffect;
+  }
+  if (params.descriptor.schemaDelivery) {
+    tool.schemaDelivery = params.descriptor.schemaDelivery;
   }
   setPluginToolMeta(tool, {
     pluginId,

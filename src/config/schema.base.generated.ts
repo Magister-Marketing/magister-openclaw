@@ -4913,10 +4913,47 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                         type: "string",
                         const: "cache-ttl",
                       },
+                      {
+                        type: "string",
+                        const: "always",
+                      },
                     ],
                   },
                   ttl: {
                     type: "string",
+                  },
+                  windowTokens: {
+                    type: "integer",
+                    exclusiveMinimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  completedTurns: {
+                    anyOf: [
+                      {
+                        type: "string",
+                        const: "keep",
+                      },
+                      {
+                        type: "string",
+                        const: "trim",
+                      },
+                      {
+                        type: "string",
+                        const: "clear",
+                      },
+                    ],
+                  },
+                  completedTurnsSessionKeys: {
+                    type: "array",
+                    items: {
+                      type: "string",
+                    },
+                  },
+                  completedTurnsKeepReads: {
+                    type: "array",
+                    items: {
+                      type: "string",
+                    },
                   },
                   keepLastAssistants: {
                     type: "integer",
@@ -8414,6 +8451,12 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                           description:
                             "Per-agent off, shadow, or repair override of tools.draftVerification.mode.",
                         },
+                        pastedData: {
+                          type: "string",
+                          enum: ["off", "shadow", "repair"],
+                          description:
+                            "Per-agent off, shadow, or repair override of tools.draftVerification.pastedData.",
+                        },
                       },
                       additionalProperties: false,
                       description: "Per-agent draft verification override.",
@@ -8639,6 +8682,12 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
             title: "Tool Policy by Provider",
             description:
               "Per-provider tool allow/deny overrides keyed by channel/provider ID to tailor capabilities by surface. Use this when one provider needs stricter controls than global tool policy.",
+          },
+          deferredSchemas: {
+            type: "array",
+            items: {
+              type: "string",
+            },
           },
           web: {
             type: "object",
@@ -18408,6 +18457,12 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                 enum: ["off", "shadow", "repair"],
                 description:
                   "off preserves delivery; shadow records deterministic checks without a model call; repair buffers text and allows one tool-free correction only when the turn used no tools.",
+              },
+              pastedData: {
+                type: "string",
+                enum: ["off", "shadow", "repair"],
+                description:
+                  "Mode for turns that carry a pasted-data file, where every figure the reply states must appear in a tool output or the request; repair there buffers the final answer of a tool-using turn and allows one tool-free correction. Default: tools.draftVerification.mode.",
               },
             },
             additionalProperties: false,
@@ -29342,12 +29397,20 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
       help: "off preserves delivery; shadow records deterministic checks without a model call; repair buffers text and allows one tool-free correction only when the turn used no tools.",
       tags: ["tools"],
     },
+    "tools.draftVerification.pastedData": {
+      help: "Mode for turns that carry a pasted-data file, where every figure the reply states must appear in a tool output or the request; repair there buffers the final answer of a tool-using turn and allows one tool-free correction. Default: tools.draftVerification.mode.",
+      tags: ["tools"],
+    },
     "agents.list.*.tools.draftVerification": {
       help: "Per-agent draft verification override.",
       tags: ["advanced"],
     },
     "agents.list.*.tools.draftVerification.mode": {
       help: "Per-agent off, shadow, or repair override of tools.draftVerification.mode.",
+      tags: ["advanced"],
+    },
+    "agents.list.*.tools.draftVerification.pastedData": {
+      help: "Per-agent off, shadow, or repair override of tools.draftVerification.pastedData.",
       tags: ["advanced"],
     },
     "models.providers.*.headers.*": {

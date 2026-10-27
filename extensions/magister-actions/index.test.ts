@@ -41,11 +41,9 @@ const completionAction = nativeActionContract.actions.find(
 if (!completionAction) {
   throw new Error("submit_workflow_completion contract missing");
 }
-const integrationsAction = nativeActionContract.actions.find(
-  (row) => row.action === "list_integrations",
-);
-if (!integrationsAction) {
-  throw new Error("list_integrations contract missing");
+const skillsAction = nativeActionContract.actions.find((row) => row.action === "list_skills");
+if (!skillsAction) {
+  throw new Error("list_skills contract missing");
 }
 const temporaryDirectories: string[] = [];
 
@@ -130,7 +128,12 @@ describe("Magister action manifest contract", () => {
         expect(properties.has(required)).toBe(true);
       }
       expect(JSON.stringify(row.input_schema)).not.toContain("project_id");
+      // Prompt composition reviewed Gateway-side; the runtime only reads it.
+      expect(["eager", "deferred"]).toContain(row.schema_delivery);
     }
+    expect(nativeActionContract.actions.some((row) => row.schema_delivery === "deferred")).toBe(
+      true,
+    );
   });
 
   it("routes exact inline permissions through the trusted server-owned card", () => {
@@ -138,17 +141,41 @@ describe("Magister action manifest contract", () => {
       throw new Error("not called");
     });
 
-    expect(tool.description).toContain('receipt.approval_presentation is "inline_web"');
-    expect(tool.description).toContain("do not print receipt.approval_url");
-    expect(tool.description).toContain('receipt.approval_presentation is "slack_card_scheduled"');
-    expect(tool.description).toContain("never call message(action=send)");
-    expect(tool.description).toContain('receipt.approval_presentation is "link_only"');
-    expect(tool.description).toContain("show receipt.approval_url once");
-    expect(tool.description).toContain("when the runtime holds this call open");
-    expect(tool.description).toContain(
+    expect(tool.sharedPromptGuidance).toContain('receipt.approval_presentation is "inline_web"');
+    expect(tool.sharedPromptGuidance).toContain("do not print receipt.approval_url");
+    expect(tool.sharedPromptGuidance).toContain(
+      'receipt.approval_presentation is "slack_card_scheduled"',
+    );
+    expect(tool.sharedPromptGuidance).toContain("never call message(action=send)");
+    expect(tool.sharedPromptGuidance).toContain('receipt.approval_presentation is "link_only"');
+    expect(tool.sharedPromptGuidance).toContain("show receipt.approval_url once");
+    expect(tool.sharedPromptGuidance).toContain("when the runtime holds this call open");
+    expect(tool.sharedPromptGuidance).toContain(
       "never re-request a denied action or pursue its outcome through another tool",
     );
+    expect(tool.description).toContain("Exact-action permission");
+    expect(tool.description).not.toContain("receipt.approval_presentation");
     expect(tool.sideEffect).toBe("external_write");
+  });
+
+  it("shares permission instructions without changing action schemas or tool availability", () => {
+    const tools = nativeActionContract.actions.map((row) => createMagisterActionTool(api(), row));
+    const approvalTools = tools.filter((tool) => tool.sharedPromptGuidance);
+    expect(approvalTools).toHaveLength(
+      nativeActionContract.actions.filter((row) => row.approval_policy === "exact_payload").length,
+    );
+    expect(new Set(approvalTools.map((tool) => tool.sharedPromptGuidance)).size).toBe(1);
+    tools.forEach((tool, i) => {
+      const row = nativeActionContract.actions[i];
+      expect(tool.name).toBe(row.tool_name);
+      expect(tool.parameters).toEqual(row.input_schema);
+      expect(tool.description).toContain(row.description);
+      expect(tool.sideEffect).toBe(row.side_effect);
+      expect(tool.schemaDelivery).toBe(row.schema_delivery);
+      if (row.approval_policy === "none") {
+        expect(tool.sharedPromptGuidance).toBeUndefined();
+      }
+    });
   });
 });
 
@@ -234,6 +261,46 @@ describe("typed gateway execution", () => {
     await tool.execute("call-malformed-chat", {});
     expect(request?.init?.headers).not.toHaveProperty("x-magister-session-key");
     expect(request?.init?.headers).not.toHaveProperty("x-magister-session-id");
+  });
+
+  it("forwards the Getting Started chat's kickoff session with its id", async () => {
+    process.env.GATEWAY_TOKEN = "secret-machine-token";
+    let request: { init?: RequestInit } | undefined;
+    const tool = createMagisterActionTool(
+      api(),
+      action,
+      async (_input, init) => {
+        request = { init };
+        return new Response(JSON.stringify(envelope()), { status: 200 });
+      },
+      {
+        sessionKey: "audit_kickoff:dd2c2cfe-ad21-4d92-8958-08f1e9dba32d",
+        sessionId: "11111111-1111-4111-8111-111111111111",
+      },
+    );
+
+    await tool.execute("call-getting-started", {});
+    expect(request?.init?.headers).toMatchObject({
+      "x-magister-session-key": "audit_kickoff:dd2c2cfe-ad21-4d92-8958-08f1e9dba32d",
+      "x-magister-session-id": "11111111-1111-4111-8111-111111111111",
+    });
+  });
+
+  it("does not forward a malformed kickoff session key", async () => {
+    process.env.GATEWAY_TOKEN = "secret-machine-token";
+    let request: { init?: RequestInit } | undefined;
+    const tool = createMagisterActionTool(
+      api(),
+      action,
+      async (_input, init) => {
+        request = { init };
+        return new Response(JSON.stringify(envelope()), { status: 200 });
+      },
+      { sessionKey: "audit_kickoff:plan-1" },
+    );
+
+    await tool.execute("call-malformed-kickoff", {});
+    expect(request?.init?.headers).not.toHaveProperty("x-magister-session-key");
   });
 
   it("forwards a trusted Slack thread session outside tool arguments", async () => {
@@ -471,17 +538,17 @@ describe("typed gateway execution", () => {
     }
   });
 
-  it("reuses only freshness-valid cached integration reads", async () => {
+  it("reuses only freshness-valid cached catalog reads", async () => {
     process.env.GATEWAY_TOKEN = "token";
     const workspace = mkdtempSync(join(tmpdir(), "magister-read-cache-"));
     temporaryDirectories.push(workspace);
     process.env.OPENCLAW_WORKSPACE_DIR = workspace;
     process.env.FLY_APP_NAME = "project-app-1";
     let fetches = 0;
-    const tool = createMagisterActionTool(api(), integrationsAction, async () => {
+    const tool = createMagisterActionTool(api(), skillsAction, async () => {
       fetches += 1;
       return new Response(
-        JSON.stringify(envelope({ receipt: { integrations: [{ service: "ga4" }] } })),
+        JSON.stringify(envelope({ receipt: { skills: [{ name: "seo-audit" }] } })),
         { status: 200 },
       );
     });
@@ -498,6 +565,185 @@ describe("typed gateway execution", () => {
     });
   });
 
+  it("reuses a cached read that showed a result card only in that card's chat", async () => {
+    process.env.GATEWAY_TOKEN = "token";
+    const workspace = mkdtempSync(join(tmpdir(), "magister-card-cache-"));
+    temporaryDirectories.push(workspace);
+    process.env.OPENCLAW_WORKSPACE_DIR = workspace;
+    process.env.FLY_APP_NAME = "project-app-card";
+    const chatA = "agent:marketing:webchat:11111111-1111-4111-8111-111111111111";
+    const chatB = "agent:marketing:webchat:22222222-2222-4222-8222-222222222222";
+    const sessions: Array<string | undefined> = [];
+    const gateway = async (_url: string | URL | Request, init?: RequestInit) => {
+      const sessionKey = (init?.headers as Record<string, string>)["x-magister-session-key"];
+      sessions.push(sessionKey);
+      return new Response(
+        JSON.stringify(
+          envelope({
+            receipt: {
+              skills: [{ name: "seo-audit" }],
+              result_card: { card_key: "influencers:run-1", session_key: sessionKey },
+            },
+          }),
+        ),
+        { status: 200 },
+      );
+    };
+    const inChatA = createMagisterActionTool(api(), skillsAction, gateway, {
+      sessionKey: chatA,
+    });
+    const inChatB = createMagisterActionTool(api(), skillsAction, gateway, {
+      sessionKey: chatB,
+    });
+
+    const first = resultJson(await inChatA.execute("call-card-a1", {}));
+    const again = resultJson(await inChatA.execute("call-card-a2", {}));
+    const otherChat = resultJson(await inChatB.execute("call-card-b1", {}));
+
+    // Chat B reached the Gateway, which shows the card in chat B.
+    expect(sessions).toEqual([chatA, chatB]);
+    expect((first.receipt as Record<string, unknown>).cache_freshness).toMatchObject({
+      cached: false,
+    });
+    expect((again.receipt as Record<string, unknown>).cache_freshness).toMatchObject({
+      cached: true,
+    });
+    expect((otherChat.receipt as Record<string, unknown>).cache_freshness).toMatchObject({
+      cached: false,
+    });
+  });
+
+  it("reads the audit afresh every time, since a channel rescore rewrites it", async () => {
+    process.env.GATEWAY_TOKEN = "token";
+    const workspace = mkdtempSync(join(tmpdir(), "magister-audit-cache-"));
+    temporaryDirectories.push(workspace);
+    process.env.OPENCLAW_WORKSPACE_DIR = workspace;
+    process.env.FLY_APP_NAME = "project-app-audit";
+    const auditHealthAction = nativeActionContract.actions.find(
+      (row) => row.action === "get_audit_health",
+    );
+    if (!auditHealthAction) {
+      throw new Error("get_audit_health contract missing");
+    }
+    const scores = [18, 31];
+    let fetches = 0;
+    const tool = createMagisterActionTool(api(), auditHealthAction, async () => {
+      const score = scores[Math.min(fetches, scores.length - 1)];
+      fetches += 1;
+      return new Response(
+        JSON.stringify(envelope({ receipt: { plan_id: "plan-1", seo: score } })),
+        { status: 200 },
+      );
+    });
+
+    const before = resultJson(await tool.execute("call-audit-1", { plan_id: "plan-1" }));
+    const after = resultJson(await tool.execute("call-audit-2", { plan_id: "plan-1" }));
+
+    expect(fetches).toBe(2);
+    expect((before.receipt as Record<string, unknown>).seo).toBe(18);
+    expect((after.receipt as Record<string, unknown>).seo).toBe(31);
+    expect((after.receipt as Record<string, unknown>).cache_freshness).toBeUndefined();
+  });
+
+  it("reads Magister state afresh after the write that changes it", async () => {
+    process.env.GATEWAY_TOKEN = "token";
+    const workspace = mkdtempSync(join(tmpdir(), "magister-write-cache-"));
+    temporaryDirectories.push(workspace);
+    process.env.OPENCLAW_WORKSPACE_DIR = workspace;
+    process.env.FLY_APP_NAME = "project-app-writes";
+    const contractAction = (name: string) => {
+      const row = nativeActionContract.actions.find((candidate) => candidate.action === name);
+      if (!row) {
+        throw new Error(`${name} contract missing`);
+      }
+      return row;
+    };
+    let tiles = 1;
+    let rules = ["rule-1", "rule-2"];
+    const reads: string[] = [];
+    const gateway = async (input: string | URL | Request, init?: RequestInit) => {
+      const name = requestUrl(input).split("/").at(-1) ?? "";
+      if (name === "add_analytics_tile") {
+        tiles += 1;
+      } else if (name === "delete_firehose_rule") {
+        const ruleId = (requestBody(init).arguments as Record<string, unknown>).rule_id;
+        rules = rules.filter((rule) => rule !== ruleId);
+      } else {
+        reads.push(name);
+      }
+      return new Response(JSON.stringify(envelope({ receipt: { tiles, rules } })), {
+        status: 200,
+      });
+    };
+    const tool = (name: string) => createMagisterActionTool(api(), contractAction(name), gateway);
+    const view = { view: "seo", detail: true };
+
+    const pageBefore = resultJson(await tool("get_analytics_view").execute("view-1", view));
+    await tool("add_analytics_tile").execute("tile-1", { view: "seo" });
+    const pageAfter = resultJson(await tool("get_analytics_view").execute("view-2", view));
+    const rulesBefore = resultJson(await tool("list_firehose_rules").execute("rules-1", {}));
+    await tool("delete_firehose_rule").execute("delete-1", {
+      rule_id: "rule-1",
+      confirmed: true,
+    });
+    const rulesAfter = resultJson(await tool("list_firehose_rules").execute("rules-2", {}));
+
+    expect((pageBefore.receipt as Record<string, unknown>).tiles).toBe(1);
+    expect((pageAfter.receipt as Record<string, unknown>).tiles).toBe(2);
+    expect((rulesBefore.receipt as Record<string, unknown>).rules).toEqual(["rule-1", "rule-2"]);
+    expect((rulesAfter.receipt as Record<string, unknown>).rules).toEqual(["rule-2"]);
+    expect((pageAfter.receipt as Record<string, unknown>).cache_freshness).toBeUndefined();
+    expect((rulesAfter.receipt as Record<string, unknown>).cache_freshness).toBeUndefined();
+
+    // The other reads a Magister write rewrites reach the Gateway every time.
+    const writtenStateReads = [
+      "list_analytics_views",
+      "describe_analytics_chart",
+      "list_analytics_metrics",
+      "list_analytics_properties",
+      "read_analytics_snapshots",
+      "read_analytics_breakdown",
+      "list_firehose_matches",
+      "list_aeo_audits",
+      "list_integrations",
+    ];
+    reads.length = 0;
+    for (const name of writtenStateReads) {
+      await tool(name).execute(`${name}-1`, {});
+      await tool(name).execute(`${name}-2`, {});
+    }
+    expect(reads).toEqual(writtenStateReads.flatMap((name) => [name, name]));
+  });
+
+  it("caches a provider read that no Magister write changes", async () => {
+    process.env.GATEWAY_TOKEN = "token";
+    const workspace = mkdtempSync(join(tmpdir(), "magister-keyword-cache-"));
+    temporaryDirectories.push(workspace);
+    process.env.OPENCLAW_WORKSPACE_DIR = workspace;
+    process.env.FLY_APP_NAME = "project-app-keywords";
+    const keywordAction = nativeActionContract.actions.find(
+      (row) => row.action === "keyword_research",
+    );
+    if (!keywordAction) {
+      throw new Error("keyword_research contract missing");
+    }
+    let fetches = 0;
+    const tool = createMagisterActionTool(api(), keywordAction, async () => {
+      fetches += 1;
+      return new Response(JSON.stringify(envelope({ receipt: { keywords: ["crm"] } })), {
+        status: 200,
+      });
+    });
+
+    await tool.execute("keyword-1", { seed: "crm software" });
+    const again = resultJson(await tool.execute("keyword-2", { seed: "crm software" }));
+
+    expect(fetches).toBe(1);
+    expect((again.receipt as Record<string, unknown>).cache_freshness).toMatchObject({
+      cached: true,
+    });
+  });
+
   it("never caches a non-terminal read result", async () => {
     process.env.GATEWAY_TOKEN = "token";
     const workspace = mkdtempSync(join(tmpdir(), "magister-running-cache-"));
@@ -505,7 +751,7 @@ describe("typed gateway execution", () => {
     process.env.OPENCLAW_WORKSPACE_DIR = workspace;
     process.env.FLY_APP_NAME = "project-app-running";
     let fetches = 0;
-    const tool = createMagisterActionTool(api(), integrationsAction, async () => {
+    const tool = createMagisterActionTool(api(), skillsAction, async () => {
       fetches += 1;
       return new Response(
         JSON.stringify(
@@ -519,7 +765,7 @@ describe("typed gateway execution", () => {
                 },
                 receipt: { stage: "running" },
               })
-            : envelope({ receipt: { integrations: [{ service: "ga4" }] } }),
+            : envelope({ receipt: { skills: [{ name: "seo-audit" }] } }),
         ),
         { status: 200 },
       );
@@ -550,7 +796,7 @@ describe("typed gateway execution", () => {
     const source = recordFetchedCorpusSource({
       workspace,
       projectScope: "project-app-legacy-running",
-      url: `magister-action:list_integrations:${inputHash}`,
+      url: `magister-action:list_skills:${inputHash}`,
       contentHash: "a".repeat(64),
       provenance: "integration_discovery",
       fetchedAt,
@@ -576,9 +822,9 @@ describe("typed gateway execution", () => {
       }),
     );
     let fetches = 0;
-    const tool = createMagisterActionTool(api(), integrationsAction, async () => {
+    const tool = createMagisterActionTool(api(), skillsAction, async () => {
       fetches += 1;
-      return new Response(JSON.stringify(envelope({ receipt: { integrations: [] } })), {
+      return new Response(JSON.stringify(envelope({ receipt: { skills: [] } })), {
         status: 200,
       });
     });
@@ -1187,7 +1433,7 @@ describe("hold-the-turn approvals", () => {
 
   it("retries transport failures within the hold instead of surrendering it", async () => {
     let attempts = 0;
-    const fetchImpl = async (input: unknown, init?: RequestInit) => {
+    const fetchImpl = async (input: unknown) => {
       const url = requestUrl(input as string);
       if (url.endsWith("/approval_resolution_ack")) {
         return new Response("{}", { status: 200 });

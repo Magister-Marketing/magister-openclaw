@@ -19,6 +19,7 @@ export type {
 } from "./pi-embedded-subscribe.shared-types.js";
 
 export type SubscribeEmbeddedPiSessionParams = {
+  getTerminalAbortReason?: () => "external_abort" | "idle_timeout" | "run_timeout" | undefined;
   getDraftVerificationReceipt?: () => DraftVerificationReceipt;
   session: AgentSession;
   runId: string;

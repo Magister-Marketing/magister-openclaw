@@ -187,6 +187,12 @@ export type ToolRuntimeResilienceConfig = {
 export type DraftVerificationConfig = {
   /** Request-grounded draft checks. Repair is one tool-free attempt; default: off. */
   mode?: "off" | "shadow" | "repair";
+  /**
+   * Mode for turns that carry a pasted-data file, where the figures check
+   * applies: every figure the reply states must appear in a tool output or
+   * the request. Default: `mode`.
+   */
+  pastedData?: "off" | "shadow" | "repair";
 };
 
 export type ToolLoopDetectionConfig = {
@@ -534,6 +540,12 @@ export type ToolsConfig = {
   deny?: string[];
   /** Optional tool policy overrides keyed by provider id or "provider/model". */
   byProvider?: Record<string, ToolPolicyConfig>;
+  /**
+   * Tools whose JSON schema stays out of the prompt until the model loads it
+   * with tool_describe, the deferral hosted actions declare in their contract.
+   * Names only; a denied tool is never describable, an unknown name is ignored.
+   */
+  deferredSchemas?: string[];
   web?: {
     search?: {
       /** Enable managed web_search and optional Codex-native web search. */

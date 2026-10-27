@@ -6,7 +6,7 @@
       "delegation_safe_tools": [],
       "hosted_agent_tools": [],
       "mcp_tool_actions": ["llm"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": "Core model traffic is host-owned and is not a model-visible tool.",
       "rollout_service": null,
@@ -28,7 +28,7 @@
         }
       ],
       "mcp_tool_actions": ["web_search"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -50,7 +50,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:resend"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["resend"],
       "remediation": null,
       "rollout_service": null,
@@ -72,7 +72,7 @@
         }
       ],
       "mcp_tool_actions": ["dataforseo"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["dataforseo"],
       "remediation": null,
       "rollout_service": null,
@@ -140,7 +140,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -208,7 +208,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -266,6 +266,13 @@
           "idempotency_policy": "safe_retry",
           "side_effect": "none",
           "tool_name": "magister_get_social_analytics"
+        },
+        {
+          "action": "get_instagram_activity",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_get_instagram_activity"
         }
       ],
       "mcp_tool_actions": [
@@ -274,9 +281,10 @@
         "create_social_draft",
         "schedule_social_post",
         "publish_social_post",
-        "get_social_analytics"
+        "get_social_analytics",
+        "get_instagram_activity"
       ],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -344,7 +352,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -412,7 +420,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -480,7 +488,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -548,7 +556,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -616,7 +624,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -684,7 +692,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -752,7 +760,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -820,7 +828,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -888,7 +896,7 @@
         "publish_social_post",
         "get_social_analytics"
       ],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -924,7 +932,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:webflow"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["webflow"],
       "remediation": null,
       "rollout_service": null,
@@ -960,7 +968,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:wix"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["wix"],
       "remediation": null,
       "rollout_service": null,
@@ -1022,7 +1030,7 @@
         "update_blog_post",
         "publish_content"
       ],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["wordpress"],
       "remediation": null,
       "rollout_service": null,
@@ -1058,7 +1066,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:shopify"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["shopify"],
       "remediation": null,
       "rollout_service": null,
@@ -1094,7 +1102,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:posthog"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["posthog"],
       "remediation": null,
       "rollout_service": null,
@@ -1130,7 +1138,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:google_analytics"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["ga4", "ga4_admin"],
       "remediation": null,
       "rollout_service": null,
@@ -1152,7 +1160,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:google_search_console"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["search_console"],
       "remediation": null,
       "rollout_service": null,
@@ -1174,7 +1182,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:fathom"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["fathom"],
       "remediation": null,
       "rollout_service": null,
@@ -1210,7 +1218,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:mixpanel"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["mixpanel"],
       "remediation": null,
       "rollout_service": null,
@@ -1232,7 +1240,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:hotjar"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["hotjar"],
       "remediation": null,
       "rollout_service": null,
@@ -1254,7 +1262,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:ahrefs"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["ahrefs"],
       "remediation": null,
       "rollout_service": null,
@@ -1340,7 +1348,7 @@
         "open_pull_request",
         "merge_pull_request"
       ],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["github"],
       "remediation": null,
       "rollout_service": null,
@@ -1376,7 +1384,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:vercel"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["vercel"],
       "remediation": null,
       "rollout_service": null,
@@ -1390,7 +1398,7 @@
       "delegation_safe_tools": [],
       "hosted_agent_tools": [],
       "mcp_tool_actions": ["proxy:slack"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": "A purpose-built Hosted Agent action is not available yet.",
       "rollout_service": null,
@@ -1401,7 +1409,7 @@
     {
       "capability_id": "google_ads",
       "connection_slug": "google_ads",
-      "delegation_safe_tools": [],
+      "delegation_safe_tools": ["magister_get_ad_analytics", "magister_list_ad_campaigns"],
       "hosted_agent_tools": [
         {
           "action": "integration_read",
@@ -1416,16 +1424,58 @@
           "idempotency_policy": "idempotency_key",
           "side_effect": "spend",
           "tool_name": "magister_integration_spend"
+        },
+        {
+          "action": "list_ad_campaigns",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_list_ad_campaigns"
+        },
+        {
+          "action": "get_ad_analytics",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_get_ad_analytics"
+        },
+        {
+          "action": "create_ad_campaign",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "draft",
+          "tool_name": "magister_create_ad_campaign"
+        },
+        {
+          "action": "activate_ad_campaign",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "spend",
+          "tool_name": "magister_activate_ad_campaign"
+        },
+        {
+          "action": "pause_ad_campaign",
+          "approval_policy": "none",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_pause_ad_campaign"
         }
       ],
-      "mcp_tool_actions": ["proxy:google_ads"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "mcp_tool_actions": [
+        "proxy:google_ads",
+        "list_ad_campaigns",
+        "get_ad_analytics",
+        "create_ad_campaign",
+        "activate_ad_campaign",
+        "pause_ad_campaign"
+      ],
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["google_ads"],
       "remediation": null,
       "rollout_service": null,
       "skill_name": "magister-google-ads",
       "status": "typed",
-      "transport_modes": ["json_v1"]
+      "transport_modes": ["json_v1", "native_json"]
     },
     {
       "capability_id": "zernio_metaads",
@@ -1487,7 +1537,7 @@
         "activate_ad_campaign",
         "pause_ad_campaign"
       ],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -1555,7 +1605,7 @@
         "activate_ad_campaign",
         "pause_ad_campaign"
       ],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -1623,7 +1673,7 @@
         "activate_ad_campaign",
         "pause_ad_campaign"
       ],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -1691,7 +1741,7 @@
         "activate_ad_campaign",
         "pause_ad_campaign"
       ],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -1759,7 +1809,7 @@
         "activate_ad_campaign",
         "pause_ad_campaign"
       ],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -1795,7 +1845,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:hubspot"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["hubspot"],
       "remediation": null,
       "rollout_service": null,
@@ -1831,7 +1881,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:apollo"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["apollo"],
       "remediation": null,
       "rollout_service": null,
@@ -1867,7 +1917,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:intercom"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["intercom"],
       "remediation": null,
       "rollout_service": null,
@@ -1903,7 +1953,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:instantly"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["instantly"],
       "remediation": null,
       "rollout_service": null,
@@ -1939,7 +1989,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:google_workspace"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [
         "google_drive",
         "google_sheets",
@@ -1964,10 +2014,17 @@
           "idempotency_policy": "idempotency_key",
           "side_effect": "external_write",
           "tool_name": "magister_send_email"
+        },
+        {
+          "action": "create_gmail_draft",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_create_gmail_draft"
         }
       ],
-      "mcp_tool_actions": ["proxy:gmail", "send_email"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "mcp_tool_actions": ["proxy:gmail", "send_email", "create_gmail_draft"],
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -2003,7 +2060,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:notion"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["notion"],
       "remediation": null,
       "rollout_service": null,
@@ -2025,7 +2082,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:stripe"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["stripe"],
       "remediation": null,
       "rollout_service": null,
@@ -2061,7 +2118,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:zapier"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["zapier"],
       "remediation": null,
       "rollout_service": null,
@@ -2097,7 +2154,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:buffer"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["buffer"],
       "remediation": null,
       "rollout_service": null,
@@ -2133,7 +2190,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:typefully"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["typefully"],
       "remediation": null,
       "rollout_service": null,
@@ -2169,7 +2226,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:postbridge"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["postbridge"],
       "remediation": null,
       "rollout_service": null,
@@ -2205,7 +2262,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:kit"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["kit"],
       "remediation": null,
       "rollout_service": null,
@@ -2241,7 +2298,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:activecampaign"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["activecampaign"],
       "remediation": null,
       "rollout_service": null,
@@ -2263,7 +2320,7 @@
         }
       ],
       "mcp_tool_actions": ["route:email", "send_agent_email"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -2285,7 +2342,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:apify"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["apify"],
       "remediation": null,
       "rollout_service": null,
@@ -2321,7 +2378,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:attentive"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["attentive"],
       "remediation": null,
       "rollout_service": null,
@@ -2357,7 +2414,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:attio"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["attio"],
       "remediation": null,
       "rollout_service": null,
@@ -2393,7 +2450,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:beehiiv"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["beehiiv"],
       "remediation": null,
       "rollout_service": null,
@@ -2429,7 +2486,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:blotato"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["blotato"],
       "remediation": null,
       "rollout_service": null,
@@ -2488,7 +2545,7 @@
         "suggest_ai_visibility_prompts",
         "create_ai_visibility_set"
       ],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -2524,7 +2581,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:builderio"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["builderio"],
       "remediation": null,
       "rollout_service": null,
@@ -2560,33 +2617,11 @@
         }
       ],
       "mcp_tool_actions": ["proxy:canva"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["canva"],
       "remediation": null,
       "rollout_service": null,
       "skill_name": "magister-canva",
-      "status": "typed",
-      "transport_modes": ["json_v1"]
-    },
-    {
-      "capability_id": "context_dev",
-      "connection_slug": null,
-      "delegation_safe_tools": [],
-      "hosted_agent_tools": [
-        {
-          "action": "integration_read",
-          "approval_policy": "none",
-          "idempotency_policy": "safe_retry",
-          "side_effect": "none",
-          "tool_name": "magister_integration_read"
-        }
-      ],
-      "mcp_tool_actions": ["proxy:context_dev"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
-      "proxy_services": ["context_dev"],
-      "remediation": null,
-      "rollout_service": null,
-      "skill_name": "magister-web-context",
       "status": "typed",
       "transport_modes": ["json_v1"]
     },
@@ -2618,7 +2653,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:creatify"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["creatify"],
       "remediation": null,
       "rollout_service": null,
@@ -2654,7 +2689,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:customerio"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["customerio", "customerio_app"],
       "remediation": null,
       "rollout_service": null,
@@ -2676,7 +2711,7 @@
         }
       ],
       "mcp_tool_actions": ["route:voice_proxy", "generate_elevenlabs_voice"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": "elevenlabs",
@@ -2698,7 +2733,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:exa"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["exa"],
       "remediation": null,
       "rollout_service": null,
@@ -2727,7 +2762,7 @@
         }
       ],
       "mcp_tool_actions": ["route:fal_proxy", "submit_fal_generation", "get_fal_generation"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": "fal",
@@ -2749,7 +2784,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:firecrawl", "call_integration_api"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["firecrawl"],
       "remediation": null,
       "rollout_service": null,
@@ -2771,7 +2806,7 @@
         }
       ],
       "mcp_tool_actions": ["route:firehose", "list_firehose_matches"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
@@ -2807,7 +2842,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:folk"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["folk"],
       "remediation": null,
       "rollout_service": null,
@@ -2829,7 +2864,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:formspree"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["formspree"],
       "remediation": null,
       "rollout_service": null,
@@ -2858,7 +2893,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:framer"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["framer"],
       "remediation": null,
       "rollout_service": null,
@@ -2880,7 +2915,7 @@
         }
       ],
       "mcp_tool_actions": ["route:gemini_proxy", "generate_gemini_image"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": "gemini",
@@ -2950,7 +2985,7 @@
         "push_repo_branch",
         "install_repo_dependencies"
       ],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["gitlab"],
       "remediation": null,
       "rollout_service": null,
@@ -2972,7 +3007,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:hunter"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["hunter"],
       "remediation": null,
       "rollout_service": null,
@@ -2994,7 +3029,7 @@
         }
       ],
       "mcp_tool_actions": ["route:image_proxy", "generate_ideogram_image"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": "ideogram",
@@ -3030,7 +3065,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:klaviyo"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["klaviyo"],
       "remediation": null,
       "rollout_service": null,
@@ -3066,7 +3101,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:loops"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["loops"],
       "remediation": null,
       "rollout_service": null,
@@ -3102,7 +3137,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:mailchimp"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["mailchimp"],
       "remediation": null,
       "rollout_service": null,
@@ -3124,11 +3159,47 @@
         }
       ],
       "mcp_tool_actions": ["proxy:moltsets", "call_integration_api"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["moltsets"],
       "remediation": null,
       "rollout_service": null,
       "skill_name": "magister-moltsets",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
+      "capability_id": "monid",
+      "connection_slug": "monid",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:monid"],
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
+      "proxy_services": ["monid"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-monid",
       "status": "typed",
       "transport_modes": ["json_v1"]
     },
@@ -3160,7 +3231,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:pipedrive"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["pipedrive"],
       "remediation": null,
       "rollout_service": null,
@@ -3196,7 +3267,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:postscript"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["postscript"],
       "remediation": null,
       "rollout_service": null,
@@ -3218,33 +3289,11 @@
         }
       ],
       "mcp_tool_actions": ["proxy:scrapecreators"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["scrapecreators"],
       "remediation": null,
       "rollout_service": null,
       "skill_name": "magister-social-research",
-      "status": "typed",
-      "transport_modes": ["json_v1"]
-    },
-    {
-      "capability_id": "supadata",
-      "connection_slug": null,
-      "delegation_safe_tools": [],
-      "hosted_agent_tools": [
-        {
-          "action": "integration_read",
-          "approval_policy": "none",
-          "idempotency_policy": "safe_retry",
-          "side_effect": "none",
-          "tool_name": "magister_integration_read"
-        }
-      ],
-      "mcp_tool_actions": ["proxy:supadata", "call_integration_api"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
-      "proxy_services": ["supadata"],
-      "remediation": null,
-      "rollout_service": null,
-      "skill_name": "magister-supadata",
       "status": "typed",
       "transport_modes": ["json_v1"]
     },
@@ -3262,7 +3311,7 @@
         }
       ],
       "mcp_tool_actions": ["route:tabstack_proxy", "signed_out_browser_task"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": [],
       "remediation": null,
       "rollout_service": "tabstack",
@@ -3284,7 +3333,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:treg", "call_integration_api"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["treg"],
       "remediation": null,
       "rollout_service": null,
@@ -3306,7 +3355,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:truelist"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["truelist"],
       "remediation": null,
       "rollout_service": null,
@@ -3328,7 +3377,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:pagespeed", "proxy:crux"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["pagespeed", "crux"],
       "remediation": null,
       "rollout_service": null,
@@ -3350,7 +3399,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:youtube"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["youtube"],
       "remediation": null,
       "rollout_service": null,
@@ -3386,7 +3435,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:zoho_crm"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["zoho_crm"],
       "remediation": null,
       "rollout_service": null,
@@ -3422,7 +3471,7 @@
         }
       ],
       "mcp_tool_actions": ["proxy:zoho_marketing_automation"],
-      "minimum_native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
+      "minimum_native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
       "proxy_services": ["zoho_marketing_automation"],
       "remediation": null,
       "rollout_service": null,
@@ -3476,6 +3525,20 @@
       "tool_name": "magister_activate_ad_campaign"
     },
     {
+      "action": "add_analytics_tile",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "internal_write",
+      "tool_name": "magister_add_analytics_tile"
+    },
+    {
+      "action": "add_suppression",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_add_suppression"
+    },
+    {
       "action": "check_back",
       "approval_policy": "none",
       "idempotency_policy": "occurrence_key",
@@ -3504,11 +3567,46 @@
       "tool_name": "magister_create_ai_visibility_set"
     },
     {
+      "action": "create_analytics_view",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "internal_write",
+      "tool_name": "magister_create_analytics_view"
+    },
+    {
       "action": "create_blog_post",
       "approval_policy": "none",
       "idempotency_policy": "idempotency_key",
       "side_effect": "draft",
       "tool_name": "magister_create_blog_post"
+    },
+    {
+      "action": "create_campaign",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "internal_write",
+      "tool_name": "magister_create_campaign"
+    },
+    {
+      "action": "create_firehose_rule",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_create_firehose_rule"
+    },
+    {
+      "action": "create_gmail_draft",
+      "approval_policy": "exact_payload",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "external_write",
+      "tool_name": "magister_create_gmail_draft"
+    },
+    {
+      "action": "create_plan_item",
+      "approval_policy": "none",
+      "idempotency_policy": "idempotency_key",
+      "side_effect": "internal_write",
+      "tool_name": "magister_create_plan_item"
     },
     {
       "action": "create_product",
@@ -3539,11 +3637,39 @@
       "tool_name": "magister_create_workflow"
     },
     {
+      "action": "delete_analytics_view",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_delete_analytics_view"
+    },
+    {
+      "action": "delete_firehose_rule",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_delete_firehose_rule"
+    },
+    {
+      "action": "describe_analytics_chart",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_describe_analytics_chart"
+    },
+    {
       "action": "discover_influencers",
       "approval_policy": "none",
       "idempotency_policy": "idempotency_key",
       "side_effect": "internal_write",
       "tool_name": "magister_discover_influencers"
+    },
+    {
+      "action": "fetch_integration_data",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_fetch_integration_data"
     },
     {
       "action": "fork_workflow_template",
@@ -3595,11 +3721,25 @@
       "tool_name": "magister_get_aeo_audit"
     },
     {
+      "action": "get_ai_visibility_citations",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_get_ai_visibility_citations"
+    },
+    {
       "action": "get_ai_visibility_set",
       "approval_policy": "none",
       "idempotency_policy": "safe_retry",
       "side_effect": "none",
       "tool_name": "magister_get_ai_visibility_set"
+    },
+    {
+      "action": "get_analytics_view",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_get_analytics_view"
     },
     {
       "action": "get_audit_health",
@@ -3642,6 +3782,13 @@
       "idempotency_policy": "safe_retry",
       "side_effect": "none",
       "tool_name": "magister_get_influencer_discovery"
+    },
+    {
+      "action": "get_instagram_activity",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_get_instagram_activity"
     },
     {
       "action": "get_marketing_plan",
@@ -3749,11 +3896,25 @@
       "tool_name": "magister_list_ai_visibility_sets"
     },
     {
+      "action": "list_analytics_metrics",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_analytics_metrics"
+    },
+    {
       "action": "list_analytics_properties",
       "approval_policy": "none",
       "idempotency_policy": "safe_retry",
       "side_effect": "none",
       "tool_name": "magister_list_analytics_properties"
+    },
+    {
+      "action": "list_analytics_views",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_analytics_views"
     },
     {
       "action": "list_assets",
@@ -3763,11 +3924,32 @@
       "tool_name": "magister_list_assets"
     },
     {
+      "action": "list_campaigns",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_campaigns"
+    },
+    {
+      "action": "list_data_syncs",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_data_syncs"
+    },
+    {
       "action": "list_firehose_matches",
       "approval_policy": "none",
       "idempotency_policy": "safe_retry",
       "side_effect": "none",
       "tool_name": "magister_list_firehose_matches"
+    },
+    {
+      "action": "list_firehose_rules",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_firehose_rules"
     },
     {
       "action": "list_integrations",
@@ -3782,6 +3964,20 @@
       "idempotency_policy": "safe_retry",
       "side_effect": "none",
       "tool_name": "magister_list_marketing_events"
+    },
+    {
+      "action": "list_measures",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_measures"
+    },
+    {
+      "action": "list_prospects",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_prospects"
     },
     {
       "action": "list_skills",
@@ -3803,6 +3999,20 @@
       "idempotency_policy": "safe_retry",
       "side_effect": "none",
       "tool_name": "magister_list_social_posts"
+    },
+    {
+      "action": "list_suppressions",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_suppressions"
+    },
+    {
+      "action": "list_touches",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_list_touches"
     },
     {
       "action": "list_trackers",
@@ -3889,6 +4099,20 @@
       "tool_name": "magister_push_repo_branch"
     },
     {
+      "action": "query_metric",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "none",
+      "tool_name": "magister_query_metric"
+    },
+    {
+      "action": "queue_touches",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_queue_touches"
+    },
+    {
       "action": "read_analytics_breakdown",
       "approval_policy": "none",
       "idempotency_policy": "safe_retry",
@@ -3917,13 +4141,6 @@
       "tool_name": "magister_recompile_marketing_plan"
     },
     {
-      "action": "record_tracker_checkin",
-      "approval_policy": "none",
-      "idempotency_policy": "idempotency_key",
-      "side_effect": "internal_write",
-      "tool_name": "magister_record_tracker_checkin"
-    },
-    {
       "action": "refresh_integration",
       "approval_policy": "none",
       "idempotency_policy": "safe_retry",
@@ -3931,11 +4148,39 @@
       "tool_name": "magister_refresh_integration"
     },
     {
+      "action": "remove_analytics_tile",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_remove_analytics_tile"
+    },
+    {
       "action": "request_network_access",
       "approval_policy": "exact_payload",
       "idempotency_policy": "idempotency_key",
       "side_effect": "external_write",
       "tool_name": "magister_request_network_access"
+    },
+    {
+      "action": "reset_analytics_tile",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_reset_analytics_tile"
+    },
+    {
+      "action": "reset_analytics_view",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_reset_analytics_view"
+    },
+    {
+      "action": "restore_analytics_tile",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_restore_analytics_tile"
     },
     {
       "action": "run_aeo_audit",
@@ -3952,11 +4197,25 @@
       "tool_name": "magister_run_ai_visibility_set"
     },
     {
+      "action": "run_site_audit",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_run_site_audit"
+    },
+    {
       "action": "run_workflow",
       "approval_policy": "none",
       "idempotency_policy": "safe_retry",
       "side_effect": "internal_write",
       "tool_name": "magister_run_workflow"
+    },
+    {
+      "action": "save_prospects",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_save_prospects"
     },
     {
       "action": "schedule_social_post",
@@ -4029,6 +4288,20 @@
       "tool_name": "magister_unschedule_workflow"
     },
     {
+      "action": "update_analytics_tile",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_update_analytics_tile"
+    },
+    {
+      "action": "update_analytics_view",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_update_analytics_view"
+    },
+    {
       "action": "update_blog_post",
       "approval_policy": "none",
       "idempotency_policy": "idempotency_key",
@@ -4036,11 +4309,32 @@
       "tool_name": "magister_update_blog_post"
     },
     {
+      "action": "update_data_sync",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_update_data_sync"
+    },
+    {
+      "action": "update_plan_item",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_update_plan_item"
+    },
+    {
       "action": "update_plan_item_status",
       "approval_policy": "none",
       "idempotency_policy": "safe_retry",
       "side_effect": "internal_write",
       "tool_name": "magister_update_plan_item_status"
+    },
+    {
+      "action": "update_prospect",
+      "approval_policy": "none",
+      "idempotency_policy": "safe_retry",
+      "side_effect": "internal_write",
+      "tool_name": "magister_update_prospect"
     },
     {
       "action": "update_tracker",
@@ -4064,7 +4358,7 @@
       "tool_name": "web_search"
     }
   ],
-  "native_action_registry_revision": "549fb31a4c31846223871b6e59b2ff671cb340ee3d036875d8096f758c313d7f",
-  "registry_revision": "f7e1e13c46503dffb0a81be80a06c8ef4264f4880e07a977b93d23752b6c285c",
+  "native_action_registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
+  "registry_revision": "b18520ee8eb9ad64bca4d273e1813736f0c4d041492dfa92b94601ea1d9c410f",
   "schema_version": 1
 }

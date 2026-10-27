@@ -10,6 +10,7 @@ import {
   emitAgentPlanEvent,
 } from "../../infra/agent-events.js";
 import { sleepWithAbort } from "../../infra/backoff.js";
+import { emitTrustedDiagnosticEvent } from "../../infra/diagnostic-events.js";
 import { freezeDiagnosticTraceContext } from "../../infra/diagnostic-trace-context.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { buildAgentHookContextChannelFields } from "../../plugins/hook-agent-context.js";
@@ -43,7 +44,7 @@ import {
 } from "../command/session.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../defaults.js";
 import { DraftVerificationStream } from "../draft-verification-stream.js";
-import { draftStopReason } from "../draft-verification.js";
+import { draftStopReason, PASTE_NOTE_MARKER } from "../draft-verification.js";
 import { isStrictAgenticExecutionContractActive } from "../execution-contract.js";
 import {
   coerceToFailoverError,
@@ -163,6 +164,7 @@ import {
 } from "./run/incomplete-turn.js";
 import type { RunEmbeddedPiAgentParams } from "./run/params.js";
 import { buildEmbeddedRunPayloads } from "./run/payloads.js";
+import { isPreemptiveOverflowSignal } from "./run/preemptive-compaction.js";
 import { handleRetryLimitExhaustion } from "./run/retry-limit.js";
 import {
   buildBeforeModelResolveAttachments,
@@ -523,13 +525,18 @@ export async function runEmbeddedPiAgent(
         agentHarnessId: params.agentHarnessId,
       });
       const pluginHarnessOwnsTransport = agentHarness.id !== "pi";
+      const agentDraftConfig = params.config
+        ? resolveAgentConfig(params.config, workspaceResolution.agentId)?.tools?.draftVerification
+        : undefined;
+      const globalDraftConfig = params.config?.tools?.draftVerification;
+      // A pasted-data turn takes its own mode: its figures check verifies a
+      // tool-using turn against the tool output, which the request-side
+      // checks never do.
+      const pastedDataMode = params.prompt.includes(PASTE_NOTE_MARKER)
+        ? (agentDraftConfig?.pastedData ?? globalDraftConfig?.pastedData)
+        : undefined;
       const draftMode =
-        (params.config
-          ? resolveAgentConfig(params.config, workspaceResolution.agentId)?.tools?.draftVerification
-              ?.mode
-          : undefined) ??
-        params.config?.tools?.draftVerification?.mode ??
-        "off";
+        pastedDataMode ?? agentDraftConfig?.mode ?? globalDraftConfig?.mode ?? "off";
       if (
         draftMode !== "off" &&
         !pluginHarnessOwnsTransport &&
@@ -2145,6 +2152,26 @@ export async function runEmbeddedPiAgent(
             // agent-command `lifecycleEnded`) absorbs the potential double.
             consumeSuppressedTerminal(params.runId);
             emitOverflowTerminal(errorText);
+            if (isPreemptiveOverflowSignal(promptError)) {
+              // The attempt reported its precheck hand-off as aborted, since
+              // compaction could still recover it (MAGISTER-MACHINES-N).
+              // Recovery has given up, so the run's terminal failure is ours
+              // to report; a provider overflow already reported its own error.
+              emitTrustedDiagnosticEvent({
+                type: "run.completed",
+                runId: params.runId,
+                ...(params.sessionKey && { sessionKey: params.sessionKey }),
+                ...(sessionIdUsed && { sessionId: sessionIdUsed }),
+                provider,
+                model: modelId,
+                trigger: params.trigger,
+                ...(channelHint ? { channel: channelHint } : {}),
+                durationMs: Date.now() - started,
+                outcome: "error",
+                failureKind: kind,
+                reasonCode: "overflow_recovery_exhausted",
+              });
+            }
             disarmAttemptRetryRecovery(params.runId);
             attempt.setTerminalLifecycleMeta?.({
               replayInvalid: resolveReplayInvalidForAttempt(),

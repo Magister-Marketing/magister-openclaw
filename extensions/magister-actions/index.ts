@@ -63,6 +63,11 @@ const SLACK_SESSION_RE =
   /^(?:agent:[^:]+:)?slack:(?:(?:direct|group|channel):[a-z0-9_-]+(?::thread:[0-9]+\.[0-9]+)?|[a-z0-9_-]+:[a-z0-9_-]+)$/i;
 const WEBCHAT_SESSION_RE =
   /^agent:[a-z0-9_-]{1,80}:webchat:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// The Getting Started chat keeps the onboarding kickoff's key. Forwarding it
+// lets the Gateway bind an approval to that chat (an inline card, its link in
+// "Needs you", the decision back in the same chat) instead of a bare link.
+const AUDIT_KICKOFF_SESSION_RE =
+  /^audit_kickoff:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const ERROR_CODES = new Set([
   "validation_error",
@@ -109,6 +114,8 @@ type ActionContract = {
   input_schema: Record<string, unknown>;
   side_effect: ActionEnvelope["side_effect"];
   approval_policy: "none" | "exact_payload";
+  /** Gateway-reviewed prompt composition (gateway/app/actions/schema_delivery.py). */
+  schema_delivery: "eager" | "deferred";
 };
 
 type Contract = {
@@ -156,20 +163,47 @@ type ReadCachePolicy = {
 
 const contract = contractJson as Contract;
 
+/**
+ * The reads replayed from the local cache, by exact name; any other read asks
+ * the Gateway every time, so a new action is uncached until it is listed here.
+ * A read is listed only when nothing the agent or the person does inside the
+ * window changes its answer: a provider read, a terminal job read by id, or the
+ * skill catalog. Reads of Magister's own state stay out, because a write
+ * rewrites them and nothing here clears the cache: Analytics pages after a tile
+ * or view edit, stored series after `fetch_integration_data`, Firehose rules and
+ * matches after a rule change, the audit list after `run_aeo_audit`, the audit
+ * score after a rescore, and connection readiness after a refresh or connect.
+ */
+const READ_CACHE_POLICIES: Readonly<Record<string, ReadCachePolicy>> = {
+  keyword_research: { provenance: "seo", ttlSeconds: 1800 },
+  get_aeo_audit: { provenance: "seo", ttlSeconds: 1800 },
+  get_influencer_discovery: { provenance: "research", ttlSeconds: 900 },
+  get_social_analytics: { provenance: "analytics", ttlSeconds: 300 },
+  get_ad_analytics: { provenance: "analytics", ttlSeconds: 300 },
+  list_skills: { provenance: "integration_discovery", ttlSeconds: 300 },
+  get_skill: { provenance: "integration_discovery", ttlSeconds: 300 },
+};
+
 function readCachePolicy(action: string): ReadCachePolicy | undefined {
-  if (action === "list_integrations" || action.includes("skill")) {
-    return { provenance: "integration_discovery", ttlSeconds: 300 };
+  return Object.hasOwn(READ_CACHE_POLICIES, action) ? READ_CACHE_POLICIES[action] : undefined;
+}
+
+/**
+ * A read the Gateway also showed as a result card belongs to the chat it was
+ * shown in: its receipt says which (`receipt.result_card.session_key`).
+ * Replayed in another chat it would show no card while telling the agent one
+ * is there, so only that session reuses it; any other chat asks the Gateway,
+ * which shows the card in that chat.
+ */
+function cachedReadFitsSession(
+  envelope: ActionEnvelope,
+  runtimeSessionKey: string | undefined,
+): boolean {
+  const card = envelope.receipt.result_card;
+  if (!isRecord(card)) {
+    return true;
   }
-  if (action.includes("analytics")) {
-    return { provenance: "analytics", ttlSeconds: 300 };
-  }
-  if (action.includes("seo") || action.includes("audit") || action.includes("keyword")) {
-    return { provenance: "seo", ttlSeconds: 1800 };
-  }
-  if (action.includes("discover") || action.includes("firehose")) {
-    return { provenance: "research", ttlSeconds: 900 };
-  }
-  return undefined;
+  return typeof card.session_key === "string" && card.session_key === runtimeSessionKey;
 }
 
 function cacheScope(rawParams: Record<string, unknown>): {
@@ -314,7 +348,8 @@ function trustedRuntimeSessionKey(context: OpenClawPluginToolContext): string | 
   if (
     WORKFLOW_SESSION_RE.test(sessionKey) ||
     SLACK_SESSION_RE.test(sessionKey) ||
-    WEBCHAT_SESSION_RE.test(sessionKey)
+    WEBCHAT_SESSION_RE.test(sessionKey) ||
+    AUDIT_KICKOFF_SESSION_RE.test(sessionKey)
   ) {
     return sessionKey;
   }
@@ -969,6 +1004,9 @@ export async function holdForApprovalDecision(options: {
   return null;
 }
 
+const MAGISTER_APPROVAL_GUIDANCE =
+  '## Magister action permissions\nFor tools marked "Exact-action permission": If the result says user permission is pending, briefly tell the user permission is needed and end this turn — when the runtime holds this call open, the decision returns as this call\'s result; treat it as the action\'s outcome, and never re-request a denied action or pursue its outcome through another tool. When receipt.approval_presentation is "inline_web", a trusted server-owned card is already in the conversation: do not print receipt.approval_url, emit another permission UI, ask for a synthetic confirmation message, or poll in this turn. When receipt.approval_presentation is "slack_card_scheduled", the trusted server-owned card is already being delivered to the originating Slack thread: give one normal final reply, never call message(action=send) or a Slack/proxy tool just to acknowledge it, and end this turn. When receipt.approval_presentation is "link_only", show receipt.approval_url once and do not render a synthetic Approve button. When receipt.permission_continuation is "automatic", Magister will resume this same session after the decision; when it is "manual", tell the user to return after deciding.';
+
 export function createMagisterActionTool(
   api: OpenClawPluginApi,
   action: ActionContract,
@@ -979,10 +1017,14 @@ export function createMagisterActionTool(
     name: action.tool_name,
     label: action.tool_name,
     sideEffect: action.side_effect,
+    schemaDelivery: action.schema_delivery,
     description:
       action.approval_policy === "exact_payload"
-        ? `${action.description} If the result says user permission is pending, briefly tell the user permission is needed and end this turn — when the runtime holds this call open, the decision returns as this call's result; treat it as the action's outcome, and never re-request a denied action or pursue its outcome through another tool. When receipt.approval_presentation is "inline_web", a trusted server-owned card is already in the conversation: do not print receipt.approval_url, emit another permission UI, ask for a synthetic confirmation message, or poll in this turn. When receipt.approval_presentation is "slack_card_scheduled", the trusted server-owned card is already being delivered to the originating Slack thread: give one normal final reply, never call message(action=send) or a Slack/proxy tool just to acknowledge it, and end this turn. When receipt.approval_presentation is "link_only", show receipt.approval_url once and do not render a synthetic Approve button. When receipt.permission_continuation is "automatic", Magister will resume this same session after the decision; when it is "manual", tell the user to return after deciding.`
+        ? `${action.description} Exact-action permission: follow the shared Magister action permissions instructions.`
         : action.description,
+    ...(action.approval_policy === "exact_payload"
+      ? { sharedPromptGuidance: MAGISTER_APPROVAL_GUIDANCE }
+      : {}),
     parameters: action.input_schema as unknown as TSchema,
     async execute(
       callId: string,
@@ -1029,6 +1071,7 @@ export function createMagisterActionTool(
         );
       }
 
+      const runtimeSessionKey = trustedRuntimeSessionKey(context);
       const policy = action.side_effect === "none" ? readCachePolicy(action.action) : undefined;
       const scope = policy ? cacheScope(rawParams) : undefined;
       const inputHash = policy
@@ -1048,7 +1091,11 @@ export function createMagisterActionTool(
               freshnessTtlSeconds: source.freshnessTtlSeconds,
             });
             const envelope = parseActionEnvelope(cached);
-            if (envelope?.ok && envelope.status.terminal) {
+            if (
+              envelope?.ok &&
+              envelope.status.terminal &&
+              cachedReadFitsSession(envelope, runtimeSessionKey)
+            ) {
               envelope.receipt = {
                 ...envelope.receipt,
                 cache_freshness: {
@@ -1070,7 +1117,6 @@ export function createMagisterActionTool(
       const controller = new AbortController();
       const selectedTimeoutMs = actionTimeoutMs(action.action, config.timeoutMs);
       const timeout = setTimeout(() => controller.abort(), selectedTimeoutMs);
-      const runtimeSessionKey = trustedRuntimeSessionKey(context);
       const runtimeSessionId = context.sessionId?.trim();
       try {
         const mediaPreparedParams = await prepareExactSocialMedia(action.action, rawParams, {

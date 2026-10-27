@@ -76,8 +76,9 @@ export function buildMcpToolSchema(tools: McpLoopbackTool[]): McpToolSchemaEntry
     }
     return {
       name: tool.name,
-      description: tool.description,
+      description: toolDescriptionWithSharedGuidance(tool),
       inputSchema: raw,
     };
   });
 }
+import { toolDescriptionWithSharedGuidance } from "../agents/tool-prompt-guidance.js";

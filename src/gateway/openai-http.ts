@@ -140,6 +140,7 @@ function buildAgentCommandInput(params: {
   sessionKey: string;
   runId: string;
   messageChannel: string;
+  eagerSchemaTools?: string[];
   senderIsOwner: boolean;
   abortSignal?: AbortSignal;
 }) {
@@ -152,6 +153,7 @@ function buildAgentCommandInput(params: {
     runId: params.runId,
     deliver: false as const,
     messageChannel: params.messageChannel,
+    eagerSchemaTools: params.eagerSchemaTools,
     bestEffortDeliver: false as const,
     senderIsOwner: params.senderIsOwner,
     allowModelOverride: true as const,
@@ -188,7 +190,17 @@ function writeAssistantContentChunk(
   });
 }
 
-function writeAssistantStopChunk(res: ServerResponse, params: { runId: string; model: string }) {
+function resolveChatCompletionFinishReason(result: unknown): "stop" | "length" {
+  const stopReason = (result as { meta?: { stopReason?: unknown } } | null)?.meta?.stopReason;
+  // The selected answer owns termination; a rejected correction can have a
+  // different stop reason in its verification receipt.
+  return stopReason === "length" || stopReason === "max_tokens" ? "length" : "stop";
+}
+
+function writeAssistantStopChunk(
+  res: ServerResponse,
+  params: { runId: string; model: string; finishReason: "stop" | "length" },
+) {
   writeSse(res, {
     id: params.runId,
     object: "chat.completion.chunk",
@@ -198,7 +210,7 @@ function writeAssistantStopChunk(res: ServerResponse, params: { runId: string; m
       {
         index: 0,
         delta: {},
-        finish_reason: "stop",
+        finish_reason: params.finishReason,
       },
     ],
   });
@@ -503,6 +515,8 @@ export type TerminalErrorCode =
   | "terminal_result_error";
 
 export type TerminalErrorFrame = {
+  failure_reason?: "model_timeout";
+  no_output?: boolean;
   message: string;
   code: TerminalErrorCode;
   status?: number;
@@ -565,7 +579,16 @@ export function classifyLifecycleError(
     typeof data?.status === "number" && Number.isInteger(data.status) ? data.status : undefined;
   const status = stampedStatus ?? extractPrefixedHttpStatus(rawMessage);
   if (explicit === "provider_error" || data?.stopReason === "retry_limit" || status !== undefined) {
-    return { message, code: "provider_error", ...(status !== undefined ? { status } : {}) };
+    return {
+      message,
+      code: "provider_error",
+      ...(status !== undefined ? { status } : {}),
+      ...(explicit === "provider_error" &&
+      status === 504 &&
+      data?.failure_reason === "model_timeout"
+        ? { failure_reason: "model_timeout" as const, no_output: data.no_output === true }
+        : {}),
+    };
   }
   if (explicit === "terminal_result_error") {
     return { message, code: "terminal_result_error" };
@@ -692,7 +715,7 @@ export async function handleOpenAiHttpRequest(
   const model = typeof payload.model === "string" ? payload.model : "openclaw";
   const user = typeof payload.user === "string" ? payload.user : undefined;
 
-  const { agentId, sessionKey, messageChannel } = resolveGatewayRequestContext({
+  const { agentId, sessionKey, messageChannel, eagerSchemaTools } = resolveGatewayRequestContext({
     req,
     model,
     user,
@@ -750,6 +773,7 @@ export async function handleOpenAiHttpRequest(
     sessionKey,
     runId,
     messageChannel,
+    eagerSchemaTools,
     abortSignal: abortController.signal,
     senderIsOwner,
   });
@@ -791,7 +815,7 @@ export async function handleOpenAiHttpRequest(
           {
             index: 0,
             message: { role: "assistant", content },
-            finish_reason: "stop",
+            finish_reason: resolveChatCompletionFinishReason(result),
           },
         ],
         usage,
@@ -829,6 +853,7 @@ export async function handleOpenAiHttpRequest(
     | undefined;
   let finalizeRequested = false;
   let commandSettled = false;
+  let finalFinishReason: "stop" | "length" = "stop";
   let terminalError = false;
   let closed = false;
   let terminalFrameWritten = false;
@@ -875,7 +900,7 @@ export async function handleOpenAiHttpRequest(
     stopWatchingDisconnect();
     unsubscribe();
     if (!wroteStopChunk) {
-      writeAssistantStopChunk(res, { runId, model });
+      writeAssistantStopChunk(res, { runId, model, finishReason: finalFinishReason });
       wroteStopChunk = true;
     }
     if (streamIncludeUsage && finalUsage) {
@@ -1039,6 +1064,7 @@ export async function handleOpenAiHttpRequest(
       }
 
       finalUsage = resolveChatCompletionUsage(result);
+      finalFinishReason = resolveChatCompletionFinishReason(result);
       commandSettled = true;
 
       const finalResult = result as {

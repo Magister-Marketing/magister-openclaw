@@ -7,6 +7,7 @@ import {
   parseModelRef,
   resolveDefaultModelForAgent,
 } from "../agents/model-selection.js";
+import { EAGER_SCHEMAS_HEADER, parseEagerSchemaTools } from "../agents/tool-schema-deferral.js";
 import { getRuntimeConfig } from "../config/io.js";
 import { buildAgentMainSessionKey, normalizeAgentId } from "../routing/session-key.js";
 import {
@@ -149,7 +150,13 @@ export function resolveGatewayRequestContext(params: {
   sessionPrefix: string;
   defaultMessageChannel: string;
   useMessageChannelHeader?: boolean;
-}): { agentId: string; sessionKey: string; messageChannel: string } {
+}): {
+  agentId: string;
+  sessionKey: string;
+  messageChannel: string;
+  /** Deferred-schema tools this session should ship eagerly (x-magister-eager-schemas). */
+  eagerSchemaTools: string[];
+} {
   const agentId = resolveAgentIdForRequest({ req: params.req, model: params.model });
   const sessionKey = resolveSessionKey({
     req: params.req,
@@ -163,5 +170,7 @@ export function resolveGatewayRequestContext(params: {
       params.defaultMessageChannel)
     : params.defaultMessageChannel;
 
-  return { agentId, sessionKey, messageChannel };
+  const eagerSchemaTools = parseEagerSchemaTools(getHeader(params.req, EAGER_SCHEMAS_HEADER));
+
+  return { agentId, sessionKey, messageChannel, eagerSchemaTools };
 }

@@ -16,14 +16,20 @@ import {
   COMMIT_AUTHOR_EMAIL,
   awaitRepositoryIdle,
   checkoutRepository,
+  CI_DEFINITION_PATHS,
   detectPackageManager,
   ensureRepoRoot,
   handleRepoCheckout,
   INSTALL_POLL_SECONDS,
   installRepoDependencies,
+  isCiDefinition,
+  actionManifestReferences,
+  pipelineIncludes,
+  workflowActionDirs,
   MAX_MANIFEST_PATH_CHARS,
   makeReadableByTools,
   measureTree,
+  normalizeRepoPath,
   parseBranch,
   parseInstallRequest,
   parseProvider,
@@ -485,6 +491,52 @@ describe("TTL sweeping", () => {
     expect(after.removed).toContain(repoDir);
   });
 
+  /** The supervisor makes `.work/<owner>` root-owned 0755 the first time a
+   *  command runs in any of that owner's checkouts; read-only stands in for
+   *  it here. Returns the sibling checkout that has no layer of its own. */
+  function staleSiblingUnderRootOwnedWork(): { repoDir: string; sibling: string; owner: string } {
+    const { origin, repoDir, root } = upstreamAndCheckout();
+    const sibling = path.join(root, "acme", "other");
+    git(root, "clone", "--quiet", "--depth", "1", `file://${origin}`, sibling);
+    const stale = new Date(Date.now() - CHECKOUT_TTL_MS - 60_000).toISOString();
+    fs.writeFileSync(
+      path.join(sibling, ".git", "magister-checkout.json"),
+      JSON.stringify({ last_used_at: stale, repo: "acme/other" }),
+    );
+    fs.mkdirSync(workLayer(repoDir).root, { recursive: true });
+    const owner = path.dirname(workLayer(repoDir).root);
+    fs.chmodSync(owner, 0o555);
+    return { repoDir, sibling, owner };
+  }
+
+  it("an idle sibling it cannot lock never fails another repository's checkout", async () => {
+    const { repoDir, sibling, owner } = staleSiblingUnderRootOwnedWork();
+    try {
+      await expect(checkoutRepository(request())).resolves.toMatchObject({
+        status: "already_current",
+      });
+      expect(fs.existsSync(repoDir)).toBe(true);
+      // Not removable by the host alone; a later sweep gets another try.
+      expect(fs.existsSync(sibling)).toBe(true);
+    } finally {
+      fs.chmodSync(owner, 0o755);
+    }
+  });
+
+  it("asks the supervisor for a layer the host cannot create, then sweeps", async () => {
+    const { sibling, owner, repoDir } = staleSiblingUnderRootOwnedWork();
+    const log = fakeLauncher(path.dirname(path.dirname(repoDir)), { rootOwnedWork: true });
+    try {
+      const swept = await sweepExpiredCheckouts();
+
+      expect(swept.removed).toContain(sibling);
+      expect(fs.existsSync(sibling)).toBe(false);
+      expect(fs.readFileSync(log, "utf8")).toContain("maintenance reset-work-layer");
+    } finally {
+      fs.chmodSync(owner, 0o755);
+    }
+  });
+
   it("removes a staging tree orphaned by a crashed clone", async () => {
     const root = scratch("magister-repos-");
     process.env.MAGISTER_REPO_ROOT = root;
@@ -904,6 +956,563 @@ describe("pushing a branch", () => {
   });
 });
 
+describe("the CI guard at push time", () => {
+  /** A bare remote whose default branch is `main`, plus a checkout of `ref`
+   *  (full history when `depth` is null), detached as the host leaves it. */
+  function checkoutOf(options: {
+    ref?: string;
+    depth?: number | null;
+    provider?: "github" | "gitlab";
+    seedFiles?: Record<string, string>;
+  }): { origin: string; seed: string; repoDir: string } {
+    const seed = scratch("magister-seed-");
+    git(seed, "init", "--quiet", "--initial-branch=main");
+    fs.writeFileSync(path.join(seed, "README.md"), "first\n");
+    git(seed, "add", "README.md");
+    git(seed, "commit", "--quiet", "-m", "first");
+    const origin = scratch("magister-bare-");
+    git(origin, "init", "--quiet", "--bare", "--initial-branch=main");
+    git(seed, "push", "--quiet", `file://${origin}`, "main");
+    if (options.ref) {
+      git(seed, "checkout", "--quiet", "-b", options.ref);
+      for (const [file, body] of Object.entries(options.seedFiles ?? {})) {
+        fs.mkdirSync(path.dirname(path.join(seed, file)), { recursive: true });
+        fs.writeFileSync(path.join(seed, file), body);
+        git(seed, "add", file);
+      }
+      git(seed, "commit", "--quiet", "-m", "branch work");
+      git(seed, "push", "--quiet", `file://${origin}`, options.ref);
+    }
+
+    const root = scratch("magister-repos-");
+    process.env.MAGISTER_REPO_ROOT = root;
+    const provider = options.provider ?? "github";
+    const repoDir = resolveRepoDir(parseRepo("acme/site", provider));
+    fs.mkdirSync(path.dirname(repoDir), { recursive: true });
+    const depth = options.depth === undefined ? 1 : options.depth;
+    git(
+      root,
+      "clone",
+      "--quiet",
+      ...(depth === null ? [] : ["--depth", String(depth)]),
+      ...(options.ref ? ["--branch", options.ref] : []),
+      `file://${origin}`,
+      repoDir,
+    );
+    git(repoDir, "checkout", "--quiet", "--detach", "HEAD");
+    return { origin, seed, repoDir };
+  }
+
+  function write(repoDir: string, file: string, body = "x\n"): void {
+    fs.mkdirSync(path.dirname(path.join(repoDir, file)), { recursive: true });
+    fs.writeFileSync(path.join(repoDir, file), body);
+  }
+
+  it("matches the Gateway's CI paths after normalising, and refuses `..`", () => {
+    expect(CI_DEFINITION_PATHS.github.map(([, exact]) => exact)).toEqual([
+      ".github/workflows",
+      ".github/actions",
+    ]);
+    for (const file of [
+      ".github/workflows/a.yml",
+      ".github/actions/x/action.yml",
+      "./.github//workflows/a.yml",
+      ".GitHub/Workflows/a.yml",
+      "a/../.github/workflows/b.yml",
+    ]) {
+      expect(isCiDefinition(file, "github")).toBe(true);
+    }
+    for (const file of [".gitlab-ci.yml", ".GitLab-CI.yml", ".gitlab/ci/build.yml"]) {
+      expect(isCiDefinition(file, "gitlab")).toBe(true);
+    }
+    expect(isCiDefinition("deploy/pipeline.yml", "gitlab", "deploy/pipeline.yml")).toBe(true);
+    expect(isCiDefinition("deploy/pipeline.yml", "gitlab")).toBe(false);
+    expect(isCiDefinition("docs/workflows.md", "github")).toBe(false);
+    expect(isCiDefinition(".github/CODEOWNERS", "github")).toBe(false);
+    expect(normalizeRepoPath("./A//b/./C.yml")).toBe("a/b/c.yml");
+    expect(normalizeRepoPath("a/../b")).toBeNull();
+  });
+
+  it("refuses a workflow the remote branch head does not have", async () => {
+    const { origin, repoDir } = checkoutOf({});
+    write(repoDir, "README.md", "edited\n");
+    const first = await prepareRepoCommit(prepare());
+    await pushRepoBranch(push({ commit_sha: first.commit_sha }));
+
+    write(repoDir, ".github/workflows/ci.yml", "on: push\n");
+    const next = await prepareRepoCommit(prepare({ message: "add ci" }));
+
+    await expect(
+      pushRepoBranch(push({ commit_sha: next.commit_sha, expected_remote_sha: first.commit_sha })),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining(".github/workflows/ci.yml"),
+    });
+    expect(remoteTip(origin, "magister/readme")).toBe(first.commit_sha);
+  });
+
+  it("refuses a new branch whose base the remote no longer holds when it carries a workflow", async () => {
+    // The checkout's base adds the workflow; its branch is then deleted, so the
+    // prepared commit's own change set (README only) says nothing about it.
+    const { origin, repoDir } = checkoutOf({
+      ref: "feature",
+      depth: null,
+      seedFiles: { ".github/workflows/deploy.yml": "on: push\n" },
+    });
+    git(origin, "branch", "-D", "feature");
+    write(repoDir, "README.md", "edited\n");
+    const receipt = await prepareRepoCommit(prepare());
+    expect(receipt.changed_files).toEqual([{ path: "README.md", change: "modified" }]);
+
+    await expect(pushRepoBranch(push({ commit_sha: receipt.commit_sha }))).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining(".github/workflows/deploy.yml"),
+    });
+    expect(remoteTip(origin, "magister/readme")).toBeNull();
+  });
+
+  it("refuses a shallow checkout's workflow from a base the remote no longer holds", async () => {
+    const { origin, repoDir } = checkoutOf({
+      ref: "feature",
+      depth: 1,
+      seedFiles: { ".github/workflows/deploy.yml": "on: push\n" },
+    });
+    git(origin, "branch", "-D", "feature");
+    write(repoDir, "README.md", "edited\n");
+    const receipt = await prepareRepoCommit(prepare());
+
+    await expect(pushRepoBranch(push({ commit_sha: receipt.commit_sha }))).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining(".github/workflows/deploy.yml"),
+    });
+    expect(remoteTip(origin, "magister/readme")).toBeNull();
+  });
+
+  it("refuses a new branch cut from an old commit whose workflow the default branch has since changed", async () => {
+    // The base holds workflow v1; main then moves to v2. The prepared commit
+    // touches only the README, and its merge base with main is the base
+    // itself, so only a tree-to-tree comparison sees the branch would run v1.
+    const { origin, seed, repoDir } = checkoutOf({
+      ref: "feature",
+      depth: null,
+      seedFiles: { ".github/workflows/deploy.yml": "on: push # v1\n" },
+    });
+    git(seed, "checkout", "--quiet", "main");
+    git(seed, "merge", "--quiet", "--ff-only", "feature");
+    fs.writeFileSync(path.join(seed, ".github/workflows/deploy.yml"), "on: push # v2\n");
+    git(seed, "commit", "--quiet", "-am", "workflow v2");
+    git(seed, "push", "--quiet", `file://${origin}`, "main");
+    git(origin, "branch", "-D", "feature");
+    write(repoDir, "README.md", "edited\n");
+    const receipt = await prepareRepoCommit(prepare());
+
+    await expect(pushRepoBranch(push({ commit_sha: receipt.commit_sha }))).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining(".github/workflows/deploy.yml"),
+    });
+    expect(remoteTip(origin, "magister/readme")).toBeNull();
+  });
+
+  it("pushes a clean change, including an ordinary file under .github", async () => {
+    const { origin, repoDir } = checkoutOf({});
+    write(repoDir, "README.md", "edited\n");
+    write(repoDir, ".github/CODEOWNERS", "* @acme\n");
+    const receipt = await prepareRepoCommit(prepare());
+
+    const pushed = await pushRepoBranch(push({ commit_sha: receipt.commit_sha }));
+
+    expect(pushed.status).toBe("pushed");
+    expect(remoteTip(origin, "magister/readme")).toBe(receipt.commit_sha);
+  });
+
+  it("refuses a GitLab project's own pipeline file when the Gateway names it", async () => {
+    const { origin, repoDir } = checkoutOf({ provider: "gitlab" });
+    write(repoDir, "deploy/Pipeline.yml", "stages: []\n");
+    const receipt = await prepareRepoCommit(prepare({ provider: "gitlab" }));
+
+    const request = push({
+      provider: "gitlab",
+      token: "glpat_test",
+      commit_sha: receipt.commit_sha,
+    });
+    await expect(
+      pushRepoBranch({ ...request, ci_config_path: "deploy/pipeline.yml" }),
+    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining("CI definition") });
+    expect(remoteTip(origin, "magister/readme")).toBeNull();
+
+    // Without a custom pipeline file it is an ordinary file.
+    const pushed = await pushRepoBranch(request);
+    expect(pushed.status).toBe("pushed");
+  });
+
+  it("accepts a GitLab pipeline path only for GitLab, normalised, never with `..`", () => {
+    const base = { ...push(), commit_sha: "a".repeat(40) };
+    expect(
+      parsePushRequest({ ...base, provider: "gitlab", ci_config_path: "./Deploy//CI.yml" })
+        .ci_config_path,
+    ).toBe("deploy/ci.yml");
+    expect(parsePushRequest({ ...base, provider: "gitlab" }).ci_config_path).toBeUndefined();
+    expect(() => parsePushRequest({ ...base, ci_config_path: "ci.yml" })).toThrow(
+      /only meaningful/,
+    );
+    expect(() =>
+      parsePushRequest({ ...base, provider: "gitlab", ci_config_path: "a/../ci.yml" }),
+    ).toThrow(CheckoutError);
+  });
+});
+
+describe("CI code the definitions name from elsewhere in the tree", () => {
+  /** A bare remote whose default branch `main` holds `files`, and a checkout of it. */
+  function checkoutWith(
+    files: Record<string, string>,
+    provider: "github" | "gitlab" = "github",
+  ): { origin: string; repoDir: string } {
+    const seed = scratch("magister-seed-");
+    git(seed, "init", "--quiet", "--initial-branch=main");
+    for (const [file, body] of Object.entries({ "README.md": "first\n", ...files })) {
+      fs.mkdirSync(path.dirname(path.join(seed, file)), { recursive: true });
+      fs.writeFileSync(path.join(seed, file), body);
+    }
+    git(seed, "add", ".");
+    git(seed, "commit", "--quiet", "-m", "first");
+    const origin = scratch("magister-bare-");
+    git(origin, "init", "--quiet", "--bare", "--initial-branch=main");
+    git(seed, "push", "--quiet", `file://${origin}`, "main");
+    process.env.MAGISTER_REPO_ROOT = scratch("magister-repos-");
+    const repoDir = resolveRepoDir(parseRepo("acme/site", provider));
+    fs.mkdirSync(path.dirname(repoDir), { recursive: true });
+    git(path.dirname(repoDir), "clone", "--quiet", "--depth", "1", `file://${origin}`, repoDir);
+    git(repoDir, "checkout", "--quiet", "--detach", "HEAD");
+    return { origin, repoDir };
+  }
+
+  async function pushEdit(
+    repoDir: string,
+    file: string,
+    provider: "github" | "gitlab" = "github",
+  ): Promise<unknown> {
+    fs.mkdirSync(path.dirname(path.join(repoDir, file)), { recursive: true });
+    fs.writeFileSync(path.join(repoDir, file), "edited\n");
+    const receipt = await prepareRepoCommit(prepare({ provider }));
+    return pushRepoBranch(
+      push({
+        provider,
+        commit_sha: receipt.commit_sha,
+        ...(provider === "gitlab" ? { token: "glpat_test" } : {}),
+      }),
+    );
+  }
+
+  const WORKFLOW = [
+    "on: push",
+    "jobs:",
+    "  build:",
+    "    runs-on: ubuntu-latest",
+    "    steps:",
+    "      - uses: actions/checkout@v4",
+    "      - uses: ./ci/setup # the team's composite action",
+    "",
+  ].join("\n");
+  const COMPOSITE = [
+    "runs:",
+    "  using: composite",
+    "  steps:",
+    "    - run: ${{ github.action_path }}/install.sh",
+    "      shell: bash",
+    "    - uses: './tools/lint'",
+    "",
+  ].join("\n");
+
+  const workflow = (steps: string) =>
+    `on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n${steps}\n`;
+
+  it("reads the local actions a workflow runs, in every YAML spelling", () => {
+    expect(workflowActionDirs(WORKFLOW, "acme/site")).toEqual(["ci/setup"]);
+    expect(
+      workflowActionDirs(
+        workflow(
+          [
+            "      # - uses: ./retired",
+            '      - { uses: "./Flow/Step", with: { a: 1 } }',
+            '      - "uses": ./quoted',
+            "      - uses: docker://alpine:3",
+            "      - uses: ./",
+            "      - uses: actions/checkout@v4",
+            "      - uses: ACME/Site/tools/lint@main",
+            "      - uses: >-",
+            "          ./folded",
+          ].join("\n"),
+        ),
+        "acme/site",
+      ),
+    ).toEqual(["flow/step", "quoted", "", "tools/lint", "folded"]);
+    // Two steps on one line, and steps reached through an anchor.
+    expect(
+      workflowActionDirs(
+        [
+          "jobs:",
+          "  a:",
+          "    steps: &shared [{uses: ./one}, {uses: ./two}]",
+          "  b:",
+          "    steps: *shared",
+          "  c:",
+          "    uses: ./.github/workflows/reusable.yml",
+          "",
+        ].join("\n"),
+        "acme/site",
+      ),
+    ).toEqual(["one", "two", "one", "two", ".github/workflows/reusable.yml"]);
+    expect(workflowActionDirs("on: push\n", "acme/site")).toEqual([]);
+  });
+
+  it("refuses a workflow it cannot read with certainty", () => {
+    for (const unreadable of [
+      workflow("      - uses: ./../outside"),
+      workflow("      - uses: *setup"),
+      workflow("      - uses: ./${{ matrix.action }}"),
+      workflow("      - uses: $ACTION"),
+      workflow("      - uses: 42"),
+      workflow("      - uses: not-an-action"),
+      workflow("      - uses: ./a\n      - uses: ./b\n    steps: []"),
+      "jobs: [build]\n",
+      "jobs:\n  build: run\n",
+      "jobs:\n  build:\n    steps: notalist\n",
+      "jobs:\n  build:\n    steps:\n      - just a string\n",
+      "jobs:\n  build:\n    steps: [{uses: ./x",
+      "jobs:\n  build:\n    steps:\n      - uses: !custom ./x\n",
+      "jobs:\n  ? [a, b]\n  : {}\n",
+    ]) {
+      expect(workflowActionDirs(unreadable, "acme/site")).toBeNull();
+    }
+  });
+
+  it("reads what an action manifest runs, from its own directory", () => {
+    expect(actionManifestReferences(COMPOSITE, "ci/setup", "acme/site")).toEqual({
+      dirs: ["tools/lint"],
+      files: [],
+    });
+    expect(
+      actionManifestReferences(
+        [
+          "runs:",
+          "  using: node20",
+          "  main: dist/index.js",
+          "  pre: ../../outside.js",
+          "  post: ./cleanup.js",
+          "",
+        ].join("\n"),
+        "ci/setup",
+        "acme/site",
+      ),
+    ).toEqual({ dirs: [], files: ["ci/setup/dist/index.js", "outside.js", "ci/setup/cleanup.js"] });
+    expect(
+      actionManifestReferences(
+        [
+          "runs:",
+          "  using: docker",
+          "  image: ../shared/Dockerfile",
+          "  entrypoint: entrypoint.sh",
+          "  post-entrypoint: /usr/bin/cleanup",
+          "",
+        ].join("\n"),
+        "ci/docker",
+        "acme/site",
+      ),
+    ).toEqual({ dirs: [], files: ["ci/shared/dockerfile", "ci/docker/entrypoint.sh"] });
+    expect(
+      actionManifestReferences(
+        "runs:\n  using: docker\n  image: docker://alpine\n",
+        "",
+        "acme/site",
+      ),
+    ).toEqual({ dirs: [], files: [] });
+    expect(actionManifestReferences("name: no runs\n", "ci/x", "acme/site")).toEqual({
+      dirs: [],
+      files: [],
+    });
+  });
+
+  it("refuses an action manifest it cannot read with certainty", () => {
+    for (const unreadable of [
+      "runs:\n  using: node20\n  main: ../../../escapes.js\n",
+      "runs:\n  using: node20\n  main: $MAIN\n",
+      "runs:\n  using: [composite]\n",
+      "runs:\n  using: composite\n  steps:\n    - uses: ./${{ inputs.action }}\n",
+      "runs:\n  using: composite\n  steps: {uses: ./x}\n",
+      "runs: composite\n",
+      "runs:\n  main: a.js\nruns:\n  main: b.js\n",
+    ]) {
+      expect(actionManifestReferences(unreadable, "ci/setup", "acme/site")).toBeNull();
+    }
+  });
+
+  it("reads a GitLab pipeline's local includes, in every form and at any depth", () => {
+    const pipeline = [
+      "spec:",
+      "  inputs:",
+      "    stage:",
+      "      default: test",
+      "---",
+      "include:",
+      "  - local: '/templates/build.yml'",
+      "    rules:",
+      '      - if: $CI_COMMIT_BRANCH == "main"',
+      "  - '/templates/test.yml'",
+      "  - remote: 'https://example.com/ci.yml'",
+      "  - project: 'group/other'",
+      "    ref: main",
+      "    file:",
+      "      - '/shared.yml'",
+      "  - template: Auto-DevOps.gitlab-ci.yml",
+      "  - artifact: generated.yml",
+      "    job: generate",
+      ".child: &child",
+      "  trigger:",
+      "    include: ci/child-*.yml",
+      "deploy:",
+      "  <<: *child",
+      "  stage: $[[ inputs.stage ]]",
+      "nested:",
+      "  deeper:",
+      "    trigger:",
+      "      include: { local: configs/**.yml }",
+      "",
+    ].join("\n");
+    // The hidden `.child` template and the job merged from it both carry the include.
+    expect(pipelineIncludes(pipeline, "acme/site")).toEqual([
+      "templates/build.yml",
+      "templates/test.yml",
+      "ci/child-*.yml",
+      "ci/child-*.yml",
+      "configs/**.yml",
+    ]);
+    expect(pipelineIncludes("include: [a.yml, {local: b.yml}]\n", "acme/site")).toEqual([
+      "a.yml",
+      "b.yml",
+    ]);
+    expect(pipelineIncludes("include: 'https://example.com/ci.yml'\n", "acme/site")).toEqual([]);
+    expect(pipelineIncludes("", "acme/site")).toEqual([]);
+  });
+
+  it("refuses a pipeline it cannot read with certainty", () => {
+    for (const unreadable of [
+      "include:\n  - local: $CI_DIR/build.yml\n",
+      "include:\n  - project: acme/site\n    file: /ci.yml\n",
+      "include:\n  - project: /ACME/Site/\n    file: /ci.yml\n",
+      "include:\n  - project: $CI_PROJECT_PATH\n    file: /ci.yml\n",
+      "include:\n  - project: group/other\n    file: $FILE\n",
+      "include:\n  - project: group/other\n    ref: $REF\n    file: /ci.yml\n",
+      "include:\n  - component: $CI_SERVER_FQDN/acme/site/comp@1.0\n",
+      "include:\n  - component: gitlab.com/acme/site/comp@1.0\n",
+      "include:\n  - local: ../outside.yml\n",
+      "include:\n  - local: a.yml\n    unknown: 1\n",
+      "include: 1\n",
+      "include:\n",
+      "include: [a.yml\n",
+      "include: a.yml\ninclude: b.yml\n",
+      "include: *missing\n",
+      "build:\n  script: !reference [.base, script]\n",
+      "deploy:\n  trigger:\n    include: [{local: a.yml}, 3]\n",
+    ]) {
+      expect(pipelineIncludes(unreadable, "acme/site")).toBeNull();
+    }
+    expect(
+      pipelineIncludes("include:\n  - component: gitlab.com/group/other/comp@1.0\n", "acme/site"),
+    ).toEqual([]);
+  });
+
+  it("refuses a push that edits a local action a workflow runs, outside .github", async () => {
+    const { origin, repoDir } = checkoutWith({
+      ".github/workflows/ci.yml": WORKFLOW,
+      "ci/setup/action.yml": COMPOSITE,
+      "ci/setup/install.sh": "echo setup\n",
+      "tools/lint/action.yaml": "runs:\n  using: node20\n  main: index.js\n",
+      "tools/lint/index.js": "lint()\n",
+    });
+
+    await expect(pushEdit(repoDir, "ci/setup/install.sh")).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining("ci/setup/install.sh is, or may be, a CI definition"),
+    });
+    expect(remoteTip(origin, "magister/readme")).toBeNull();
+  });
+
+  it("follows a local action into the actions it runs", async () => {
+    const { origin, repoDir } = checkoutWith({
+      ".github/workflows/ci.yml": WORKFLOW,
+      "ci/setup/action.yml": COMPOSITE,
+      "tools/lint/action.yaml": "runs:\n  using: node20\n  main: index.js\n",
+      "tools/lint/index.js": "lint()\n",
+    });
+
+    await expect(pushEdit(repoDir, "tools/lint/index.js")).rejects.toMatchObject({
+      message: expect.stringContaining("tools/lint/index.js"),
+    });
+    expect(remoteTip(origin, "magister/readme")).toBeNull();
+  });
+
+  it("refuses a push that edits a file a manifest's runs names outside its directory", async () => {
+    const { origin, repoDir } = checkoutWith({
+      ".github/workflows/ci.yml": "jobs:\n  build:\n    steps: [{uses: ./ci/setup}]\n",
+      "ci/setup/action.yml": "runs:\n  using: node20\n  main: ../../outside.js\n",
+      "outside.js": "run()\n",
+    });
+
+    await expect(pushEdit(repoDir, "outside.js")).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining("outside.js is, or may be, a CI definition"),
+    });
+    expect(remoteTip(origin, "magister/readme")).toBeNull();
+  });
+
+  it("refuses an action manifest anywhere, and pushes code no definition names", async () => {
+    const manifest = checkoutWith({ ".github/workflows/ci.yml": WORKFLOW });
+    await expect(pushEdit(manifest.repoDir, "packages/deploy/action.yml")).rejects.toMatchObject({
+      message: expect.stringContaining("packages/deploy/action.yml"),
+    });
+
+    const clean = checkoutWith({ ".github/workflows/ci.yml": WORKFLOW });
+    await expect(pushEdit(clean.repoDir, "src/app.ts")).resolves.toMatchObject({
+      status: "pushed",
+    });
+  });
+
+  it("refuses a push that edits a file the GitLab pipeline includes, nested or by wildcard", async () => {
+    const files = {
+      ".gitlab-ci.yml": "include:\n  - local: ci/build.yml\n  - local: 'ci/jobs/*.yml'\n",
+      "ci/build.yml": "include: '/scripts/more.yml'\n",
+      "ci/jobs/test.yml": "test:\n  script: [make test]\n",
+      "scripts/more.yml": "lint:\n  script: [make lint]\n",
+    };
+    for (const file of ["ci/build.yml", "scripts/more.yml", "ci/jobs/deploy.yml"]) {
+      const { origin, repoDir } = checkoutWith(files, "gitlab");
+      await expect(pushEdit(repoDir, file, "gitlab")).rejects.toMatchObject({
+        statusCode: 409,
+        message: expect.stringContaining(`${file} is, or may be, a CI definition`),
+      });
+      expect(remoteTip(origin, "magister/readme")).toBeNull();
+    }
+
+    const { repoDir } = checkoutWith(files, "gitlab");
+    await expect(pushEdit(repoDir, "README.md", "gitlab")).resolves.toMatchObject({
+      status: "pushed",
+    });
+  });
+
+  it("refuses any push when a pipeline's includes cannot be read", async () => {
+    const { origin, repoDir } = checkoutWith(
+      { ".gitlab-ci.yml": "include: ci/a.yml\ninclude: ci/b.yml\n" },
+      "gitlab",
+    );
+
+    await expect(pushEdit(repoDir, "README.md", "gitlab")).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining("could not be read"),
+    });
+    expect(remoteTip(origin, "magister/readme")).toBeNull();
+  });
+});
+
 describe("prepare with an unusable base", () => {
   it("refuses rather than reporting a commit as having changed nothing", async () => {
     const { repoDir } = bareUpstreamAndCheckout();
@@ -927,7 +1536,10 @@ describe("prepare with an unusable base", () => {
 /** A stand-in for the tool-sandbox launcher: records every invocation and
  *  does, on the real filesystem, what the supervisor's overlay would make
  *  the sandbox's writes look like from the host. */
-function fakeLauncher(root: string, options: { fetchExit?: number } = {}): string {
+function fakeLauncher(
+  root: string,
+  options: { fetchExit?: number; rootOwnedWork?: boolean } = {},
+): string {
   const dir = scratch("magister-launcher-");
   const log = path.join(dir, "launcher.log");
   const script = path.join(dir, "launcher.sh");
@@ -951,7 +1563,9 @@ function fakeLauncher(root: string, options: { fetchExit?: number } = {}): strin
       'case "$P" in',
       `  fetcher) mkdir -p "$LAYER/upper/node_modules"; echo x > "$LAYER/upper/node_modules/.installed"; exit ${options.fetchExit ?? 0};;`,
       `  tool) mkdir -p "$LAYER"; ${record}; exit 0;;`,
-      '  maintenance) if [ "$1" = "remove-work-layer" ]; then rm -rf "$LAYER"; else rm -rf "$LAYER/upper" "$LAYER/work"; mkdir -p "$LAYER/upper"; fi; exit 0;;',
+      // The real supervisor is root; this stand-in runs as the test user, so
+      // it lifts the read-only owner directory a root-owned one stands for.
+      `  maintenance) ${options.rootOwnedWork ? 'chmod u+w "$(dirname "$LAYER")";' : ""} if [ "$1" = "remove-work-layer" ]; then rm -rf "$LAYER"; else rm -rf "$LAYER/upper" "$LAYER/work"; mkdir -p "$LAYER/upper"; fi; exit 0;;`,
       "esac",
       "exit 70",
       "",

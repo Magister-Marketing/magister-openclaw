@@ -1,6 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createStreamingDirectiveAccumulator } from "../auto-reply/reply/streaming-directives.js";
 import { createInlineCodeState } from "../markdown/code-spans.js";
+import {
+  armAttemptRetryRecovery,
+  disarmAttemptRetryRecovery,
+  timeoutHasNoOutput,
+} from "./pi-embedded-runner/attempt-retry-registry.js";
 import {
   buildAssistantStreamData,
   consumePendingAssistantReplyDirectivesIntoReply,
@@ -19,6 +24,8 @@ import {
   createOpenAiResponsesTextBlock,
   createOpenAiResponsesTextEvent as createTextUpdateEvent,
 } from "./pi-embedded-subscribe.openai-responses.test-helpers.js";
+
+afterEach(() => disarmAttemptRetryRecovery("run-1"));
 
 function createMessageUpdateContext(
   params: {
@@ -266,6 +273,26 @@ describe("pending assistant reply directives", () => {
 });
 
 describe("handleMessageUpdate", () => {
+  it("records partial delivery before an aborted message can clear its buffers", () => {
+    armAttemptRetryRecovery("run-1", {
+      hasOverflowBudget: () => false,
+      hasNoVisibleAnswerRetryBudget: () => false,
+    });
+    const onAgentEvent = vi.fn();
+    const ctx = createMessageUpdateContext({ onAgentEvent });
+    handleMessageUpdate(
+      ctx,
+      createTextUpdateEvent({
+        type: "text_delta",
+        text: "Partial useful work.",
+        signaturePhase: "final_answer",
+        partialPhase: "final_answer",
+      }),
+    );
+    expect(onAgentEvent).toHaveBeenCalled();
+    expect(timeoutHasNoOutput("run-1")).toBe(false);
+  });
+
   it("collects finalizer text state without streaming assistant updates", () => {
     const onAgentEvent = vi.fn();
     const onPartialReply = vi.fn();

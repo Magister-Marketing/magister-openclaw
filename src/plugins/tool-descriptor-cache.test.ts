@@ -148,10 +148,12 @@ describe("plugin tool descriptor cache keys", () => {
         description: "Writes a demo value",
         parameters: {} as never,
         sideEffect: "external_write",
+        schemaDelivery: "deferred",
         execute: vi.fn(),
       },
     });
 
     expect(descriptor.sideEffect).toBe("external_write");
+    expect(descriptor.schemaDelivery).toBe("deferred");
   });
 });
