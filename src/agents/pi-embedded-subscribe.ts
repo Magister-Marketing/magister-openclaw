@@ -16,6 +16,7 @@ import {
   normalizeTextForComparison,
 } from "./pi-embedded-helpers.js";
 import type { BlockReplyPayload } from "./pi-embedded-payloads.js";
+import { noteRunDeliveredWork } from "./pi-embedded-runner/attempt-retry-registry.js";
 import { hasCommittedMessagingToolDeliveryEvidence } from "./pi-embedded-runner/delivery-evidence.js";
 import {
   createEmbeddedRunReplayState,
@@ -865,6 +866,8 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
   };
 
   const resetForCompactionRetry = () => {
+    // Compaction erases per-attempt detail: fail closed for financial recovery.
+    noteRunDeliveredWork(params.runId);
     state.hadDeterministicSideEffect =
       state.hadDeterministicSideEffect === true ||
       hasCommittedMessagingToolDeliveryEvidence({

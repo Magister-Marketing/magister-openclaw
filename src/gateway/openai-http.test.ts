@@ -1504,6 +1504,37 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
     expect(text).not.toContain("event: yield");
   });
 
+  it("carries timeout proof to the Gateway without calling it cancellation", async () => {
+    agentCommand.mockClear();
+    agentCommand.mockImplementationOnce((async (opts: unknown) => {
+      emitAgentEvent({
+        runId: (opts as { runId: string }).runId,
+        stream: "lifecycle",
+        data: {
+          phase: "error",
+          error: "The model timed out before completing this step.",
+          terminalCode: "provider_error",
+          status: 504,
+          aborted: false,
+          stopReason: "error",
+          failure_reason: "model_timeout",
+          no_output: true,
+        },
+      });
+      return { payloads: [] };
+    }) as never);
+    const response = await postChatCompletions(enabledPort, {
+      stream: true,
+      model: "openclaw",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    const text = await response.text();
+    expect(text.match(/event: error/g)).toHaveLength(1);
+    expect(text).toContain('"failure_reason":"model_timeout"');
+    expect(text).toContain('"no_output":true');
+    expect(text).not.toContain('"code":"aborted"');
+  });
+
   it("reads a stamped provider status off a friendly lifecycle error", async () => {
     agentCommand.mockClear();
     agentCommand.mockImplementationOnce((async (opts: unknown) => {

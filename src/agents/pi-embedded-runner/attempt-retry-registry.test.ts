@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  noteRunDeliveredWork,
+  timeoutHasNoOutput,
+  withholdTimeoutTerminal,
   armAttemptRetryRecovery,
   consumeSuppressedTerminal,
   consumeWithheldTerminal,
@@ -228,5 +231,36 @@ describe("attempt retry registry: lifecycle", () => {
       }),
     ).toBe(false);
     expect(consumeWithheldTerminal(undefined)).toBeNull();
+  });
+});
+
+describe("timeouts await the outer run and retain work evidence", () => {
+  it("withholds even at zero budget, clears on retry, and flushes exactly once", () => {
+    arm({ overflow: () => false, noAnswer: () => false });
+    const timeout = { phase: "error", failure_reason: "model_timeout" };
+    expect(withholdTimeoutTerminal(RUN_ID, timeout)).toBe(true);
+    noteRetryAttemptStarted(RUN_ID);
+    expect(consumeWithheldTerminal(RUN_ID)).toBeNull();
+    expect(withholdTimeoutTerminal(RUN_ID, timeout)).toBe(true);
+    expect(consumeWithheldTerminal(RUN_ID)).toEqual(timeout);
+    expect(consumeWithheldTerminal(RUN_ID)).toBeNull();
+  });
+  it("revokes no-output proof when buffered text is delivered after the timeout", () => {
+    arm();
+    withholdTimeoutTerminal(RUN_ID, {
+      phase: "error",
+      failure_reason: "model_timeout",
+      no_output: true,
+    });
+    noteRunDeliveredWork(RUN_ID);
+    expect(consumeWithheldTerminal(RUN_ID)).toMatchObject({ no_output: false });
+  });
+  it("never loses delivered work evidence on internal retry", () => {
+    expect(timeoutHasNoOutput(RUN_ID)).toBe(false);
+    arm();
+    expect(timeoutHasNoOutput(RUN_ID)).toBe(true);
+    noteRunDeliveredWork(RUN_ID);
+    noteRetryAttemptStarted(RUN_ID);
+    expect(timeoutHasNoOutput(RUN_ID)).toBe(false);
   });
 });
