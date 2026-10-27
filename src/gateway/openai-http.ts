@@ -515,6 +515,8 @@ export type TerminalErrorCode =
   | "terminal_result_error";
 
 export type TerminalErrorFrame = {
+  failure_reason?: "model_timeout";
+  no_output?: boolean;
   message: string;
   code: TerminalErrorCode;
   status?: number;
@@ -577,7 +579,16 @@ export function classifyLifecycleError(
     typeof data?.status === "number" && Number.isInteger(data.status) ? data.status : undefined;
   const status = stampedStatus ?? extractPrefixedHttpStatus(rawMessage);
   if (explicit === "provider_error" || data?.stopReason === "retry_limit" || status !== undefined) {
-    return { message, code: "provider_error", ...(status !== undefined ? { status } : {}) };
+    return {
+      message,
+      code: "provider_error",
+      ...(status !== undefined ? { status } : {}),
+      ...(explicit === "provider_error" &&
+      status === 504 &&
+      data?.failure_reason === "model_timeout"
+        ? { failure_reason: "model_timeout" as const, no_output: data.no_output === true }
+        : {}),
+    };
   }
   if (explicit === "terminal_result_error") {
     return { message, code: "terminal_result_error" };

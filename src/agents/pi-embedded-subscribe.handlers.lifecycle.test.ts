@@ -1089,3 +1089,61 @@ describe("handleAgentEnd cut-tool-chain withholding (Magister fork)", () => {
     });
   });
 });
+
+describe("model timeout terminal", () => {
+  afterEach(() => disarmAttemptRetryRecovery("run-1"));
+  it("waits for runner recovery instead of falsely announcing a user abort", async () => {
+    armAttemptRetryRecovery("run-1", {
+      hasOverflowBudget: () => false,
+      hasNoVisibleAnswerRetryBudget: () => false,
+    });
+    const onAgentEvent = vi.fn();
+    const ctx = createContext(
+      { role: "assistant", stopReason: "aborted", content: [] },
+      { onAgentEvent },
+    );
+    ctx.params.getTerminalAbortReason = () => "idle_timeout";
+    await handleAgentEnd(ctx);
+    expect(onAgentEvent).not.toHaveBeenCalled();
+    expect(consumeWithheldTerminal("run-1")).toMatchObject({
+      phase: "error",
+      terminalCode: "provider_error",
+      status: 504,
+      failure_reason: "model_timeout",
+      no_output: true,
+      aborted: false,
+    });
+    expect(consumeWithheldTerminal("run-1")).toBeNull();
+  });
+  it("keeps external cancellation terminal and financially ineligible", async () => {
+    armAttemptRetryRecovery("run-1", {
+      hasOverflowBudget: () => true,
+      hasNoVisibleAnswerRetryBudget: () => true,
+    });
+    const onAgentEvent = vi.fn();
+    const ctx = createContext(
+      { role: "assistant", stopReason: "aborted", content: [] },
+      { onAgentEvent },
+    );
+    ctx.params.getTerminalAbortReason = () => "external_abort";
+    await handleAgentEnd(ctx);
+    expect(onAgentEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ terminalCode: "aborted" }) }),
+    );
+    expect(consumeWithheldTerminal("run-1")).toBeNull();
+  });
+  it("does not certify no output when run coordination is missing", async () => {
+    const onAgentEvent = vi.fn();
+    const ctx = createContext(
+      { role: "assistant", stopReason: "aborted", content: [] },
+      { onAgentEvent },
+    );
+    ctx.params.getTerminalAbortReason = () => "idle_timeout";
+    await handleAgentEnd(ctx);
+    expect(onAgentEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ failure_reason: "model_timeout", no_output: false }),
+      }),
+    );
+  });
+});

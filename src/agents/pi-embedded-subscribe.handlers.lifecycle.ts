@@ -9,6 +9,9 @@ import {
 } from "./pi-embedded-error-observation.js";
 import { classifyFailoverReason, formatAssistantErrorText } from "./pi-embedded-helpers.js";
 import {
+  noteRunDeliveredWork,
+  timeoutHasNoOutput,
+  withholdTimeoutTerminal,
   shouldSuppressTerminalOverflowError,
   withholdTerminalForPendingRetry,
 } from "./pi-embedded-runner/attempt-retry-registry.js";
@@ -107,6 +110,18 @@ export function handleAgentEnd(
     ctx.state.hadDeterministicSideEffect === true ||
     hasCommittedMessagingToolDeliveryEvidence(ctx.state) ||
     (ctx.state.successfulCronAdds ?? 0) > 0;
+  // Never restore an attempt that emitted useful work or invoked any tool.
+  // The registry keeps this evidence across internal retries.
+  if (
+    hasAssistantVisibleText ||
+    hadDeterministicSideEffect ||
+    ctx.state.deltaBuffer?.trim() ||
+    ctx.state.lastStreamedAssistantCleaned?.trim() ||
+    ctx.state.pendingToolMediaUrls?.length ||
+    ctx.state.replayState.hadPotentialSideEffects
+  ) {
+    noteRunDeliveredWork(ctx.params.runId);
+  }
   const incompleteTerminalAssistant = isIncompleteTerminalAssistantTurn({
     hasAssistantVisibleText,
     lastAssistant: isAssistantMessage(lastAssistant) ? lastAssistant : null,
@@ -209,6 +224,32 @@ export function handleAgentEnd(
         );
         return;
       }
+    }
+    const abortReason = ctx.params.getTerminalAbortReason?.();
+    if (
+      isAborted &&
+      ctx.state.yielded !== true &&
+      (abortReason === "idle_timeout" || abortReason === "run_timeout")
+    ) {
+      const data = {
+        ...terminalMeta,
+        phase: "error",
+        error: "The model timed out before completing this step.",
+        terminalCode: "provider_error",
+        status: 504,
+        stopReason: "error",
+        aborted: false,
+        failure_reason: "model_timeout",
+        no_output: timeoutHasNoOutput(ctx.params.runId),
+      };
+      if (withholdTimeoutTerminal(ctx.params.runId, data)) return;
+      emitAgentEvent({
+        runId: ctx.params.runId,
+        stream: "lifecycle",
+        data: { ...data, endedAt: Date.now() },
+      });
+      void ctx.params.onAgentEvent?.({ stream: "lifecycle", data });
+      return;
     }
     if (isError || isAborted) {
       // Cancellation is terminal, not successful completion. Keep it out of

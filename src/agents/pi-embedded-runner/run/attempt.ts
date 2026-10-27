@@ -2432,6 +2432,14 @@ export async function runEmbeddedAttempt(
       const subscription = subscribeEmbeddedPiSession(
         buildEmbeddedSubscriptionParams({
           session: activeSession,
+          getTerminalAbortReason: () =>
+            externalAbort || params.abortSignal?.aborted
+              ? "external_abort"
+              : idleTimedOut
+                ? "idle_timeout"
+                : timedOut
+                  ? "run_timeout"
+                  : undefined,
           runId: params.runId,
           initialReplayState: params.initialReplayState,
           hookRunner: getGlobalHookRunner() ?? undefined,
