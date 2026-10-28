@@ -212,7 +212,7 @@ export class MagisterMemoryContextEngine implements ContextEngine {
     ]);
 
     const blocks: string[] = [];
-    let shared = "";
+    let shared: string | undefined;
     if (marketingContext) {
       try {
         const context = JSON.parse(marketingContext) as { rendered?: unknown; stale?: unknown };
@@ -236,7 +236,7 @@ export class MagisterMemoryContextEngine implements ContextEngine {
           content: shared,
         }),
       );
-    } else if (memory) {
+    } else if (shared === undefined && memory) {
       blocks.push(
         renderMagisterContextBlock({
           provenance: "trusted_project_state",
