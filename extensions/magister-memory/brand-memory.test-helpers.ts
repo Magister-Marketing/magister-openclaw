@@ -20,6 +20,7 @@ export function stubBrandMemoryGateway(initial: string[] = []) {
   // `failing` before the write, `failingAfterCommit` after it (a timeout the
   // machine sees once the server has already committed).
   const failing = new Set<string>();
+  const forbidden = new Set<string>();
   const failingAfterCommit = new Set<string>();
   // brand_memory_imports: the upload runs once per brand.
   let importedOnce = false;
@@ -64,10 +65,17 @@ export function stubBrandMemoryGateway(initial: string[] = []) {
       body,
       authorization: headers.get("Authorization") ?? undefined,
     });
+    if (forbidden.has(url.pathname)) return new Response("{}", { status: 403 });
     if (failing.has(url.pathname)) {
       return new Response("{}", { status: 500 });
     }
 
+    if (url.pathname === "/api/runtime/marketing-context" && method === "GET") {
+      return reply({
+        revision: entries.length,
+        rendered: `Confirmed rules: ${entries.join("; ")}`,
+      });
+    }
     if (url.pathname === "/api/runtime/brand-memory" && method === "GET") {
       return reply(list());
     }
@@ -87,7 +95,7 @@ export function stubBrandMemoryGateway(initial: string[] = []) {
       }
       return reply({ ok: true, imported, ...list() });
     }
-    if (url.pathname === "/api/runtime/brand-memory" && method === "POST") {
+    if (url.pathname === "/api/runtime/marketing-context/rules" && method === "POST") {
       const content = typeof body?.content === "string" ? body.content.trim() : "";
       const oldText = typeof body?.old_text === "string" ? body.old_text : "";
       if (body?.action === "add") {
@@ -97,7 +105,10 @@ export function stubBrandMemoryGateway(initial: string[] = []) {
         entries.push(content);
         return reply({ ok: true, ...list() });
       }
-      const index = match(oldText);
+      const index =
+        typeof body?.entry_id === "string"
+          ? Number(body.entry_id.replace("entry-", ""))
+          : match(oldText);
       if (typeof index === "string") {
         return reply({ ok: false, error: index, ...list() });
       }
@@ -112,7 +123,7 @@ export function stubBrandMemoryGateway(initial: string[] = []) {
   });
 
   vi.stubGlobal("fetch", fetchMock);
-  return { entries, calls, failing, failingAfterCommit, fetchMock };
+  return { entries, calls, failing, forbidden, failingAfterCommit, fetchMock };
 }
 
 /** Point the plugin's runtime channel at the machine broker, as on a machine. */

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -25,6 +25,31 @@ describe("MagisterMemoryContextEngine", () => {
 
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true });
+  });
+
+  it("uses the shared provenance projection instead of labeling confirmed rules as inferred", async () => {
+    await mkdir(join(dir, ".magister", "state"), { recursive: true });
+    await writeFile(memoryPath, "old legacy note");
+    await writeFile(
+      join(dir, ".magister", "state", "marketing-context.json"),
+      JSON.stringify({
+        revision: 2,
+        rendered: "Confirmed rules: use short sentences.\nObserved style: candid.",
+        stale: true,
+      }),
+    );
+    const engine = new MagisterMemoryContextEngine({
+      memoryPath,
+      userPath,
+      projectPath,
+      brandPath,
+      inner: new LegacyContextEngine(),
+    });
+    const result = await engine.assemble({ sessionId: "same", messages: [] });
+    expect(result.systemPromptAddition).toContain("source=shared_marketing_context");
+    expect(result.systemPromptAddition).toContain("Confirmed rules: use short sentences");
+    expect(result.systemPromptAddition).toContain("Refresh failed");
+    expect(result.systemPromptAddition).not.toContain("older_inferred_memory");
   });
 
   it("returns inner result unchanged when both files are absent", async () => {
