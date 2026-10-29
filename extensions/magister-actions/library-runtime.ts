@@ -573,20 +573,44 @@ export class LibraryRuntime {
                 }
                 const base = await runtime.base(relative, session, cache);
                 if (!base) throw new Error(`not_found: ${relative}`);
-                const oldText = params.oldText ?? params.old_string;
-                const newText = params.newText ?? params.new_string;
-                if (typeof oldText !== "string" || !oldText || typeof newText !== "string")
-                  throw new Error("Exact oldText and newText are required");
+                // The edit tool's own schema is `edits: [{oldText, newText}]`;
+                // the single-pair form is kept for older callers.
+                const edits = Array.isArray(params.edits)
+                  ? params.edits.map((entry) => record(entry))
+                  : [
+                      {
+                        oldText: params.oldText ?? params.old_string,
+                        newText: params.newText ?? params.new_string,
+                      },
+                    ];
                 const text = await runtime.store.text(base);
-                const first = text.indexOf(oldText);
-                if (first < 0 || text.indexOf(oldText, first + 1) >= 0)
-                  throw new Error("conflict: oldText must match exactly once in the revision read");
+                // Like the edit tool: every oldText matches exactly once in the
+                // revision read, edits do not overlap, and all apply together.
+                const spans = edits.map(({ oldText, newText }) => {
+                  if (typeof oldText !== "string" || !oldText || typeof newText !== "string")
+                    throw new Error("Exact oldText and newText are required");
+                  const start = text.indexOf(oldText);
+                  if (start < 0 || text.indexOf(oldText, start + 1) >= 0)
+                    throw new Error(
+                      "conflict: oldText must match exactly once in the revision read",
+                    );
+                  return { start, end: start + oldText.length, newText };
+                });
+                if (!spans.length) throw new Error("Exact oldText and newText are required");
+                spans.sort((a, b) => a.start - b.start);
+                let edited = "";
+                let cursor = 0;
+                for (const span of spans) {
+                  if (span.start < cursor) throw new Error("conflict: edits overlap");
+                  edited += text.slice(cursor, span.start) + span.newText;
+                  cursor = span.end;
+                }
                 return [
                   {
                     kind: "replace",
                     file_id: base.file_id,
                     expected_revision: base.revision_id,
-                    text: text.slice(0, first) + newText + text.slice(first + oldText.length),
+                    text: edited + text.slice(cursor),
                   },
                 ];
               },

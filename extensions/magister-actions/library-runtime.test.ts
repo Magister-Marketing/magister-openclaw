@@ -429,6 +429,30 @@ describe("hosted Library tool authority", () => {
       expected_revision: gateway.commits.length ? gateway.revisions[0].revision_id : "",
     });
   });
+  it("applies the edit tool's edits array against the revision read", async () => {
+    // Lane hazelib, 2026-10-29: the agent's edit in this form failed with
+    // "Exact oldText and newText are required" and it overwrote the file.
+    await write("resources/brief.md", "TOKEN=two\nkeep\nend");
+    await read("resources/brief.md");
+    await tool("edit").execute("edit-array", {
+      path: "resources/brief.md",
+      edits: [
+        { oldText: "end", newText: "END" },
+        { oldText: "TOKEN=two", newText: "TOKEN=three" },
+      ],
+    });
+    expect(gateway.heads()[0].text).toBe("TOKEN=three\nkeep\nEND");
+    await read("resources/brief.md");
+    await expect(
+      tool("edit").execute("edit-overlap", {
+        path: "resources/brief.md",
+        edits: [
+          { oldText: "TOKEN=three", newText: "a" },
+          { oldText: "three\nkeep", newText: "b" },
+        ],
+      }),
+    ).rejects.toThrow("overlap");
+  });
   it("does not advance observations when another writer refreshes the cache", async () => {
     gateway.put("resources/draft.md", "one");
     await read("resources/draft.md");
