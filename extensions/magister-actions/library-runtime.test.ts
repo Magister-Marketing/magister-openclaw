@@ -986,6 +986,7 @@ describe("review fixes (PR 2210)", () => {
     await write("scratch.txt", "local", "recovery-local");
     expect(await fs.readFile(path.join(workspace, "scratch.txt"), "utf8")).toBe("local");
     // If the Library's paths cannot be listed, recovery refuses every write.
+    replaced.recoveryListingTtlMs = 0;
     const original = gateway.request;
     vi.spyOn(gateway, "request").mockImplementation(async (method, endpoint, values) => {
       if (endpoint === "/manifest") throw new LibraryHttpError(503, {});
@@ -995,6 +996,48 @@ describe("review fixes (PR 2210)", () => {
       "temporarily_unavailable",
     );
     expect(gateway.commits).toHaveLength(0);
+  });
+  it("C5: recovery refuses local writes under publication roots before the path exists", async () => {
+    const replaced = await freshVolume();
+    gateway.state.mode = "recovery";
+    await expect(replaced.admit()).resolves.toBe(false);
+    // A publication may create these while recovery runs; a local copy would be
+    // overwritten without notice when the brand returns to active.
+    for (const target of ["audits/2026-10-audit.md", "data/ga4/sessions.csv", "data/pages/x/y.md"])
+      await expect(write(target, "local", `recovery-${target}`)).rejects.toThrow(
+        "temporarily_unavailable",
+      );
+    await expect(fs.stat(path.join(workspace, "audits"))).rejects.toThrow("ENOENT");
+    await expect(fs.stat(path.join(workspace, "data"))).rejects.toThrow("ENOENT");
+    await write("database-notes.txt", "local", "recovery-similar-name");
+    expect(await fs.readFile(path.join(workspace, "database-notes.txt"), "utf8")).toBe("local");
+  });
+  it("C5: recovery reuses its Library path list for 30 s and never caches a failure", async () => {
+    const replaced = await freshVolume();
+    gateway.state.mode = "recovery";
+    await replaced.admit();
+    const original = gateway.request;
+    let failManifest = false;
+    const request = vi
+      .spyOn(gateway, "request")
+      .mockImplementation(async (method, endpoint, values) => {
+        if (endpoint === "/manifest" && failManifest) throw new LibraryHttpError(503, {});
+        return original(method, endpoint, values);
+      });
+    const listings = () => request.mock.calls.filter((call) => call[1] === "/manifest").length;
+    for (const id of ["one", "two", "three"]) await write("scratch.txt", id, `cached-${id}`);
+    expect(listings()).toBe(1);
+    replaced.recoveryListingTtlMs = 0;
+    failManifest = true;
+    await expect(write("scratch.txt", "x", "cached-failed")).rejects.toThrow(
+      "temporarily_unavailable",
+    );
+    failManifest = false;
+    replaced.recoveryListingTtlMs = 30_000;
+    await write("scratch.txt", "four", "cached-retry");
+    expect(listings()).toBe(3);
+    await write("scratch.txt", "five", "cached-again");
+    expect(listings()).toBe(3);
   });
   it("L1: caches a legacy answer for 60 s and a Gateway reconcile refreshes it", async () => {
     await freshVolume();

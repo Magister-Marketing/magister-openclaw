@@ -50,6 +50,11 @@ const sourcePaths = new Set([
   "WORKFLOWS.md",
   "MEMORY.md",
 ]);
+// Roots trusted publication creates paths under (library_publication.py:
+// audits/, data/<source>/ and data/pages/; resources/ is handled below). Agents
+// can never create there (the Gateway's canonical_path), so treating them as
+// Library paths only refuses a local write a later publication would overwrite.
+const publishedRoots = ["audits", "data"];
 const jsonResult = (value: unknown) => ({
   content: [{ type: "text" as const, text: JSON.stringify(value) }],
   details: value,
@@ -87,6 +92,11 @@ export class LibraryRuntime {
   discoveryTimeoutMs = 3_000;
   discoveryBackoffMs = 60_000;
   private discoveryPausedUntil = 0;
+  /** Recovery's cloud path list is reused this long; a failure is never cached. */
+  recoveryListingTtlMs = 30_000;
+  private recoveryListing:
+    | { key: string; listedAt: number; files: Record<string, LibraryFile> }
+    | undefined;
   constructor(
     readonly workspace: string,
     readonly bridge: LibraryBridge,
@@ -451,12 +461,24 @@ export class LibraryRuntime {
       },
     );
   }
+  private async recoveryPaths(state: LibraryState): Promise<Record<string, LibraryFile>> {
+    const key = `${state.project_id}:${state.epoch}`;
+    const saved = this.recoveryListing;
+    if (saved?.key === key && Date.now() - saved.listedAt < this.recoveryListingTtlMs)
+      return saved.files;
+    // A failed listing also drops the old one: the next call must list again.
+    this.recoveryListing = undefined;
+    const files = await this.store.listed(state.project_id, state.sequence);
+    this.recoveryListing = { key, listedAt: Date.now(), files };
+    return files;
+  }
   private managedPath(relative: string | undefined, cache: LibraryCache): boolean {
     return (
       !!relative &&
       (sourcePaths.has(relative) ||
         relative === "resources" ||
         relative.startsWith("resources/") ||
+        publishedRoots.some((root) => relative === root || relative.startsWith(`${root}/`)) ||
         Object.values(cache.files).some(
           (file) =>
             file.path === relative ||
@@ -792,9 +814,7 @@ export class LibraryRuntime {
           };
           const mutating = ["write", "edit", "apply_patch"].includes(tool.name);
           try {
-            for (const file of Object.values(
-              await runtime.store.listed(admitted.state.project_id, admitted.state.sequence),
-            ))
+            for (const file of Object.values(await runtime.recoveryPaths(admitted.state)))
               cache.files[`listed:${file.file_id}`] = file;
           } catch {
             // Without the list no write can be proven safe; reads still use the cache.
