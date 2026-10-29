@@ -3,6 +3,7 @@ import fs from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
 import { reportCleanupFailure, reportHostRouteFailure } from "./host-route-telemetry.js";
+import { hostedLibraryRuntime } from "./library-integration.js";
 import { LocalMutationObservation, parseLocalMutationContext } from "./mutation-observer.js";
 import { mirrorReadBits } from "./tool-readable.js";
 
@@ -276,6 +277,17 @@ export async function promoteArtifact(
     throw new ArtifactPromotionError("promotion requires a current enforced mutation fence", 409);
   }
 
+  const library = hostedLibraryRuntime(workspace);
+  const replay = await library?.replayPromotion(request);
+  if (replay) {
+    return {
+      ...replay,
+      destination_path: request.destination_path,
+      sha256: request.sha256,
+      byte_size: replay.files.find((file) => file.path === request.destination_path)?.size,
+    };
+  }
+
   const attemptRootRelative = path.join(".magister", "tmp", "attempts", request.attempt_id);
   const attemptRoot = await assertComponents(workspace, attemptRootRelative, {
     createParents: false,
@@ -304,6 +316,25 @@ export async function promoteArtifact(
     throw new ArtifactPromotionError("staged artifact hash mismatch", 409);
   }
 
+  // The staged file is untrusted until ownership/size/hash validation above.
+  // Active Library commits bytes first; local installation is its projection.
+  if (library) {
+    const receipt = await library.promote(request, await fs.promises.readFile(staged));
+    if (receipt) {
+      if (receipt.status === "committed") await cleanUpPromotedStaging(staged, attemptRoot);
+      return {
+        ...receipt,
+        destination_path: request.destination_path,
+        sha256: request.sha256,
+        byte_size: stagedStat.size,
+      };
+    }
+  }
+
+  const completeLegacy = await library?.beginLegacyWrite(
+    "sandbox.promotion",
+    `promotion:${request.attempt_id}:${request.destination_path}`,
+  );
   const destination = await assertComponents(workspace, request.destination_path, {
     createParents: true,
   });
@@ -322,6 +353,7 @@ export async function promoteArtifact(
       await mirrorReadBits(destination);
       observation?.finish("promoted");
       await cleanUpPromotedStaging(staged, attemptRoot);
+      await completeLegacy?.();
       return {
         status: "already_current",
         destination_path: request.destination_path,
@@ -385,6 +417,7 @@ export async function promoteArtifact(
     }
     observation?.finish("promoted");
     await cleanUpPromotedStaging(staged, attemptRoot);
+    await completeLegacy?.();
     return {
       status: "promoted",
       destination_path: request.destination_path,

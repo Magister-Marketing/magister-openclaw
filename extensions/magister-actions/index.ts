@@ -22,6 +22,11 @@ import {
 } from "./corpus-index.js";
 import { handleCorpusIngestion } from "./corpus.js";
 import {
+  handleLibraryReconcile,
+  hostedLibraryRuntime,
+  registerHostedLibraryAuthority,
+} from "./library-integration.js";
+import {
   handleRepoCheckout,
   handleRepoInstall,
   handleRepoPrepare,
@@ -1342,6 +1347,21 @@ export default definePluginEntry({
   name: "Magister Actions",
   description: "Typed project-scoped actions executed by the Magister gateway.",
   register(api) {
+    registerHostedLibraryAuthority();
+    api.on("before_prompt_build", async (_event, context) => {
+      if (!hostedLibraryRuntime(context.workspaceDir)?.active) return undefined;
+      return {
+        appendSystemContext:
+          "Library file authority is active (library_files_v1); committed cloud_saved receipts are durable. Ordinary file tools need no separate snapshot/export step.",
+      };
+    });
+    api.registerHttpRoute({
+      path: "/v1/library/reconcile",
+      auth: "gateway",
+      match: "exact",
+      gatewayRuntimeScopeSurface: "write-default",
+      handler: handleLibraryReconcile,
+    });
     api.registerHttpRoute({
       path: "/v1/files",
       auth: "gateway",

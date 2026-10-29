@@ -76,6 +76,24 @@ The generated list of 200+ subpaths lives in `scripts/lib/plugin-sdk-entrypoints
 
 ## Registration API
 
+Workspace storage plugins can use the versioned `registerWorkspaceFileAuthority`
+helper from `openclaw/plugin-sdk/core`. Its `admit(workspaceDir)` runs before
+model context assembly and fails closed on error. Its `wrap(tool, context)`
+decorates existing filesystem tools after policy/schema selection and before
+tool hooks, preserving their public schemas. The context supplies stable session
+identity and a side-effect-free patch planner exposing all source/destination
+paths before staging. Plugins must preflight the entire patch before committing
+it. The returned unregister function removes only that registration.
+The optional `readSnapshot(workspaceDir, read)` holds a consistent filesystem
+view throughout context assembly; storage failures abort admission while errors
+from the context callback keep their existing handling.
+`admitWorkspaceFiles(workspaceDir)` lets another source-owning plugin refresh
+its projection instead of overwriting a storage-owned file. Without a registered
+authority it returns `false` and existing local behavior is unchanged.
+Source plugins use `writeLegacyWorkspaceFile(workspaceDir, write)` for local
+projections: the authority may fence the callback during cutover or skip it once
+cloud storage owns the file. Without that optional guard it runs normally.
+
 The `register(api)` callback receives an `OpenClawPluginApi` object with these
 methods:
 

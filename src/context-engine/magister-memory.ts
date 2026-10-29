@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import { readWorkspaceFileSnapshot } from "../agents/workspace-file-authority.js";
 import type { MemoryCitationsMode } from "../config/types.memory.js";
 import { pruneMapToMaxSize } from "../infra/map-size.js";
 import { MagisterIntegrationsContextEngine } from "./magister-integrations.js";
@@ -135,6 +136,12 @@ export class MagisterMemoryContextEngine implements ContextEngine {
     model?: string;
     prompt?: string;
   }): Promise<AssembleResult> {
+    return readWorkspaceFileSnapshot(dirname(this.memoryPath), () => this.assembleSnapshot(params));
+  }
+
+  private async assembleSnapshot(
+    params: Parameters<MagisterMemoryContextEngine["assemble"]>[0],
+  ): Promise<AssembleResult> {
     const innerResult = await this.inner.assemble(params);
 
     let snapshot = this.snapshotBySession.get(params.sessionId);
