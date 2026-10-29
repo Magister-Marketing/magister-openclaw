@@ -3298,6 +3298,42 @@
       "transport_modes": ["json_v1"]
     },
     {
+      "capability_id": "strapi",
+      "connection_slug": "strapi",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        },
+        {
+          "action": "integration_delete",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "delete",
+          "tool_name": "magister_integration_delete"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:strapi"],
+      "minimum_native_action_registry_revision": "1aba753689bb0282bb908866fd5350518c695aca2dd7a6f56bd3d759ca3eb880",
+      "proxy_services": ["strapi"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-strapi",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
       "capability_id": "tabstack",
       "connection_slug": null,
       "delegation_safe_tools": [],
@@ -4337,6 +4373,6 @@
     }
   ],
   "native_action_registry_revision": "1aba753689bb0282bb908866fd5350518c695aca2dd7a6f56bd3d759ca3eb880",
-  "registry_revision": "d2a3465ff22eda40bd8334c7623fd3a5fa85a2c95c9294ea16517445b0a47bcb",
+  "registry_revision": "00989a23607ee7cfae59d9e98bffa0875c44485d3f90c97c7e7005d336529c4f",
   "schema_version": 1
 }
