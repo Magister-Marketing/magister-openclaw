@@ -30,6 +30,17 @@ import type {
 } from "./library-types.js";
 
 type ObservationLedger = { files: Record<string, LibraryFile>; sequence?: number };
+/** How a legacy write lease ends (Gateway contract: `completed` | `no_effect`).
+ * `unknown` (bytes changed, then the writer failed) sends nothing: the lease
+ * stays open for cutover to reconcile, as a timeout or lost reply does. */
+export type LegacyWriteOutcome = "completed" | "no_effect" | "unknown";
+type Admission =
+  | { mode: "active"; state: LibraryState; cache: LibraryCache }
+  | { mode: "recovery"; state: LibraryState; cache?: LibraryCache };
+const recoveryError = () =>
+  new Error(
+    "temporarily_unavailable: Library recovery is in progress; Library files are unavailable until it finishes. Other tools keep working.",
+  );
 type PreparedOperation = { input_digest: string; request: LibraryCommit; receipt?: LibraryReceipt };
 const toolNames = new Set(["read", "write", "edit", "apply_patch", "exec", "grep", "find", "ls"]);
 const sourcePaths = new Set([
@@ -47,6 +58,16 @@ const record = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+// Same matching rules as the Gateway's hosted edit: a leading BOM and
+// consistent CRLF are ignored for matching and preserved on write; a file with
+// mixed line endings is matched exactly.
+const count = (text: string, pattern: RegExp) => text.match(pattern)?.length ?? 0;
+const lineEndings = (text: string): "lf" | "crlf" | "mixed" => {
+  const crlf = count(text, /\r\n/g);
+  if (count(text, /\r/g) !== crlf) return "mixed";
+  if (!crlf) return "lf";
+  return crlf === count(text, /\n/g) ? "crlf" : "mixed";
+};
 const canonical = (value: unknown): string =>
   JSON.stringify(value, (_key, item: unknown) =>
     item && typeof item === "object" && !Array.isArray(item)
@@ -58,6 +79,11 @@ export class LibraryRuntime {
   readonly store: LibraryStore;
   private acknowledged: string | undefined;
   active = false;
+  /** Turn admission on a never-enrolled brand asks the Gateway once, bounded:
+   * a failure or a hang is legacy storage, as before the Library existed. */
+  discoveryTimeoutMs = 3_000;
+  discoveryBackoffMs = 60_000;
+  private discoveryPausedUntil = 0;
   constructor(
     readonly workspace: string,
     readonly bridge: LibraryBridge,
@@ -72,9 +98,47 @@ export class LibraryRuntime {
   private lock<T>(mode: "shared" | "exclusive", run: () => Promise<T>): Promise<T> {
     return withLibraryLock(path.join(this.store.directory, "lock"), mode, run);
   }
+  private marker(name: "activation" | "shadow"): string {
+    return path.join(this.store.directory, `${name}.json`);
+  }
+  /** Shadow or active brands leave a marker on the volume. Without one this
+   * runtime is not in the file path at all: no lock, no network, no files. */
+  private async enrollment(): Promise<"active" | "shadow" | undefined> {
+    for (const name of ["activation", "shadow"] as const) {
+      const marker = path.join(".magister", "library-v1", `${name}.json`);
+      await safeLibraryPath(this.workspace, marker);
+      if (await readJson(path.join(this.workspace, marker)))
+        return name === "activation" ? "active" : "shadow";
+    }
+    return undefined;
+  }
+  /** One bounded state read for a brand that is not enrolled yet. */
+  private async discover(): Promise<boolean> {
+    if (Date.now() < this.discoveryPausedUntil) return false;
+    const request = this.bridge.request<LibraryState>("GET", "/state");
+    request.catch(() => {}); // A late answer after the timeout is ignored.
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const state = await Promise.race([
+        request,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("Library discovery timed out")),
+            this.discoveryTimeoutMs,
+          );
+        }),
+      ]);
+      return !!state && ["shadow", "active", "recovery"].includes(state.mode);
+    } catch {
+      this.discoveryPausedUntil = Date.now() + this.discoveryBackoffMs;
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
   private async state(): Promise<LibraryState | undefined> {
     const activated = await readJson<{ project_id: string; epoch: number }>(
-      path.join(this.store.directory, "activation.json"),
+      this.marker("activation"),
     );
     let state: LibraryState;
     try {
@@ -109,10 +173,15 @@ export class LibraryRuntime {
     ) {
       // Persist activation before capability/publication/network work can fail.
       await atomicWrite(
-        path.join(this.store.directory, "activation.json"),
+        this.marker("activation"),
         JSON.stringify({ project_id: state.project_id, epoch: state.epoch }),
       );
     }
+    if (state.mode === "shadow" && !activated)
+      // Durable before the acknowledgement below: once the Gateway holds an
+      // acknowledgement, every hosted write on this volume takes a lease.
+      await atomicWrite(this.marker("shadow"), JSON.stringify({ project_id: state.project_id }));
+    if (state.mode !== "shadow") await fs.rm(this.marker("shadow"), { force: true });
     const processState = await readJson<{
       active?: { release_id?: string };
       machine_id?: string;
@@ -131,34 +200,57 @@ export class LibraryRuntime {
       state.epoch,
     ]);
     if (
+      state.mode !== "legacy" &&
       identity.machine_id &&
       identity.runtime_release &&
       identity.process_generation &&
       this.acknowledged !== acknowledgement
     ) {
-      await this.bridge.request("POST", "/capabilities", {
-        project_id: state.project_id,
-        capabilities: ["library_files_v1"],
-        ...identity,
-        epoch: state.epoch,
-      });
-      this.acknowledged = acknowledgement;
+      // Only a cutover precondition, which SQL re-checks against the live
+      // machine, release and process. A refusal (e.g. reconcile_pending after a
+      // runtime-bundle broadcast) is retried on the next call, never fatal.
+      try {
+        await this.bridge.request("POST", "/capabilities", {
+          project_id: state.project_id,
+          capabilities: ["library_files_v1"],
+          ...identity,
+          epoch: state.epoch,
+        });
+        this.acknowledged = acknowledgement;
+      } catch {
+        /* retried on the next state read */
+      }
     }
     if (
-      (state.mode === "active" || state.mode === "recovery") &&
+      state.mode === "active" &&
       (!identity.machine_id || !identity.runtime_release || !identity.process_generation)
     )
       throw new Error("temporarily_unavailable: Library runtime identity is not ready");
-    if (state.mode === "recovery")
-      throw new Error("temporarily_unavailable: Library recovery is in progress");
     return state;
   }
-  private async admitted(
-    refreshSources = false,
-  ): Promise<{ state: LibraryState; cache: LibraryCache } | undefined> {
+  /** undefined: legacy storage (never enrolled, legacy, or shadow). Only turn
+   * admission discovers; a never-enrolled brand's tool calls cost nothing. */
+  private async admitted(refreshSources = false): Promise<Admission | undefined> {
+    if (!(await this.enrollment()) && !(refreshSources && (await this.discover()))) {
+      this.active = false;
+      return undefined;
+    }
     await this.store.initialize();
-    return this.lock("exclusive", async () => {
-      let state = await this.state();
+    return this.lock("exclusive", async (): Promise<Admission | undefined> => {
+      let state: LibraryState | undefined;
+      try {
+        state = await this.state();
+      } catch (error) {
+        // Only an activated volume fails closed; a shadow brand's files are
+        // still legacy-authoritative, so its reads carry on locally.
+        if ((await this.enrollment()) === "active") throw error;
+        this.active = false;
+        return undefined;
+      }
+      if (state?.mode === "recovery") {
+        this.active = false;
+        return { mode: "recovery", state, cache: await this.store.cache() };
+      }
       if (!state || state.mode !== "active") {
         this.active = false;
         return undefined;
@@ -179,11 +271,22 @@ export class LibraryRuntime {
         );
       const cache = await this.store.reconcile(state.project_id, state.epoch, state.sequence);
       this.active = true;
-      return { state, cache };
+      return { mode: "active", state, cache };
     });
   }
-  async admit(): Promise<boolean> {
-    return !!(await this.admitted(true));
+  /** Turn admission. Recovery admits the turn without Library authority: only
+   * Library file tools answer temporarily_unavailable. */
+  async admit(options: { fromGateway?: boolean } = {}): Promise<boolean> {
+    // The Gateway calling us is proof it is reachable: skip any discovery backoff.
+    if (options.fromGateway) this.discoveryPausedUntil = 0;
+    return (await this.admitted(true))?.mode === "active";
+  }
+  private async activeAdmission(): Promise<
+    { state: LibraryState; cache: LibraryCache } | undefined
+  > {
+    const admitted = await this.admitted();
+    if (admitted?.mode === "recovery") throw recoveryError();
+    return admitted;
   }
 
   async readSnapshot<T>(read: () => Promise<T>): Promise<T> {
@@ -196,11 +299,12 @@ export class LibraryRuntime {
   }
 
   async writeLegacyProjection(write: () => Promise<void>): Promise<void> {
+    if (!(await this.enrollment())) return write();
     await this.store.initialize();
     await this.lock("exclusive", async () => {
       const state = await this.state();
-      if (!state) return write();
-      if (state.mode === "active") return;
+      if (!state || state.mode === "legacy") return write();
+      if (state.mode === "active" || state.mode === "recovery") return;
       const lease = await this.bridge.request<{ mode: string; lease_id?: string }>(
         "POST",
         "/legacy-writes",
@@ -214,41 +318,75 @@ export class LibraryRuntime {
       // previously read legacy state if the lease now reports cloud authority.
       if (lease.mode === "active" || lease.mode === "recovery") return;
       if (!lease.lease_id) throw new Error("Invalid legacy projection lease");
+      // An opaque writer's bytes cannot be compared: a failure stays unknown
+      // (its lease stays open); success completes it.
       await write();
-      await this.bridge.request("POST", `/legacy-writes/${lease.lease_id}/complete`, {
-        project_id: state.project_id,
-      });
+      await this.completeLegacyWrite(state.project_id, lease.lease_id, "completed");
     });
   }
 
+  /** Settles a lease. Best effort: the outcome already happened, and a lease a
+   * lost reply leaves open is the Gateway's settle step to reconcile. */
+  private async completeLegacyWrite(
+    projectId: string,
+    leaseId: string,
+    outcome: LegacyWriteOutcome,
+  ): Promise<void> {
+    if (outcome === "unknown") return;
+    await this.bridge
+      .request("POST", `/legacy-writes/${leaseId}/complete`, { project_id: projectId, outcome })
+      .catch(() => {});
+  }
+
+  /** Opens a lease for a hosted legacy mutation on a shadow brand. The returned
+   * function settles it and must be called on every path, including errors.
+   * The id is per attempt: the database refuses any id it has seen before. */
   async beginLegacyWrite(
     writerId: "hosted.tools" | "sandbox.promotion",
     operationId: string,
-  ): Promise<() => Promise<void>> {
+  ): Promise<(outcome?: LegacyWriteOutcome) => Promise<void>> {
+    if (!(await this.enrollment())) return async () => {}; // Never enrolled: as before.
     const state = await this.state();
-    if (!state) return async () => {}; // Pre-schema Gateway cannot cut over.
-    if (state.mode !== "legacy" && state.mode !== "shadow")
+    // Legacy, or a pre-Library Gateway (404), cannot cut over.
+    if (!state || state.mode === "legacy") return async () => {};
+    if (state.mode !== "shadow")
       throw new Error("conflict: Library cutover changed the file authority; retry");
     const lease = await this.bridge.request<{ lease_id: string }>("POST", "/legacy-writes", {
       project_id: state.project_id,
       writer_id: writerId,
-      operation_id: operationId,
+      operation_id: `${operationId}:${randomUUID()}`,
       expected_epoch: state.epoch,
     });
     if (!lease.lease_id) throw new Error("Invalid legacy file write lease");
-    return async () => {
-      await this.bridge.request("POST", `/legacy-writes/${lease.lease_id}/complete`, {
-        project_id: state.project_id,
-      });
-    };
+    return (outcome: LegacyWriteOutcome = "completed") =>
+      this.completeLegacyWrite(state.project_id, lease.lease_id, outcome);
+  }
+
+  /** Bytes of each target, so a lease can report what the tool really did. */
+  private async fingerprint(targets: string[]): Promise<string> {
+    const parts: string[] = [];
+    for (const target of targets) {
+      const absolute = path.resolve(this.workspace, expandLibraryToolPath(target));
+      parts.push(
+        await fs.readFile(absolute).then(
+          (bytes) => digest(bytes),
+          (error: NodeJS.ErrnoException) =>
+            error.code === "ENOENT" ? "absent" : `error:${error.code}`,
+        ),
+      );
+    }
+    return parts.join("\0");
   }
 
   private async legacyTool(
     tool: AnyAgentTool,
     context: WorkspaceFileAuthorityContext,
     args: Parameters<AnyAgentTool["execute"]>,
+    targets: string[],
   ) {
     if (!["write", "edit", "apply_patch"].includes(tool.name)) return tool.execute(...args);
+    // A never-enrolled brand behaves exactly as before the Library existed.
+    if (!(await this.enrollment())) return tool.execute(...args);
     const session = context.sessionId || context.sessionKey;
     if (!session || !args[0])
       throw new Error("precondition_required: stable identity required for legacy file mutation");
@@ -256,10 +394,19 @@ export class LibraryRuntime {
       "hosted.tools",
       `legacy:${digest(`${session}\0${args[0]}`)}`,
     );
-    const result = await tool.execute(...args);
-    // A failed/aborted or ambiguous local mutation retains its lease. Operators
-    // must reconcile that outcome before cutover; a timeout never releases it.
-    if (!record(result).isError) await complete();
+    const before = await this.fingerprint(targets);
+    const changed = async () => (await this.fingerprint(targets)) !== before;
+    let result: Awaited<ReturnType<AnyAgentTool["execute"]>>;
+    try {
+      result = await tool.execute(...args);
+    } catch (error) {
+      // A deterministic failure (oldText not found) changed nothing: settle it.
+      // Changed bytes after a failure are unknown: the lease stays open.
+      await complete((await changed()) ? "unknown" : "no_effect");
+      throw error;
+    }
+    const failed = !!record(result).isError;
+    await complete((await changed()) ? (failed ? "unknown" : "completed") : "no_effect");
     return result;
   }
 
@@ -521,7 +668,7 @@ export class LibraryRuntime {
       },
       execute: async (toolCallId: string, args: unknown) => {
         const params = record(args);
-        const admitted = await runtime.admitted();
+        const admitted = await runtime.activeAdmission();
         if (!admitted)
           throw new Error(
             "temporarily_unavailable: Library file authority is not active for this project",
@@ -616,9 +763,23 @@ export class LibraryRuntime {
               throw new Error("invalid_path: Library control files are private runtime state");
           }
         }
+        const targets = patch?.paths ?? (typeof rawPath === "string" ? [rawPath] : []);
         const admitted = await runtime.admitted();
         if (!admitted)
-          return runtime.legacyTool(tool, context, [toolCallId, args, signal, onUpdate]);
+          return runtime.legacyTool(tool, context, [toolCallId, args, signal, onUpdate], targets);
+        if (admitted.mode === "recovery") {
+          // Library files are refused; every other path keeps working locally.
+          const cache = admitted.cache ?? {
+            project_id: admitted.state.project_id,
+            epoch: admitted.state.epoch,
+            sequence: 0,
+            files: {},
+          };
+          for (const input of targets)
+            if (runtime.managedPath(libraryRelative(runtime.workspace, input), cache))
+              throw recoveryError();
+          return tool.execute(toolCallId, args, signal, onUpdate);
+        }
         const session = context.sessionId || context.sessionKey;
         if (!session) throw new Error("precondition_required: Library session identity is missing");
         const realWorkspace = await fs.realpath(runtime.workspace);
@@ -685,18 +846,33 @@ export class LibraryRuntime {
                         newText: params.newText ?? params.new_string,
                       },
                     ];
-                const text = await runtime.store.text(base);
+                const raw = await runtime.store.text(base);
+                const bom = raw.startsWith("\uFEFF") ? "\uFEFF" : "";
+                const endings = lineEndings(raw.slice(bom.length));
+                const toLF = (value: string) =>
+                  endings === "mixed" ? value : value.replace(/\r\n/g, "\n");
+                const text = toLF(raw.slice(bom.length));
                 // Like the edit tool: every oldText matches exactly once in the
-                // revision read, edits do not overlap, and all apply together.
-                const spans = edits.map(({ oldText, newText }) => {
-                  if (typeof oldText !== "string" || !oldText || typeof newText !== "string")
+                // revision read (BOM and consistent CRLF ignored for matching),
+                // edits do not overlap, and all apply together.
+                const spans = edits.map((edit) => {
+                  if (
+                    typeof edit.oldText !== "string" ||
+                    !edit.oldText ||
+                    typeof edit.newText !== "string"
+                  )
                     throw new Error("Exact oldText and newText are required");
+                  const oldText = toLF(edit.oldText.replace(/^\uFEFF/, ""));
                   const start = text.indexOf(oldText);
-                  if (start < 0 || text.indexOf(oldText, start + 1) >= 0)
+                  if (start < 0)
                     throw new Error(
-                      "conflict: oldText must match exactly once in the revision read",
+                      `edit_text_not_found: oldText is not in ${relative}; reread it and copy the exact text`,
                     );
-                  return { start, end: start + oldText.length, newText };
+                  if (text.indexOf(oldText, start + 1) >= 0)
+                    throw new Error(
+                      `edit_text_ambiguous: oldText matches more than once in ${relative}; include more surrounding text`,
+                    );
+                  return { start, end: start + oldText.length, newText: toLF(edit.newText) };
                 });
                 if (!spans.length) throw new Error("Exact oldText and newText are required");
                 spans.sort((a, b) => a.start - b.start);
@@ -707,12 +883,13 @@ export class LibraryRuntime {
                   edited += text.slice(cursor, span.start) + span.newText;
                   cursor = span.end;
                 }
+                edited += text.slice(cursor);
                 return [
                   {
                     kind: "replace",
                     file_id: base.file_id,
                     expected_revision: base.revision_id,
-                    text: edited + text.slice(cursor),
+                    text: bom + (endings === "crlf" ? edited.replace(/\n/g, "\r\n") : edited),
                   },
                 ];
               },
@@ -772,7 +949,7 @@ export class LibraryRuntime {
     },
     bytes?: Buffer,
   ): Promise<LibraryReceipt | undefined> {
-    const admitted = await this.admitted();
+    const admitted = await this.activeAdmission();
     if (!admitted) return undefined;
     if (!this.managedPath(input.destination_path, admitted.cache))
       throw new Error("invalid_path: promote generated files into resources/");

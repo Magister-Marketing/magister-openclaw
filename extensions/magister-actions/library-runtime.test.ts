@@ -38,6 +38,8 @@ class Gateway implements LibraryBridge {
   uploads = new Map<string, { text?: string; verified: boolean }>();
   unavailable = false;
   loseCommitReply = false;
+  leases: Record<string, unknown>[] = [];
+  completions: Record<string, unknown>[] = [];
   counter = 0;
   put(name: string, text: string, ownership: "user" | "managed" = "user"): LibraryFile {
     const old = this.heads().find((file) => file.path === name);
@@ -71,8 +73,14 @@ class Gateway implements LibraryBridge {
     if (endpoint === "/state" || endpoint === "/context-ready")
       return structuredClone(this.state) as T;
     if (endpoint === "/capabilities") return {} as T;
-    if (endpoint === "/legacy-writes") return { lease_id: "legacy-lease" } as T;
-    if (endpoint === "/legacy-writes/legacy-lease/complete") return {} as T;
+    if (endpoint === "/legacy-writes") {
+      this.leases.push(values);
+      return { lease_id: "legacy-lease" } as T;
+    }
+    if (endpoint === "/legacy-writes/legacy-lease/complete") {
+      this.completions.push(values);
+      return { completed: true } as T;
+    }
     if (endpoint === "/uploads") {
       const id = String(values.operation_id);
       const upload = this.uploads.get(id) ?? { verified: false };
@@ -83,12 +91,24 @@ class Gateway implements LibraryBridge {
       this.uploads.get(endpoint.slice(9, -9))!.verified = true;
       return { verified: true } as T;
     }
-    if (endpoint === "/manifest")
+    if (endpoint === "/manifest") {
+      // Mirrors library_manifest_v1: a snapshot (no since) is one head per file;
+      // an incremental page is every revision in (since, through] in order.
+      const through = Number(values.through_sequence);
+      const invalid = new LibraryHttpError(500, { message: "invalid_sequence" });
+      if (through > this.state.sequence) throw invalid;
+      if (values.since_sequence === undefined)
+        return { files: this.heads(through), sequence: through, complete: true } as T;
+      const since = Number(values.since_sequence);
+      if (since > through) throw invalid;
       return {
-        files: this.heads(Number(values.through_sequence)),
-        sequence: values.through_sequence,
+        files: this.revisions
+          .filter((file) => file.sequence > since && file.sequence <= through)
+          .sort((a, b) => a.sequence - b.sequence),
+        sequence: through,
         complete: true,
       } as T;
+    }
     if (endpoint === "/read") {
       const file = this.revisions.find((file) => file.revision_id === values.revision_id);
       if (!file) throw new Error("missing revision");
@@ -213,10 +233,22 @@ const read = (name: string, instance = runtime) =>
 const write = (name: string, content: string, id = "write", instance = runtime) =>
   tool("write", undefined, instance).execute(id, { path: name, content });
 
+/** A volume that has never been activated: the brand is still on legacy storage. */
+async function freshVolume(): Promise<LibraryRuntime> {
+  await fs.rm(path.join(workspace, ".magister"), { recursive: true, force: true });
+  runtime = new LibraryRuntime(workspace, gateway, identity);
+  return runtime;
+}
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const hostedTools = ["read", "write", "edit", "apply_patch", "exec", "grep", "find", "ls"];
+
 beforeEach(async () => {
   workspace = await fs.mkdtemp(path.join(os.tmpdir(), "library-runtime-"));
   gateway = new Gateway();
   runtime = new LibraryRuntime(workspace, gateway, identity);
+  // Activation is learned at turn admission (the Gateway's reconcile call or
+  // the runner's per-turn admit), never from an individual tool call.
+  await runtime.admit();
   localCalls.mockClear();
 });
 afterEach(async () => {
@@ -225,14 +257,14 @@ afterEach(async () => {
 });
 
 describe("hosted Library tool authority", () => {
-  it("fences direct legacy projections against cutover and retains failed writer leases", async () => {
+  it("fences direct legacy projections against cutover and keeps unknown outcomes open", async () => {
     const writeProjection = vi.fn(async () => {});
     await runtime.writeLegacyProjection(writeProjection);
     expect(writeProjection).not.toHaveBeenCalled();
-    const legacy = new LibraryRuntime(workspace, gateway, identity);
     // Use a fresh volume because activation itself is deliberately irreversible.
-    await fs.rm(path.join(workspace, ".magister/library-v1"), { recursive: true, force: true });
-    gateway.state.mode = "legacy";
+    const legacy = await freshVolume();
+    gateway.state.mode = "shadow";
+    await legacy.admit();
     const original = gateway.request;
     const request = vi
       .spyOn(gateway, "request")
@@ -248,7 +280,9 @@ describe("hosted Library tool authority", () => {
         throw new Error("unknown write outcome");
       }),
     ).rejects.toThrow("unknown write outcome");
-    expect(request.mock.calls.some((call) => call[1].endsWith("/complete"))).toBe(false);
+    // An opaque writer that throws has an unknown outcome: its lease stays open.
+    expect(gateway.leases).toHaveLength(1);
+    expect(gateway.completions).toHaveLength(0);
   });
   it("replays a durable promotion after staging cleanup without reuploading or regressing files", async () => {
     const bytes = Buffer.from("# Reviewable report\n");
@@ -333,12 +367,14 @@ describe("hosted Library tool authority", () => {
     expect(await fs.readFile(path.join(workspace, "resources/b.md"), "utf8")).toBe("new-b");
   });
   it("persists activation even when the first capability acknowledgement fails", async () => {
+    await freshVolume();
     const request = gateway.request;
     vi.spyOn(gateway, "request").mockImplementation(async (method, endpoint, values) => {
       if (endpoint === "/capabilities") throw new LibraryHttpError(503, {});
       return request(method, endpoint, values);
     });
-    await expect(runtime.admit()).rejects.toThrow("503");
+    // The acknowledgement is only a cutover precondition; it never fails a turn.
+    await expect(runtime.admit()).resolves.toBe(true);
     vi.spyOn(gateway, "request").mockRejectedValue(new LibraryHttpError(404, {}));
     await expect(
       read("unrelated.txt", new LibraryRuntime(workspace, gateway, identity)),
@@ -368,8 +404,10 @@ describe("hosted Library tool authority", () => {
     expect(gateway.heads()[0].text).toBe("cloud text");
     expect((await fs.stat(path.join(workspace, "resources"))).mode & 0o050).toBe(0o050);
   });
-  it("leases legacy mutations and retains ambiguous outcomes to block cutover", async () => {
-    gateway.state.mode = "legacy";
+  it("leases shadow mutations and settles a failure that changed nothing", async () => {
+    await freshVolume();
+    gateway.state.mode = "shadow";
+    await runtime.admit();
     const request = vi.spyOn(gateway, "request");
     await write("legacy.txt", "ok", "known-local");
     expect(
@@ -388,11 +426,15 @@ describe("hosted Library tool authority", () => {
       },
       context(),
     );
-    await expect(broken.execute("uncertain-local", {})).rejects.toThrow("uncertain partial");
+    await expect(broken.execute("uncertain-local", { path: "legacy.txt" })).rejects.toThrow(
+      "uncertain partial",
+    );
     expect(request.mock.calls.some((call) => call[1] === "/legacy-writes")).toBe(true);
-    expect(request.mock.calls.some((call) => call[1].endsWith("/complete"))).toBe(false);
+    // Bytes unchanged by a thrown tool: nothing happened, so the lease settles.
+    expect(gateway.completions.at(-1)).toMatchObject({ outcome: "no_effect" });
   });
   it("binds capability acknowledgements to machine, release and epoch", async () => {
+    runtime = new LibraryRuntime(workspace, gateway, identity);
     const request = vi.spyOn(gateway, "request");
     await runtime.admit();
     expect(request.mock.calls.find((call) => call[1] === "/capabilities")?.[2]).toMatchObject({
@@ -405,6 +447,7 @@ describe("hosted Library tool authority", () => {
     expect(request.mock.calls.filter((call) => call[1] === "/capabilities")).toHaveLength(2);
   });
   it("preserves legacy local tools", async () => {
+    await freshVolume();
     gateway.state.mode = "legacy";
     await write("draft.txt", "local");
     expect(await fs.readFile(path.join(workspace, "draft.txt"), "utf8")).toBe("local");
@@ -699,5 +742,270 @@ describe("hosted Library tool authority", () => {
     } finally {
       if (child.exitCode === null) child.kill("SIGKILL");
     }
+  });
+});
+
+describe("review fixes (PR 2210)", () => {
+  it("L1: a never-activated brand runs every hosted tool locally whatever the Library routes answer", async () => {
+    await freshVolume();
+    gateway.state.mode = "legacy";
+    await fs.writeFile(path.join(workspace, "notes.txt"), "local");
+    const plan: WorkspacePatchPlan = { paths: ["notes.txt"], stage: async () => [] };
+    const failures = [
+      new LibraryHttpError(500, {}),
+      new LibraryHttpError(401, {}),
+      new LibraryHttpError(409, {}),
+      new Error("The operation was aborted due to timeout"),
+    ];
+    for (const failure of failures) {
+      const fresh = new LibraryRuntime(workspace, gateway, identity);
+      const request = vi.spyOn(gateway, "request").mockRejectedValue(failure);
+      await expect(fresh.admit()).resolves.toBe(false);
+      await expect(fresh.readSnapshot(async () => "context")).resolves.toBe("context");
+      await fresh.writeLegacyProjection(async () => {});
+      localCalls.mockClear();
+      request.mockClear();
+      for (const name of hostedTools)
+        await tool(name, plan, fresh).execute(`${name}-call`, {
+          path: "notes.txt",
+          content: "local",
+          input: "patch",
+        });
+      expect(localCalls.mock.calls.map((call) => call[0])).toEqual(hostedTools);
+      expect(request).not.toHaveBeenCalled();
+      request.mockRestore();
+    }
+    // Nothing of the new runtime is created on a legacy brand's volume.
+    await expect(fs.stat(path.join(workspace, ".magister"))).rejects.toThrow("ENOENT");
+  });
+  it("L1: tool calls on a never-enrolled brand make no Library calls and acknowledge nothing", async () => {
+    await freshVolume();
+    gateway.state.mode = "legacy";
+    const request = vi.spyOn(gateway, "request");
+    await expect(runtime.admit()).resolves.toBe(false);
+    expect(request.mock.calls.map((call) => call[1])).toEqual(["/state"]);
+    request.mockClear();
+    await write("draft.txt", "x", "legacy-write");
+    await read("draft.txt");
+    await tool("edit").execute("legacy-edit", { path: "draft.txt" });
+    expect(request).not.toHaveBeenCalled();
+    expect(gateway.leases).toHaveLength(0);
+  });
+  it("L1: a hung discovery is bounded and the turn proceeds on legacy storage", async () => {
+    await freshVolume();
+    runtime.discoveryTimeoutMs = 50;
+    const request = vi.spyOn(gateway, "request").mockImplementation(() => new Promise(() => {}));
+    await expect(runtime.admit()).resolves.toBe(false);
+    // Backed off: the next turns do not wait again...
+    request.mockClear();
+    await expect(runtime.admit()).resolves.toBe(false);
+    expect(request).not.toHaveBeenCalled();
+    // ...but the Gateway's own reconcile call (after a cutover) is never refused.
+    request.mockRestore();
+    await expect(runtime.admit({ fromGateway: true })).resolves.toBe(true);
+  }, 2_000);
+  it("L1: a refused capability acknowledgement never fails an enrolled turn", async () => {
+    for (const mode of ["active", "shadow"] as const) {
+      await freshVolume();
+      gateway.state.mode = mode;
+      const original = gateway.request;
+      const request = vi
+        .spyOn(gateway, "request")
+        .mockImplementation(async (method, endpoint, values) => {
+          if (endpoint === "/capabilities")
+            throw new LibraryHttpError(409, { detail: { code: "conflict" } });
+          return original(method, endpoint, values);
+        });
+      await expect(runtime.admit()).resolves.toBe(mode === "active");
+      await expect(read("unrelated.txt").catch(() => "local-miss")).resolves.toBeDefined();
+      request.mockRestore();
+    }
+  });
+
+  it("L2: settles every shadow write lease with its real outcome, including a failed edit", async () => {
+    await freshVolume();
+    gateway.state.mode = "shadow";
+    await expect(runtime.admit()).resolves.toBe(false);
+    await fs.writeFile(path.join(workspace, "brief.md"), "hello world\n");
+    const editTool = runtime.wrap(createEditTool(workspace) as unknown as AnyAgentTool, context());
+    await expect(
+      editTool.execute("bad-edit", {
+        path: "brief.md",
+        edits: [{ oldText: "absent", newText: "x" }],
+      }),
+    ).rejects.toThrow();
+    await editTool.execute("good-edit", {
+      path: "brief.md",
+      edits: [{ oldText: "hello", newText: "hi" }],
+    });
+    await write("brief.md", "hi world\n", "same-bytes");
+    const partial = runtime.wrap(
+      {
+        name: "write",
+        label: "write",
+        description: "",
+        parameters: Type.Object({}),
+        execute: async () => {
+          await fs.writeFile(path.join(workspace, "brief.md"), "half");
+          throw new Error("disk full");
+        },
+      },
+      context(),
+    );
+    await expect(partial.execute("partial", { path: "brief.md" })).rejects.toThrow("disk full");
+    // Changed bytes then a throw is unknown: that fourth lease stays open.
+    expect(gateway.leases).toHaveLength(4);
+    expect(gateway.completions.map((call) => call.outcome)).toEqual([
+      "no_effect",
+      "completed",
+      "no_effect",
+    ]);
+    // Every attempt uses a fresh operation id, even a retry of one tool call.
+    await write("brief.md", "retry\n", "same-bytes");
+    const ids = gateway.leases.map((lease) => lease.operation_id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("C4: catch-up installs only each file's newest revision", async () => {
+    gateway.put("resources/a.md", "v1");
+    await runtime.admit();
+    for (let version = 2; version <= 6; version++) gateway.put("resources/a.md", `v${version}`);
+    const request = vi.spyOn(gateway, "request");
+    await runtime.admit();
+    expect(request.mock.calls.filter((call) => call[1] === "/read")).toHaveLength(1);
+    expect(await fs.readFile(path.join(workspace, "resources/a.md"), "utf8")).toBe("v6");
+  });
+  it("C4: a new epoch forces a full resync from a snapshot", async () => {
+    gateway.put("resources/old.md", "old");
+    gateway.put("resources/kept.md", "kept");
+    await runtime.admit();
+    // A reset/restore starts a new epoch whose history restarts below our cursor.
+    gateway.revisions = [];
+    gateway.state.sequence = 0;
+    gateway.state.epoch = 2;
+    gateway.put("resources/new.md", "new");
+    await expect(runtime.admit()).resolves.toBe(true);
+    expect(await fs.readFile(path.join(workspace, "resources/new.md"), "utf8")).toBe("new");
+    await expect(fs.stat(path.join(workspace, "resources/old.md"))).rejects.toThrow("ENOENT");
+    await expect(fs.stat(path.join(workspace, "resources/kept.md"))).rejects.toThrow("ENOENT");
+  });
+  it("C4: an invalid_sequence cursor falls back to a full resync", async () => {
+    gateway.put("resources/a.md", "one");
+    await runtime.admit();
+    gateway.put("resources/a.md", "two");
+    const original = gateway.request;
+    const request = vi
+      .spyOn(gateway, "request")
+      .mockImplementation(async (method, endpoint, values) => {
+        if (endpoint === "/manifest" && values?.since_sequence !== undefined)
+          throw new LibraryHttpError(500, { message: "invalid_sequence" });
+        return original(method, endpoint, values);
+      });
+    await expect(runtime.admit()).resolves.toBe(true);
+    expect(
+      request.mock.calls.some(
+        (call) => call[1] === "/manifest" && call[2]?.since_sequence === undefined,
+      ),
+    ).toBe(true);
+    expect(await fs.readFile(path.join(workspace, "resources/a.md"), "utf8")).toBe("two");
+  });
+  it("C4: bounds the exclusive lock during a large catch-up and keeps downloaded progress", async () => {
+    for (let index = 0; index < 24; index++) gateway.put(`resources/f${index}.md`, `file ${index}`);
+    const original = gateway.request;
+    let inFlight = 0;
+    let peak = 0;
+    let reads = 0;
+    vi.spyOn(gateway, "request").mockImplementation(async (method, endpoint, values) => {
+      if (endpoint === "/read") {
+        reads++;
+        peak = Math.max(peak, ++inFlight);
+        await sleep(60);
+        inFlight--;
+      }
+      return original(method, endpoint, values);
+    });
+    runtime.store.catchUpBudgetMs = 100;
+    const started = Date.now();
+    await expect(runtime.admit()).rejects.toThrow("publication_pending");
+    expect(Date.now() - started).toBeLessThan(500);
+    await sleep(150); // downloads already in flight land as immutable objects
+    runtime.store.catchUpBudgetMs = 10_000;
+    await expect(runtime.admit()).resolves.toBe(true);
+    expect(reads).toBe(24);
+    expect(peak).toBeGreaterThan(1);
+    expect(await fs.readFile(path.join(workspace, "resources/f23.md"), "utf8")).toBe("file 23");
+  });
+
+  it("C5: recovery keeps unrelated turns working and refuses only Library files", async () => {
+    gateway.put("resources/a.md", "cloud");
+    await runtime.admit();
+    await fs.writeFile(path.join(workspace, "notes.txt"), "local");
+    gateway.state.mode = "recovery";
+    await expect(runtime.admit()).resolves.toBe(false);
+    await expect(runtime.readSnapshot(async () => "context")).resolves.toBe("context");
+    expect((await read("notes.txt")).content[0]).toMatchObject({ text: "local" });
+    await expect(read("resources/a.md")).rejects.toThrow("temporarily_unavailable");
+    await expect(write("resources/a.md", "x", "recovery-write")).rejects.toThrow(
+      "temporarily_unavailable",
+    );
+    await expect(write("MEMORY.md", "x", "recovery-memory")).rejects.toThrow(
+      "temporarily_unavailable",
+    );
+    await expect(
+      runtime.fileTool("trash_file", { sessionId: "session" }).execute("trash", {
+        path: "resources/a.md",
+      }),
+    ).rejects.toThrow("temporarily_unavailable");
+    await expect(
+      runtime.promote({ attempt_id: "a", destination_path: "resources/x.md", sha256: digest("x") }),
+    ).rejects.toThrow("temporarily_unavailable");
+    expect(gateway.commits).toHaveLength(0);
+  });
+
+  it("C6: matches edits through a BOM and CRLF and keeps the file's own encoding", async () => {
+    gateway.put("resources/win.md", "﻿line one\r\nline two\r\n");
+    await read("resources/win.md");
+    await tool("edit").execute("crlf-edit", {
+      path: "resources/win.md",
+      edits: [{ oldText: "line one\nline two", newText: "first\nsecond" }],
+    });
+    expect(gateway.heads().find((file) => file.path === "resources/win.md")?.text).toBe(
+      "﻿first\r\nsecond\r\n",
+    );
+  });
+  it("C6: matches a mixed-line-ending file exactly", async () => {
+    gateway.put("resources/mixed.md", "one\r\ntwo\nthree\r\n");
+    await read("resources/mixed.md");
+    await expect(
+      tool("edit").execute("mixed-normalized", {
+        path: "resources/mixed.md",
+        edits: [{ oldText: "one\ntwo", newText: "x" }],
+      }),
+    ).rejects.toThrow("edit_text_not_found");
+    await tool("edit").execute("mixed-exact", {
+      path: "resources/mixed.md",
+      edits: [{ oldText: "one\r\ntwo", newText: "1\r\n2" }],
+    });
+    expect(gateway.heads().find((file) => file.path === "resources/mixed.md")?.text).toBe(
+      "1\r\n2\nthree\r\n",
+    );
+  });
+  it("C6: reports text matching more than once as edit_text_ambiguous", async () => {
+    gateway.put("resources/twice.md", "same\nsame\n");
+    await read("resources/twice.md");
+    await expect(
+      tool("edit").execute("twice", { path: "resources/twice.md", oldText: "same", newText: "x" }),
+    ).rejects.toThrow("edit_text_ambiguous");
+  });
+  it("C6: reports oldText missing from the file as not_found, not conflict", async () => {
+    gateway.put("resources/plain.md", "alpha\n");
+    await read("resources/plain.md");
+    const attempt = tool("edit").execute("missing-edit", {
+      path: "resources/plain.md",
+      oldText: "omega",
+      newText: "x",
+    });
+    await expect(attempt).rejects.toThrow(/^edit_text_not_found: /);
+    expect(gateway.commits).toHaveLength(0);
   });
 });

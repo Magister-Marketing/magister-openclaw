@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { LibraryHttpError } from "./library-bridge.js";
 import type { LibraryBridge, LibraryCache, LibraryFile } from "./library-types.js";
 
 export const digest = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
@@ -113,9 +114,27 @@ export async function safeLibraryPath(workspace: string, relative: string): Prom
 }
 
 type InstallJournal = { previous: LibraryCache; next: LibraryCache };
+type ManifestPage = {
+  files: LibraryFile[];
+  sequence: number;
+  next_cursor?: string | null;
+  complete: boolean;
+};
+
+const invalidSequence = (error: unknown) =>
+  error instanceof LibraryHttpError &&
+  JSON.stringify(error.body ?? "").includes("invalid_sequence");
 
 export class LibraryStore {
   readonly directory: string;
+  /** Catch-up runs under the exclusive Library lock, which turn admission and
+   * every Library tool wait on for at most 30 s (library-lock.ts), and the
+   * Gateway's admission call gives up at 30 s (library_runtime.py). Downloads
+   * therefore stop after this budget and admission answers publication_pending;
+   * objects are immutable per revision, so the next attempt resumes where this
+   * one stopped. The lock is held for this budget plus the local install. */
+  catchUpBudgetMs = 20_000;
+  downloadConcurrency = 4;
   constructor(
     readonly workspace: string,
     readonly bridge: LibraryBridge,
@@ -190,23 +209,40 @@ export class LibraryStore {
       throw new Error("Library project changed on this workspace");
     if (previous.epoch > epoch) throw new Error("Library epoch regressed");
     if (saved && previous.sequence >= through && previous.epoch === epoch) return previous;
-    const next: LibraryCache = {
-      project_id: projectId,
-      epoch,
-      sequence: through,
-      files: { ...previous.files },
-    };
+    const deadline = Date.now() + this.catchUpBudgetMs;
+    // A new epoch (reset, restore) restarts history: an old cursor cannot be
+    // continued, and files from the previous epoch must not survive the install.
+    const incremental = !!saved && previous.epoch === epoch;
+    let files: Record<string, LibraryFile>;
+    try {
+      files = await this.manifest(projectId, through, incremental ? previous : undefined);
+    } catch (error) {
+      if (!incremental || !invalidSequence(error)) throw error;
+      files = await this.manifest(projectId, through);
+    }
+    await this.prefetch(Object.values(files), deadline);
+    const next: LibraryCache = { project_id: projectId, epoch, sequence: through, files };
+    // Journal + downloaded immutable objects are durable before touching live files.
+    const journal = { previous, next };
+    await atomicWrite(path.join(this.directory, "install.json"), JSON.stringify(journal));
+    await this.install(journal);
+    return next;
+  }
+  /** Heads through `through`: a snapshot, or `since`'s heads plus every later
+   * revision. Pages are ordered by commit, so the last entry per file wins and
+   * intermediate revisions are never downloaded. */
+  private async manifest(
+    projectId: string,
+    through: number,
+    since?: LibraryCache,
+  ): Promise<Record<string, LibraryFile>> {
+    const files: Record<string, LibraryFile> = { ...since?.files };
     let cursor: string | undefined;
     const cursors = new Set<string>();
     do {
-      const page = await this.bridge.request<{
-        files: LibraryFile[];
-        sequence: number;
-        next_cursor?: string | null;
-        complete: boolean;
-      }>("GET", "/manifest", {
+      const page = await this.bridge.request<ManifestPage>("GET", "/manifest", {
         project_id: projectId,
-        since_sequence: previous.sequence,
+        since_sequence: since?.sequence,
         through_sequence: through,
         cursor,
         limit: 1000,
@@ -219,23 +255,58 @@ export class LibraryStore {
         await safeLibraryPath(this.workspace, file.path);
         if (file.path.startsWith(".magister/") || file.path.startsWith(".openclaw/"))
           throw new Error("Reserved Library materialization path");
-        next.files[file.file_id] = file;
-        await this.ensureObject(file);
+        files[file.file_id] = file;
       }
       cursor = page.next_cursor ?? undefined;
       if (cursor && cursors.has(cursor)) throw new Error("Library manifest cursor did not advance");
       if (cursor) cursors.add(cursor);
       if (!cursor && !page.complete) throw new Error("Incomplete Library manifest");
     } while (cursor);
-    // Journal + downloaded immutable objects are durable before touching live files.
-    const journal = { previous, next };
-    await atomicWrite(path.join(this.directory, "install.json"), JSON.stringify(journal));
-    await this.install(journal);
-    return next;
+    return files;
+  }
+  /** Download missing heads in parallel until the deadline. Downloads already
+   * in flight finish in the background: each writes a verified immutable
+   * object atomically, so they are progress for the next attempt, never state. */
+  private async prefetch(files: LibraryFile[], deadline: number): Promise<void> {
+    const queue = files.filter((file) => file.entry_type === "file" && file.lifecycle === "active");
+    let index = 0;
+    let expired = false;
+    const worker = async () => {
+      while (index < queue.length) {
+        if (Date.now() >= deadline) {
+          expired = true;
+          return;
+        }
+        await this.ensureObject(queue[index++]);
+      }
+    };
+    const pool = Promise.all(
+      Array.from({ length: Math.min(this.downloadConcurrency, queue.length) }, worker),
+    );
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<"expired">((resolve) => {
+      timer = setTimeout(() => resolve("expired"), Math.max(0, deadline - Date.now()));
+    });
+    try {
+      const outcome = await Promise.race([pool, timeout]);
+      if (outcome === "expired" || expired) {
+        pool.catch(() => {}); // A late failure is retried by the next catch-up.
+        throw new Error(
+          "publication_pending: the agent's local Library copy is still downloading; retry shortly",
+        );
+      }
+    } finally {
+      clearTimeout(timer);
+    }
   }
   private async install({ previous, next }: InstallJournal): Promise<void> {
     const current = await this.cache();
-    if (current && (current.sequence > next.sequence || current.epoch > next.epoch))
+    // Sequences restart with each epoch, so only compare them within one.
+    if (
+      current &&
+      (current.epoch > next.epoch ||
+        (current.epoch === next.epoch && current.sequence > next.sequence))
+    )
       throw new Error("Refusing stale Library materialization journal");
     const active = Object.values(next.files).filter((file) => file.lifecycle === "active");
     const retained = new Map(active.map((file) => [file.path, file.entry_type]));

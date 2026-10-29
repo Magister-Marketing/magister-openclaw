@@ -333,10 +333,17 @@ export async function promoteArtifact(
 
   const completeLegacy = await library?.beginLegacyWrite(
     "sandbox.promotion",
-    `promotion:${request.attempt_id}:${request.destination_path}`,
+    // Bounded (the id is at most 240 chars); the runtime adds a per-attempt suffix.
+    `promotion:${createHash("sha256").update(`${request.attempt_id}\0${request.destination_path}`).digest("hex")}`,
   );
+  // The destination is only replaced by the rename below; any failure before
+  // it changed no bytes, so the lease settles as no_effect, never stays open.
+  let renamed = false;
   const destination = await assertComponents(workspace, request.destination_path, {
     createParents: true,
+  }).catch(async (error: unknown) => {
+    await completeLegacy?.("no_effect");
+    throw error;
   });
   const observation = context
     ? new LocalMutationObservation(workspace, context, request.destination_path, request.sha256)
@@ -403,6 +410,7 @@ export async function promoteArtifact(
       } else {
         observation?.assertCommitCurrent();
         await fs.promises.rename(temporary, destination);
+        renamed = true;
         temporary = undefined;
         await fsyncDirectory(parent);
       }
@@ -431,6 +439,8 @@ export async function promoteArtifact(
       commitAttested = false;
     }
     observation?.finish("failed", error instanceof Error ? error.name : "unknown");
+    // After the rename the outcome is unknown: that lease stays open.
+    await completeLegacy?.(renamed ? "unknown" : "no_effect");
     throw error;
   } finally {
     if (temporary) {

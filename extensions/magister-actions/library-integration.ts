@@ -48,7 +48,7 @@ export async function handleLibraryReconcile(
   }
   try {
     const runtime = hostedLibraryRuntime();
-    const active = (await runtime?.admit()) ?? false;
+    const active = (await runtime?.admit({ fromGateway: true })) ?? false;
     const cache = active ? await runtime?.store.cache() : undefined;
     res.statusCode = 200;
     res.end(
