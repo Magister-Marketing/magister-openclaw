@@ -429,6 +429,38 @@ describe("hosted Library tool authority", () => {
       expected_revision: gateway.commits.length ? gateway.revisions[0].revision_id : "",
     });
   });
+  it("moves and trashes a read Library file through hosted tools", async () => {
+    // Hosted models have no apply_patch and exec cannot write the workspace,
+    // so these are the only way an agent renames or removes a Library file.
+    await write("resources/brief.md", "body");
+    const move = runtime.fileTool("move_file", { sessionId: "session" });
+    await expect(
+      move.execute("move-unread", {
+        path: "resources/brief.md",
+        destination: "resources/approved.md",
+      }),
+    ).rejects.toThrow("precondition_required");
+    await read("resources/brief.md");
+    await move.execute("move", {
+      path: "resources/brief.md",
+      destination: "resources/approved.md",
+    });
+    expect(gateway.commits.at(-1)?.changes[0]).toMatchObject({
+      kind: "move",
+      path: "resources/approved.md",
+    });
+    expect(await fs.readFile(path.join(workspace, "resources/approved.md"), "utf8")).toBe("body");
+    await expect(fs.access(path.join(workspace, "resources/brief.md"))).rejects.toThrow();
+    await expect(
+      move.execute("escape", { path: "resources/approved.md", destination: "../outside.md" }),
+    ).rejects.toThrow("invalid_path");
+    await read("resources/approved.md");
+    await runtime
+      .fileTool("trash_file", { sessionId: "session" })
+      .execute("trash", { path: "resources/approved.md" });
+    expect(gateway.commits.at(-1)?.changes[0]).toMatchObject({ kind: "trash" });
+    await expect(fs.access(path.join(workspace, "resources/approved.md"))).rejects.toThrow();
+  });
   it("applies the edit tool's edits array against the revision read", async () => {
     // Lane hazelib, 2026-10-29: the agent's edit in this form failed with
     // "Exact oldText and newText are required" and it overwrote the file.

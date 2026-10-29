@@ -490,6 +490,89 @@ export class LibraryRuntime {
     }
     return changes;
   }
+  /** Rename or trash a Library file. Hosted models reach providers through the
+   * Gateway, so apply_patch's move is unavailable and exec cannot write the
+   * workspace: without these an agent could not rename or remove a file. */
+  fileTool(
+    name: "move_file" | "trash_file",
+    context: { sessionId?: string; sessionKey?: string },
+  ): AnyAgentTool {
+    const runtime = this;
+    const move = name === "move_file";
+    const properties: Record<string, unknown> = {
+      path: { type: "string", description: "Current Library path, e.g. resources/brief.md" },
+    };
+    if (move) properties.destination = { type: "string", description: "New path under resources/" };
+    return {
+      name,
+      label: move ? "Move Library file" : "Trash Library file",
+      description: move
+        ? "Rename or move one Library file you have read, keeping its history. Fails if the destination exists."
+        : "Move one Library file you have read to the recoverable Library trash.",
+      parameters: {
+        type: "object",
+        properties,
+        required: Object.keys(properties),
+        additionalProperties: false,
+      },
+      execute: async (toolCallId: string, args: unknown) => {
+        const params = record(args);
+        const admitted = await runtime.admitted();
+        if (!admitted)
+          throw new Error(
+            "temporarily_unavailable: Library file authority is not active for this project",
+          );
+        const session = context.sessionId || context.sessionKey;
+        if (!session) throw new Error("precondition_required: Library session identity is missing");
+        const relative = libraryRelative(runtime.workspace, String(params.path ?? ""));
+        const destination = move
+          ? libraryRelative(runtime.workspace, String(params.destination ?? ""))
+          : undefined;
+        for (const target of [relative, destination]) {
+          if (target === undefined) continue;
+          if (
+            !target ||
+            (!runtime.managedPath(target, admitted.cache) && !target.startsWith("resources/"))
+          )
+            throw new Error("invalid_path: Library files live under resources/");
+          await safeLibraryPath(runtime.workspace, target);
+        }
+        return runtime.lock("exclusive", async () => {
+          await runtime.store.recover();
+          const cache = await runtime.store.cache();
+          if (!cache) throw new Error("temporarily_unavailable: Library cache missing");
+          const receipt = await runtime.commit(
+            session,
+            toolCallId,
+            { tool: name, args },
+            admitted.state,
+            async () => {
+              const base = await runtime.base(relative, session, cache);
+              if (!base) throw new Error(`not_found: ${relative}`);
+              if (
+                destination &&
+                Object.values(cache.files).some(
+                  (f) => f.path === destination && f.lifecycle === "active",
+                )
+              )
+                throw new Error(`conflict: ${destination} already exists`);
+              return [
+                destination
+                  ? {
+                      kind: "move",
+                      file_id: base.file_id,
+                      expected_revision: base.revision_id,
+                      path: destination,
+                    }
+                  : { kind: "trash", file_id: base.file_id, expected_revision: base.revision_id },
+              ];
+            },
+          );
+          return jsonResult(receipt);
+        });
+      },
+    } as AnyAgentTool;
+  }
   wrap(tool: AnyAgentTool, context: WorkspaceFileAuthorityContext): AnyAgentTool {
     if (!toolNames.has(tool.name)) return tool;
     const runtime = this;

@@ -1340,7 +1340,11 @@ export function createContextualMagisterActionTool(
   return createMagisterActionTool(api, action, fetchImpl, context);
 }
 
-export const magisterStandaloneToolNames = ["search_project_corpus"] as const;
+export const magisterStandaloneToolNames = [
+  "search_project_corpus",
+  "move_file",
+  "trash_file",
+] as const;
 
 export default definePluginEntry({
   id: "magister-actions",
@@ -1411,6 +1415,12 @@ export default definePluginEntry({
     api.registerTool(() => createCorpusSearchTool(), {
       name: magisterStandaloneToolNames[0],
     });
+    for (const name of ["move_file", "trash_file"] as const) {
+      api.registerTool(
+        (context) => hostedLibraryRuntime(context.workspaceDir)?.fileTool(name, context) ?? null,
+        { name },
+      );
+    }
     for (const action of contract.actions) {
       api.registerTool(
         (context) => createContextualMagisterActionTool(api, action, fetch, context),
