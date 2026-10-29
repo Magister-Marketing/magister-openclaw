@@ -3229,6 +3229,86 @@
       "tool_name": "magister_get_ai_visibility_citations"
     },
     {
+      "action": "get_ai_visibility_run",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "Read every AI engine answer behind one prompt's score in one round (run_id from the set's tracker_runs): answer text, brand mentions and position, citations, scores and rationale.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": ["run_id"],
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "schema_delivery": "eager",
+      "side_effect": "none",
+      "spend_limited": false,
+      "tool_name": "magister_get_ai_visibility_run"
+    },
+    {
+      "action": "list_ai_visibility_answers",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "List an AI-visibility set's stored engine answers across rounds, newest first, by prompt, engine and date; page with next_cursor.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "limit": {
+            "default": 10,
+            "maximum": 25,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "set_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "since": {
+            "maxLength": 40,
+            "minLength": 10,
+            "type": "string"
+          },
+          "source": {
+            "enum": ["claude", "chatgpt", "perplexity", "google_ai_overview", "gemini"],
+            "type": "string"
+          },
+          "tracker_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "until": {
+            "maxLength": 40,
+            "minLength": 10,
+            "type": "string"
+          }
+        },
+        "required": ["set_id"],
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "schema_delivery": "deferred",
+      "side_effect": "none",
+      "spend_limited": false,
+      "tool_name": "magister_list_ai_visibility_answers"
+    },
+    {
       "action": "run_ai_visibility_set",
       "approval_policy": "none",
       "async_status_adapter": "ai_visibility_round",
@@ -6069,6 +6149,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "ae17b5aaccc698bc33cf7c61008818fffd5ec4023004e099b0eead8b9b105dc3",
+  "registry_revision": "1bfe6c2b385e74a03edec86fb8ffd37f61e02f14b77379f1ed4fe068f882b662",
   "schema_version": 1
 }
