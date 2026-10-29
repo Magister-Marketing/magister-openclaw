@@ -277,9 +277,16 @@ export class LibraryRuntime {
   /** Turn admission. Recovery admits the turn without Library authority: only
    * Library file tools answer temporarily_unavailable. */
   async admit(options: { fromGateway?: boolean } = {}): Promise<boolean> {
+    return (await this.admissionMode(options)) === "active";
+  }
+  /** The mode turn admission settled on, which the Gateway's reconcile call
+   * checks: it admits a recovery turn only on an explicit "recovery". */
+  async admissionMode(
+    options: { fromGateway?: boolean } = {},
+  ): Promise<"active" | "recovery" | "legacy"> {
     // The Gateway calling us is proof it is reachable: skip any discovery backoff.
     if (options.fromGateway) this.discoveryPausedUntil = 0;
-    return (await this.admitted(true))?.mode === "active";
+    return (await this.admitted(true))?.mode ?? "legacy";
   }
   private async activeAdmission(): Promise<
     { state: LibraryState; cache: LibraryCache } | undefined

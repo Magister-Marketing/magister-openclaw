@@ -48,12 +48,14 @@ export async function handleLibraryReconcile(
   }
   try {
     const runtime = hostedLibraryRuntime();
-    const active = (await runtime?.admit({ fromGateway: true })) ?? false;
+    const mode = (await runtime?.admissionMode({ fromGateway: true })) ?? "legacy";
+    const active = mode === "active";
     const cache = active ? await runtime?.store.cache() : undefined;
     res.statusCode = 200;
     res.end(
       JSON.stringify({
         capability: "library_files_v1",
+        mode,
         active,
         ...(cache
           ? { project_id: cache.project_id, epoch: cache.epoch, sequence: cache.sequence }

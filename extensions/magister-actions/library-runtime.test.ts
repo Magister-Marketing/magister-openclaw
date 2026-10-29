@@ -942,6 +942,8 @@ describe("review fixes (PR 2210)", () => {
     await fs.writeFile(path.join(workspace, "notes.txt"), "local");
     gateway.state.mode = "recovery";
     await expect(runtime.admit()).resolves.toBe(false);
+    // The Gateway admits a recovery turn only on this explicit answer.
+    await expect(runtime.admissionMode({ fromGateway: true })).resolves.toBe("recovery");
     await expect(runtime.readSnapshot(async () => "context")).resolves.toBe("context");
     expect((await read("notes.txt")).content[0]).toMatchObject({ text: "local" });
     await expect(read("resources/a.md")).rejects.toThrow("temporarily_unavailable");
