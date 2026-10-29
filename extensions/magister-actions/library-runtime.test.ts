@@ -451,9 +451,30 @@ describe("hosted Library tool authority", () => {
     });
     expect(await fs.readFile(path.join(workspace, "resources/approved.md"), "utf8")).toBe("body");
     await expect(fs.access(path.join(workspace, "resources/brief.md"))).rejects.toThrow();
+    await read("resources/approved.md");
+    for (const destination of ["../outside.md", "PLAN.md", "resources/approved.md"])
+      await expect(
+        move.execute(`bad-${destination}`, { path: "resources/approved.md", destination }),
+      ).rejects.toThrow("invalid_path");
+    // Unregistered local bytes and a trashed entry both keep their path.
+    await fs.writeFile(path.join(workspace, "resources/local.md"), "unregistered");
     await expect(
-      move.execute("escape", { path: "resources/approved.md", destination: "../outside.md" }),
-    ).rejects.toThrow("invalid_path");
+      move.execute("onto-local", {
+        path: "resources/approved.md",
+        destination: "resources/local.md",
+      }),
+    ).rejects.toThrow("unregistered local bytes");
+    gateway.put("resources/old.md", "old");
+    await read("resources/old.md");
+    await runtime
+      .fileTool("trash_file", { sessionId: "session" })
+      .execute("trash-old", { path: "resources/old.md" });
+    await expect(
+      move.execute("onto-trashed", {
+        path: "resources/approved.md",
+        destination: "resources/old.md",
+      }),
+    ).rejects.toThrow("already exists");
     await read("resources/approved.md");
     await runtime
       .fileTool("trash_file", { sessionId: "session" })
@@ -574,8 +595,13 @@ describe("hosted Library tool authority", () => {
     gateway.state.mode = "legacy";
     await expect(read("resources/a.md")).rejects.toThrow("cannot fall back");
     gateway.state.mode = "active";
-    gateway.state.publication.pending = 1;
+    gateway.state.coverage.complete = false;
     await expect(runtime.admit()).rejects.toThrow("publication_pending");
+    gateway.state.coverage.complete = true;
+    // A background view publishing (a plan re-render) no longer fails turns:
+    // /context-ready already publishes the required context or fails closed.
+    gateway.state.publication.pending = 1;
+    await expect(runtime.admit()).resolves.toBe(true);
     expect(localCalls).not.toHaveBeenCalled();
   });
   it("rejects symlink targets without touching the destination", async () => {

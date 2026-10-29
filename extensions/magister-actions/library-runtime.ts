@@ -169,7 +169,11 @@ export class LibraryRuntime {
         if (!state || state.mode !== "active")
           throw new Error("Library state changed during context admission");
       }
-      if (state.publication.failed > 0 || state.publication.pending > 0 || !state.coverage.complete)
+      // /context-ready publishes the required context (audit, brand, plan,
+      // memory) or fails closed. Other views publish in the background and
+      // their last committed revision stays readable, so a pending results
+      // page or plan re-render must not fail every turn and tool call.
+      if (!state.coverage.complete)
         throw new Error(
           "publication_pending: Library context is not ready; retry after publication completes",
         );
@@ -528,14 +532,14 @@ export class LibraryRuntime {
         const destination = move
           ? libraryRelative(runtime.workspace, String(params.destination ?? ""))
           : undefined;
-        for (const target of [relative, destination]) {
-          if (target === undefined) continue;
-          if (
-            !target ||
-            (!runtime.managedPath(target, admitted.cache) && !target.startsWith("resources/"))
-          )
-            throw new Error("invalid_path: Library files live under resources/");
-          await safeLibraryPath(runtime.workspace, target);
+        if (!relative || !runtime.managedPath(relative, admitted.cache))
+          throw new Error("invalid_path: not a Library file");
+        await safeLibraryPath(runtime.workspace, relative);
+        if (destination !== undefined) {
+          // A move may only land on a new, unowned path under resources/.
+          if (!destination.startsWith("resources/") || destination === relative)
+            throw new Error("invalid_path: move to a new path under resources/");
+          await safeLibraryPath(runtime.workspace, destination);
         }
         return runtime.lock("exclusive", async () => {
           await runtime.store.recover();
@@ -549,13 +553,28 @@ export class LibraryRuntime {
             async () => {
               const base = await runtime.base(relative, session, cache);
               if (!base) throw new Error(`not_found: ${relative}`);
-              if (
-                destination &&
-                Object.values(cache.files).some(
-                  (f) => f.path === destination && f.lifecycle === "active",
+              if (destination) {
+                const entries = Object.values(cache.files);
+                // Any lifecycle: a trashed entry still owns its path for restore.
+                if (entries.some((f) => f.path === destination))
+                  throw new Error(`conflict: ${destination} already exists`);
+                if (
+                  entries.some(
+                    (f) => f.ownership === "managed" && destination.startsWith(`${f.path}/`),
+                  )
                 )
-              )
-                throw new Error(`conflict: ${destination} already exists`);
+                  throw new Error(`managed_file: ${destination} is inside a system-owned view`);
+                const local = await fs
+                  .lstat(path.join(runtime.workspace, destination))
+                  .catch((error) => {
+                    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+                    throw error;
+                  });
+                if (local)
+                  throw new Error(
+                    `conflict: ${destination} has unregistered local bytes; reconcile the Library inventory first`,
+                  );
+              }
               return [
                 destination
                   ? {
