@@ -147,6 +147,26 @@ function file(name: string, content: Buffer | string, type?: string) {
 }
 
 describe("Magister corpus ingestion", () => {
+  it("refuses uploads on a volume with cloud Library authority and writes nothing", async () => {
+    const root = workspace();
+    const library = path.join(root, ".magister", "library-v1");
+    fs.mkdirSync(library, { recursive: true });
+    // activation.json is written for active and recovery brands alike.
+    fs.writeFileSync(path.join(library, "activation.json"), '{"project_id":"p","epoch":2}');
+    const refused = await request({ files: [file("brief.md", "attachment")], provenance: "chat" });
+    expect(refused.statusCode).toBe(409);
+    expect(JSON.parse(refused.body)).toMatchObject({ error: "library_active" });
+    expect(fs.readdirSync(path.join(root, "resources"))).toEqual([]);
+    // Shadow and legacy volumes keep their files locally, as before.
+    fs.rmSync(path.join(library, "activation.json"));
+    fs.writeFileSync(path.join(library, "shadow.json"), '{"project_id":"p"}');
+    const shadow = await request({ files: [file("shadow.md", "attachment")], provenance: "chat" });
+    expect(shadow.statusCode).toBe(200);
+    fs.rmSync(path.join(root, ".magister"), { recursive: true, force: true });
+    const legacy = await request({ files: [file("brief.md", "attachment")], provenance: "chat" });
+    expect(legacy.statusCode).toBe(200);
+    expect(fs.readFileSync(path.join(root, "resources", "brief.md"), "utf8")).toBe("attachment");
+  });
   it("atomically persists text, extraction, and a durable manifest", async () => {
     const root = workspace();
     const response = await request({

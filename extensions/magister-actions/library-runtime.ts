@@ -82,6 +82,15 @@ const canonical = (value: unknown): string =>
       : item,
   );
 
+/** True once this volume has cloud Library authority: activation.json is
+ * written for active and recovery brands and is never removed. Local only, so
+ * a Gateway or database outage cannot make it answer "legacy". */
+export async function libraryActivated(workspace: string): Promise<boolean> {
+  const marker = path.join(".magister", "library-v1", "activation.json");
+  await safeLibraryPath(workspace, marker);
+  return !!(await readJson(path.join(workspace, marker)));
+}
+
 export class LibraryRuntime {
   readonly store: LibraryStore;
   private acknowledged: string | undefined;

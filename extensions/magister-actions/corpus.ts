@@ -13,6 +13,7 @@ import {
   normalizeDestination,
   writeBase64ToStaging,
 } from "./corpus-ingestion.js";
+import { libraryActivated } from "./library-runtime.js";
 import { type LocalMutationContext, parseLocalMutationContext } from "./mutation-observer.js";
 
 type UploadFile = {
@@ -122,6 +123,16 @@ export async function handleCorpusIngestion(
   try {
     const request = parseRequest(await readJsonBody(req));
     const workspace = workspaceDir();
+    // A file written here on a cloud-authority volume would never reach the
+    // Library and be overwritten by its next install. Refuse, so a Gateway that
+    // wrongly took this brand for legacy fails closed instead of losing it.
+    if (await libraryActivated(workspace)) {
+      sendJson(res, 409, {
+        error: "library_active",
+        message: "This brand's files live in the cloud Library; upload through the Library.",
+      });
+      return true;
+    }
     const results: IngestionResult[] = [];
     if (request.files?.length) {
       if (request.files.length > 10) {
