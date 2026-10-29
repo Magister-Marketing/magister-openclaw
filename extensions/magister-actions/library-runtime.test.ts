@@ -964,6 +964,54 @@ describe("review fixes (PR 2210)", () => {
     expect(gateway.commits).toHaveLength(0);
   });
 
+  it("C5: a replaced volume in recovery refuses writes to every Library path, whatever its cache says", async () => {
+    // Backfilled Library file outside resources/: an empty local cache cannot know it.
+    gateway.put("campaigns/launch.md", "cloud copy");
+    const replaced = await freshVolume();
+    await fs.mkdir(path.join(workspace, "campaigns"));
+    await fs.writeFile(path.join(workspace, "campaigns/launch.md"), "legacy bytes");
+    gateway.state.mode = "recovery";
+    await expect(replaced.admit()).resolves.toBe(false);
+    await expect(write("campaigns/launch.md", "lost edit", "recovery-backfilled")).rejects.toThrow(
+      "temporarily_unavailable",
+    );
+    await expect(
+      tool("edit").execute("recovery-edit", { path: "campaigns/launch.md" }),
+    ).rejects.toThrow("temporarily_unavailable");
+    expect(await fs.readFile(path.join(workspace, "campaigns/launch.md"), "utf8")).toBe(
+      "legacy bytes",
+    );
+    expect(localCalls).not.toHaveBeenCalledWith("write");
+    // Paths outside the Library keep working.
+    await write("scratch.txt", "local", "recovery-local");
+    expect(await fs.readFile(path.join(workspace, "scratch.txt"), "utf8")).toBe("local");
+    // If the Library's paths cannot be listed, recovery refuses every write.
+    const original = gateway.request;
+    vi.spyOn(gateway, "request").mockImplementation(async (method, endpoint, values) => {
+      if (endpoint === "/manifest") throw new LibraryHttpError(503, {});
+      return original(method, endpoint, values);
+    });
+    await expect(write("scratch.txt", "x", "recovery-unlisted")).rejects.toThrow(
+      "temporarily_unavailable",
+    );
+    expect(gateway.commits).toHaveLength(0);
+  });
+  it("L1: caches a legacy answer for 60 s and a Gateway reconcile refreshes it", async () => {
+    await freshVolume();
+    gateway.state.mode = "legacy";
+    const request = vi.spyOn(gateway, "request");
+    const stateCalls = () => request.mock.calls.filter((call) => call[1] === "/state").length;
+    await expect(runtime.admit()).resolves.toBe(false);
+    await expect(runtime.admit()).resolves.toBe(false);
+    expect(stateCalls()).toBe(1);
+    // The Gateway calls when a brand enters shadow: enrollment is never delayed.
+    gateway.state.mode = "shadow";
+    await expect(runtime.admit({ fromGateway: true })).resolves.toBe(false);
+    expect(stateCalls()).toBeGreaterThan(1);
+    await expect(
+      fs.stat(path.join(workspace, ".magister/library-v1/shadow.json")),
+    ).resolves.toBeTruthy();
+  });
   it("C6: matches edits through a BOM and CRLF and keeps the file's own encoding", async () => {
     gateway.put("resources/win.md", "﻿line one\r\nline two\r\n");
     await read("resources/win.md");

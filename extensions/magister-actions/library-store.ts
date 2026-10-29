@@ -228,6 +228,11 @@ export class LibraryStore {
     await this.install(journal);
     return next;
   }
+  /** Every Library entry through `through`, listed from the cloud (no
+   * downloads). Recovery uses it because a replaced volume's cache is empty. */
+  listed(projectId: string, through: number): Promise<Record<string, LibraryFile>> {
+    return this.manifest(projectId, through);
+  }
   /** Heads through `through`: a snapshot, or `since`'s heads plus every later
    * revision. Pages are ordered by commit, so the last entry per file wins and
    * intermediate revisions are never downloaded. */

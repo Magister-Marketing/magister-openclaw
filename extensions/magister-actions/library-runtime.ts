@@ -80,7 +80,10 @@ export class LibraryRuntime {
   private acknowledged: string | undefined;
   active = false;
   /** Turn admission on a never-enrolled brand asks the Gateway once, bounded:
-   * a failure or a hang is legacy storage, as before the Library existed. */
+   * a failure or a hang is legacy storage, as before the Library existed. A
+   * legacy answer or a failure is reused for discoveryBackoffMs, so a legacy
+   * brand costs at most one state read a minute; the Gateway's own reconcile
+   * call (sent when a brand enters shadow or cuts over) always asks again. */
   discoveryTimeoutMs = 3_000;
   discoveryBackoffMs = 60_000;
   private discoveryPausedUntil = 0;
@@ -128,7 +131,9 @@ export class LibraryRuntime {
           );
         }),
       ]);
-      return !!state && ["shadow", "active", "recovery"].includes(state.mode);
+      const enrolled = !!state && ["shadow", "active", "recovery"].includes(state.mode);
+      if (!enrolled) this.discoveryPausedUntil = Date.now() + this.discoveryBackoffMs;
+      return enrolled;
     } catch {
       this.discoveryPausedUntil = Date.now() + this.discoveryBackoffMs;
       return false;
@@ -776,12 +781,25 @@ export class LibraryRuntime {
           return runtime.legacyTool(tool, context, [toolCallId, args, signal, onUpdate], targets);
         if (admitted.mode === "recovery") {
           // Library files are refused; every other path keeps working locally.
-          const cache = admitted.cache ?? {
+          // A replaced volume's cache is empty, so the Library's own path list
+          // decides: a local write to a Library path would be overwritten
+          // silently when the brand returns to active.
+          const cache: LibraryCache = {
             project_id: admitted.state.project_id,
             epoch: admitted.state.epoch,
-            sequence: 0,
-            files: {},
+            sequence: admitted.state.sequence,
+            files: { ...admitted.cache?.files },
           };
+          const mutating = ["write", "edit", "apply_patch"].includes(tool.name);
+          try {
+            for (const file of Object.values(
+              await runtime.store.listed(admitted.state.project_id, admitted.state.sequence),
+            ))
+              cache.files[`listed:${file.file_id}`] = file;
+          } catch {
+            // Without the list no write can be proven safe; reads still use the cache.
+            if (mutating) throw recoveryError();
+          }
           for (const input of targets)
             if (runtime.managedPath(libraryRelative(runtime.workspace, input), cache))
               throw recoveryError();
