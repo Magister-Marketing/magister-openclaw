@@ -54,7 +54,9 @@ const sourcePaths = new Set([
 // audits/, data/<source>/ and data/pages/; resources/ is handled below). Agents
 // can never create there (the Gateway's canonical_path), so treating them as
 // Library paths only refuses a local write a later publication would overwrite.
-const publishedRoots = ["audits", "data"];
+// Every folder a Gateway publication creates outside resources/ (library_publication.py;
+// gateway/tests/test_library_publication_roots.py fails if the two lists drift).
+const publishedRoots = ["audits", "data", "plans"];
 const jsonResult = (value: unknown) => ({
   content: [{ type: "text" as const, text: JSON.stringify(value) }],
   details: value,

@@ -1003,12 +1003,18 @@ describe("review fixes (PR 2210)", () => {
     await expect(replaced.admit()).resolves.toBe(false);
     // A publication may create these while recovery runs; a local copy would be
     // overwritten without notice when the brand returns to active.
-    for (const target of ["audits/2026-10-audit.md", "data/ga4/sessions.csv", "data/pages/x/y.md"])
+    for (const target of [
+      "audits/2026-10-audit.md",
+      "data/ga4/sessions.csv",
+      "data/pages/x/y.md",
+      "plans/history/old-plan.md",
+    ])
       await expect(write(target, "local", `recovery-${target}`)).rejects.toThrow(
         "temporarily_unavailable",
       );
     await expect(fs.stat(path.join(workspace, "audits"))).rejects.toThrow("ENOENT");
     await expect(fs.stat(path.join(workspace, "data"))).rejects.toThrow("ENOENT");
+    await expect(fs.stat(path.join(workspace, "plans"))).rejects.toThrow("ENOENT");
     await write("database-notes.txt", "local", "recovery-similar-name");
     expect(await fs.readFile(path.join(workspace, "database-notes.txt"), "utf8")).toBe("local");
   });
