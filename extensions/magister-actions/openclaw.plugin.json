@@ -76,6 +76,8 @@
       "magister_list_ai_visibility_sets",
       "magister_get_ai_visibility_set",
       "magister_get_ai_visibility_citations",
+      "magister_get_ai_visibility_run",
+      "magister_list_ai_visibility_answers",
       "magister_run_ai_visibility_set",
       "magister_suggest_ai_visibility_prompts",
       "magister_create_ai_visibility_set",
