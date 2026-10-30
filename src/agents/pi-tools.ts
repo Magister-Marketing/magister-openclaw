@@ -14,7 +14,7 @@ import {
 } from "../shared/string-coerce.js";
 import { resolveGatewayMessageChannel } from "../utils/message-channel.js";
 import { resolveAgentConfig } from "./agent-scope.js";
-import { createApplyPatchTool } from "./apply-patch.js";
+import { createApplyPatchTool, planWorkspacePatch } from "./apply-patch.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
 import { describeExecTool, describeProcessTool } from "./bash-tools.descriptions.js";
 import type { ExecToolDefaults } from "./bash-tools.exec-types.js";
@@ -81,6 +81,7 @@ import {
 } from "./tool-policy.js";
 import { createToolDescribeTool } from "./tool-schema-deferral.js";
 import { resolveWorkspaceRoot } from "./workspace-dir.js";
+import { wrapWorkspaceFileAuthority } from "./workspace-file-authority.js";
 
 function isOpenAIProvider(provider?: string) {
   const normalized = normalizeOptionalLowercaseString(provider);
@@ -860,17 +861,25 @@ export function createOpenClawCodingTools(options?: {
   );
   options?.recordToolPrepStage?.("schema-normalization");
   const withHooks = normalized.map((tool) =>
-    wrapToolWithBeforeToolCallHook(tool, {
-      agentId,
-      ...(options?.config ? { config: options.config } : {}),
-      sessionKey: options?.sessionKey,
-      sessionId: options?.sessionId,
-      runId: options?.runId,
-      ...(options?.trace ? { trace: options.trace } : {}),
-      loopDetection: resolveToolLoopDetectionConfig({ cfg: options?.config, agentId }),
-      ...(tool.sideEffect ? { toolSideEffect: tool.sideEffect } : {}),
-      onToolOutcome: options?.onToolOutcome,
-    }),
+    wrapToolWithBeforeToolCallHook(
+      wrapWorkspaceFileAuthority(tool, {
+        workspaceDir: workspaceRoot,
+        sessionId: options?.sessionId,
+        sessionKey: options?.sessionKey,
+        planPatch: planWorkspacePatch,
+      }),
+      {
+        agentId,
+        ...(options?.config ? { config: options.config } : {}),
+        sessionKey: options?.sessionKey,
+        sessionId: options?.sessionId,
+        runId: options?.runId,
+        ...(options?.trace ? { trace: options.trace } : {}),
+        loopDetection: resolveToolLoopDetectionConfig({ cfg: options?.config, agentId }),
+        ...(tool.sideEffect ? { toolSideEffect: tool.sideEffect } : {}),
+        onToolOutcome: options?.onToolOutcome,
+      },
+    ),
   );
   options?.recordToolPrepStage?.("tool-hooks");
   const withAbort = options?.abortSignal

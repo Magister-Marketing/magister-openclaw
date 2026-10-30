@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ContextEngine, ContextEngineRuntimeContext } from "../../context-engine/types.js";
+import { WorkspaceFileAuthorityError } from "../workspace-file-authority.js";
 import {
   CONTEXT_LIMIT_TRUNCATION_NOTICE,
   formatContextLimitTruncationNotice,
@@ -337,7 +338,8 @@ export function installContextEngineLoopHook(params: {
         return assembled.messages;
       }
       lastAssembledView = null;
-    } catch {
+    } catch (error) {
+      if (error instanceof WorkspaceFileAuthorityError) throw error;
       // Best-effort: any engine failure falls through to the raw source
       // messages so the tool loop still makes forward progress.
     }

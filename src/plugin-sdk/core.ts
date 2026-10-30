@@ -1,4 +1,15 @@
 import type { ResolvedConfiguredAcpBinding } from "../acp/persistent-bindings.types.js";
+export {
+  registerWorkspaceFileAuthority,
+  admitWorkspaceFiles,
+  writeLegacyWorkspaceFile,
+} from "../agents/workspace-file-authority.js";
+export type {
+  WorkspaceFileAuthority,
+  WorkspaceFileAuthorityContext,
+  WorkspacePatchChange,
+  WorkspacePatchPlan,
+} from "../agents/workspace-file-authority.js";
 import { buildChatChannelMetaById } from "../channels/chat-meta-shared.js";
 import type { ChatChannelId } from "../channels/ids.js";
 import { emptyChannelConfigSchema } from "../channels/plugins/config-schema.js";

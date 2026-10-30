@@ -14,6 +14,7 @@ import { applyUpdateHunk } from "./apply-patch-update.js";
 import { toRelativeSandboxPath, resolvePathFromInput } from "./path-policy.js";
 import { assertSandboxPath } from "./sandbox-paths.js";
 import type { SandboxFsBridge } from "./sandbox/fs-bridge.js";
+import type { WorkspacePatchPlan } from "./workspace-file-authority.js";
 
 const BEGIN_PATCH_MARKER = "*** Begin Patch";
 const END_PATCH_MARKER = "*** End Patch";
@@ -85,6 +86,33 @@ const applyPatchSchema = Type.Object({
     description: "Patch content using the *** Begin Patch/End Patch format.",
   }),
 });
+
+/** Parse every target before any authority chooses or mutates a filesystem. */
+export function planWorkspacePatch(input: string): WorkspacePatchPlan {
+  const { hunks } = parsePatchText(input);
+  if (!hunks.length) throw new Error("No files were modified.");
+  return {
+    paths: hunks.flatMap((hunk) =>
+      hunk.kind === "update" && hunk.movePath ? [hunk.path, hunk.movePath] : [hunk.path],
+    ),
+    stage: async (read) => {
+      const changes = [];
+      for (const hunk of hunks) {
+        if (hunk.kind === "delete") changes.push({ kind: "delete" as const, path: hunk.path });
+        else if (hunk.kind === "add")
+          changes.push({ kind: "add" as const, path: hunk.path, text: hunk.contents });
+        else
+          changes.push({
+            kind: "update" as const,
+            path: hunk.path,
+            text: await applyUpdateHunk(hunk.path, hunk.chunks, { readFile: read }),
+            ...(hunk.movePath ? { movePath: hunk.movePath } : {}),
+          });
+      }
+      return changes;
+    },
+  };
+}
 
 export function createApplyPatchTool(
   options: { cwd?: string; sandbox?: SandboxApplyPatchConfig; workspaceOnly?: boolean } = {},
