@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { registerWorkspaceFileAuthority } from "../../workspace-file-authority.js";
 import { buildBeforeModelResolveAttachments, resolveHookModelSelection } from "./setup.js";
 
 const hookContext = {
@@ -23,6 +24,34 @@ describe("buildBeforeModelResolveAttachments", () => {
 });
 
 describe("resolveHookModelSelection", () => {
+  it("fails closed before hooks/model context when workspace admission fails", async () => {
+    const hook = vi.fn();
+    const unregister = registerWorkspaceFileAuthority({
+      version: 1,
+      wrap: (tool) => tool,
+      admit: async () => {
+        throw new Error("publication_pending");
+      },
+    });
+    try {
+      await expect(
+        resolveHookModelSelection({
+          prompt: "hello",
+          provider: "provider",
+          modelId: "model",
+          hookContext,
+          hookRunner: {
+            hasHooks: () => true,
+            runBeforeModelResolve: hook,
+            runBeforeAgentStart: hook,
+          },
+        }),
+      ).rejects.toThrow("publication_pending");
+      expect(hook).not.toHaveBeenCalled();
+    } finally {
+      unregister();
+    }
+  });
   it("passes attachment metadata to before_model_resolve hooks", async () => {
     const attachments = [{ kind: "image" as const, mimeType: "image/png" }];
     const hookRunner = {

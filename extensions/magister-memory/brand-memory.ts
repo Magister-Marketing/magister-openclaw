@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { admitWorkspaceFiles, writeLegacyWorkspaceFile } from "openclaw/plugin-sdk/core";
 import { withContextLock } from "./context-lock.js";
 import { atomicWriteFile, isRecord, readUtf8IfExists } from "./file-utils.js";
 import { callRuntimeGateway, RuntimeGatewayError } from "./gateway-runtime.js";
@@ -69,9 +70,9 @@ function postOperation(operation: BrandMemoryOperation): Promise<Record<string, 
 async function writeMemoryCopy(workspaceDir: string, content: string): Promise<void> {
   const path = join(workspaceDir, "MEMORY.md");
   await withContextLock(workspaceDir, async () => {
-    if (((await readUtf8IfExists(path)) ?? "") !== content) {
-      await atomicWrite(path, content);
-    }
+    await writeLegacyWorkspaceFile(workspaceDir, async () => {
+      if (((await readUtf8IfExists(path)) ?? "") !== content) await atomicWrite(path, content);
+    });
   });
 }
 
@@ -157,6 +158,7 @@ async function importLocalEntries(
  * unreachable; the caller keeps the local file.
  */
 export async function syncBrandMemory(workspaceDir: string): Promise<void> {
+  if (await admitWorkspaceFiles(workspaceDir)) return;
   let list = await readList();
   const stampPath = importStampPath(workspaceDir);
   if ((await readUtf8IfExists(stampPath)) === undefined) {
