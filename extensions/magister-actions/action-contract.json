@@ -3171,7 +3171,7 @@
       "action": "get_ai_visibility_set",
       "approval_policy": "none",
       "async_status_adapter": "ai_visibility_round",
-      "description": "Read one AI-visibility set, members, rounds, scores, and terminal status.",
+      "description": "Read one AI-visibility set: members, rounds, scores, competitors, engine and prompt breakdowns, changes, and terminal status.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "safe_retry",
       "input_schema": {
@@ -6232,6 +6232,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "62a52a1114aa28dee51080cc04c5823e3e215f36cb3b873d3758189c81c2662b",
+  "registry_revision": "467820c02f572a20a79aa2874f6c276f3aa93b68e6509dedfca3b5a21415a1c6",
   "schema_version": 1
 }
