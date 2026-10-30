@@ -14,6 +14,7 @@ import {
 } from "../../context-window-guard.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../defaults.js";
 import { FailoverError } from "../../failover-error.js";
+import { admitWorkspaceFiles } from "../../workspace-file-authority.js";
 import { log } from "../logger.js";
 import { readPiModelContextTokens } from "../model-context-tokens.js";
 
@@ -52,6 +53,8 @@ export async function resolveHookModelSelection(params: {
   let modelResolveOverride: { providerOverride?: string; modelOverride?: string } | undefined;
   let legacyBeforeAgentStartResult: PluginHookBeforeAgentStartResult | undefined;
   const hookRunner = params.hookRunner;
+
+  await admitWorkspaceFiles(params.hookContext.workspaceDir);
 
   // Run before_model_resolve hooks early so plugins can override the
   // provider/model before resolveModel().
