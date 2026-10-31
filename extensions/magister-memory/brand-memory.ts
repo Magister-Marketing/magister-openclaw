@@ -2,30 +2,25 @@ import { join } from "node:path";
 import { admitWorkspaceFiles, writeLegacyWorkspaceFile } from "openclaw/plugin-sdk/core";
 import { withContextLock } from "./context-lock.js";
 import { atomicWriteFile, isRecord, readUtf8IfExists } from "./file-utils.js";
-import { callRuntimeGateway } from "./gateway-runtime.js";
+import { callRuntimeGateway, RuntimeGatewayError } from "./gateway-runtime.js";
 import { atomicWrite, type MemoryResult, parseMemoryEntries } from "./memory-store.js";
 
 /**
- * Brand memory: the `memory` tool's target='memory' list. Its home is the
- * Gateway (`brand_memory`), which every Magister agent working on the brand
- * reads and writes: this hosted agent, MCP clients, and the analytics review.
- * The Gateway applies the rules the file store used to (2,200-char budget,
- * duplicate and unique-match checks, threat scan) inside the project's fence,
- * so a machine that lost its project cannot write. MEMORY.md is this
- * machine's copy, rewritten once per session at the start and, after the
- * one-time import, from every reply; the context engine reads that copy into
- * the system prompt.
+ * The hosted memory tool writes explicit brand rules to the shared Gateway.
+ * Modern context refreshes before every turn with provenance and source coverage.
+ * MEMORY.md remains only the stable legacy projection and one-time import source.
+ * USER.md and episodic conversation checkpoints keep their separate local stores.
  */
 
 const READ_TIMEOUT_MS = 3_000;
 const WRITE_TIMEOUT_MS = 5_000;
 const SEED_PREFIX = "[magister_seed:";
-const MAX_TRACKED_SESSIONS = 500;
 
-export type BrandMemoryOperation =
+export type BrandMemoryOperation = (
   | { action: "add"; content: string }
-  | { action: "replace"; old_text: string; content: string }
-  | { action: "remove"; old_text: string };
+  | { action: "replace"; old_text?: string; content: string }
+  | { action: "remove"; old_text?: string }
+) & { entry_id?: string; scope?: Record<string, string>; expected_revision?: number };
 
 type BrandMemoryList = { entries: string[]; content: string; charCount: number };
 
@@ -59,7 +54,7 @@ async function readList(): Promise<BrandMemoryList> {
 }
 
 function postOperation(operation: BrandMemoryOperation): Promise<Record<string, unknown>> {
-  return callRuntimeGateway("brand-memory", {
+  return callRuntimeGateway("marketing-context/rules", {
     method: "POST",
     body: operation,
     timeoutMs: WRITE_TIMEOUT_MS,
@@ -83,19 +78,6 @@ async function writeMemoryCopy(workspaceDir: string, content: string): Promise<v
 
 function importStampPath(workspaceDir: string): string {
   return join(workspaceDir, ".magister", "state", "brand-memory-import");
-}
-
-/**
- * Rewrite MEMORY.md from a write's reply once the one-time import has run.
- * Before it (no stamp), MEMORY.md is the only record of the entries this
- * machine held before brand memory moved to the Gateway, so it is left for the
- * next session-start sync: that imports it, then rewrites it from the
- * Gateway's list, which by then holds this write too.
- */
-async function writeCopyAfterImport(workspaceDir: string, content: string): Promise<void> {
-  if ((await readUtf8IfExists(importStampPath(workspaceDir))) !== undefined) {
-    await writeMemoryCopy(workspaceDir, content);
-  }
 }
 
 function unavailable(error: unknown): MemoryResult {
@@ -131,7 +113,7 @@ export async function applyBrandMemory(
   if (list) {
     // The Gateway already holds the change; a failed local copy is rewritten
     // at the next session start and must not report the write as failed.
-    await writeCopyAfterImport(workspaceDir, list.content).catch(() => undefined);
+    await syncMarketingContext(workspaceDir).catch(() => undefined);
   }
   if (reply.ok !== true || !list) {
     return { success: false, target: "memory", message: String(reply.error) };
@@ -171,7 +153,7 @@ async function importLocalEntries(
 }
 
 /**
- * Session-start sync: fetch the Gateway's list and rewrite MEMORY.md when it
+ * Turn-start legacy sync: fetch the Gateway's list and rewrite MEMORY.md when it
  * differs, running the one-time import first. Throws when the Gateway is
  * unreachable; the caller keeps the local file.
  */
@@ -190,29 +172,52 @@ export async function syncBrandMemory(workspaceDir: string): Promise<void> {
   await writeMemoryCopy(workspaceDir, list.content);
 }
 
-/**
- * Which sessions already synced. The context engine is built per run and
- * reads MEMORY.md on its first assemble(), so the sync runs ahead of a
- * session's first run and is skipped for the rest of that session.
- */
-export class BrandMemorySessions {
-  private readonly synced = new Set<string>();
-
-  claim(workspaceDir: string, sessionId: string | undefined): boolean {
-    if (!sessionId) {
-      return true;
+/** Refresh on every turn. A failed refresh keeps the last good context, marked stale. */
+export async function syncMarketingContext(workspaceDir: string): Promise<void> {
+  const path = join(workspaceDir, ".magister", "state", "marketing-context.json");
+  try {
+    const result = await callRuntimeGateway("marketing-context", {
+      method: "GET",
+      timeoutMs: READ_TIMEOUT_MS,
+    });
+    if (typeof result.rendered !== "string" || !Number.isSafeInteger(result.revision)) {
+      throw new Error("marketing context response is invalid");
     }
-    const key = `${workspaceDir}\n${sessionId}`;
-    if (this.synced.has(key)) {
-      return false;
+    const content = JSON.stringify({
+      project_id: result.project_id,
+      reset_generation: result.reset_generation,
+      revision: result.revision,
+      rendered: result.rendered,
+    });
+    if ((await readUtf8IfExists(path)) !== content) {
+      await atomicWriteFile(path, content);
     }
-    this.synced.add(key);
-    if (this.synced.size > MAX_TRACKED_SESSIONS) {
-      const oldest = this.synced.values().next().value;
-      if (oldest !== undefined) {
-        this.synced.delete(oldest);
+  } catch (error) {
+    if (error instanceof RuntimeGatewayError && [401, 403].includes(error.status)) {
+      // Revoked authority is not a transient outage. Do not inject another
+      // binding's cached knowledge or fall back to its legacy file.
+      await atomicWriteFile(
+        path,
+        JSON.stringify({
+          available: false,
+          rendered:
+            "Shared marketing context is unavailable because access was denied. Do not use prior cached brand memory.",
+        }),
+      );
+      await writeMemoryCopy(workspaceDir, "");
+      throw error;
+    }
+    const cached = await readUtf8IfExists(path);
+    if (cached) {
+      try {
+        const previous: unknown = JSON.parse(cached);
+        if (isRecord(previous) && typeof previous.rendered === "string") {
+          await atomicWriteFile(path, JSON.stringify({ ...previous, stale: true }));
+        }
+      } catch {
+        // An unreadable cache cannot supply context; never replace it with empty learning.
       }
     }
-    return true;
+    throw error;
   }
 }

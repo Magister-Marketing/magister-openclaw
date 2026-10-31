@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { applyBrandMemory, BrandMemorySessions, syncBrandMemory } from "./brand-memory.js";
+import { applyBrandMemory, syncBrandMemory } from "./brand-memory.js";
 import { stubBrandMemoryGateway, useMachineGatewayEnv } from "./brand-memory.test-helpers.js";
 import plugin from "./index.js";
 
@@ -162,9 +162,12 @@ describe("brand memory session-start sync", () => {
       memory_md: original,
     });
 
-    // Imported: a write now refreshes the copy straight away.
+    // Modern writes update shared context without expanding the legacy import file.
     await applyBrandMemory(dir, { action: "remove", old_text: "Tone" });
-    expect(await readMemory()).toBe("Never call it Magister Cloud\n§\nNo paid ads before March");
+    expect(
+      JSON.parse(await readFile(join(dir, ".magister", "state", "marketing-context.json"), "utf8"))
+        .rendered,
+    ).not.toContain("Tone");
   });
 
   it("imports into a list another agent wrote first, skipping what it already has", async () => {
@@ -227,22 +230,6 @@ describe("brand memory session-start sync", () => {
   });
 });
 
-describe("BrandMemorySessions", () => {
-  it("claims each session once", () => {
-    const sessions = new BrandMemorySessions();
-    expect(sessions.claim("/ws", "s1")).toBe(true);
-    expect(sessions.claim("/ws", "s1")).toBe(false);
-    expect(sessions.claim("/ws", "s2")).toBe(true);
-    expect(sessions.claim("/other", "s1")).toBe(true);
-  });
-
-  it("always syncs a run without a session id", () => {
-    const sessions = new BrandMemorySessions();
-    expect(sessions.claim("/ws", undefined)).toBe(true);
-    expect(sessions.claim("/ws", undefined)).toBe(true);
-  });
-});
-
 describe("before_model_resolve hook", () => {
   let dir: string;
   let restoreEnv: () => void;
@@ -281,16 +268,21 @@ describe("before_model_resolve hook", () => {
     };
   }
 
-  it("syncs once per session and never overrides the model", async () => {
+  it("refreshes every turn in the same session and never overrides the model", async () => {
     const gateway = stubBrandMemoryGateway(["Tone: plain"]);
     const { run } = registerHook();
 
     await expect(run("session-1")).resolves.toBeUndefined();
+    gateway.entries.splice(0, 1, "Tone: warm");
     await run("session-1");
+    expect(
+      JSON.parse(await readFile(join(dir, ".magister", "state", "marketing-context.json"), "utf8"))
+        .rendered,
+    ).toContain("Tone: warm");
     await run("session-2");
 
-    expect(gateway.calls.filter((call) => call.method === "GET")).toHaveLength(2);
-    expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("Tone: plain");
+    expect(gateway.calls.filter((call) => call.path.endsWith("marketing-context"))).toHaveLength(3);
+    expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("Tone: warm");
   });
 
   it("keeps the local MEMORY.md and warns when the Gateway is unreachable", async () => {
@@ -309,5 +301,37 @@ describe("before_model_resolve hook", () => {
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining("brand memory sync failed, keeping the local MEMORY.md"),
     );
+  });
+  it("keeps last good context on failure, marks stale, and retries in the same chat", async () => {
+    const gateway = stubBrandMemoryGateway(["Tone: plain"]);
+    const { run } = registerHook();
+    const path = join(dir, ".magister", "state", "marketing-context.json");
+    await run("same");
+    gateway.failing.add("/api/runtime/marketing-context");
+    await run("same");
+    expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
+      stale: true,
+      rendered: "Confirmed rules: Tone: plain",
+    });
+    gateway.failing.clear();
+    gateway.entries.splice(0, 1, "Tone: warm");
+    await run("same");
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
+      revision: 1,
+      rendered: "Confirmed rules: Tone: warm",
+    });
+  });
+  it("suppresses cached and legacy memory after an authorization denial", async () => {
+    const gateway = stubBrandMemoryGateway(["Private old brand rule"]);
+    const { run } = registerHook();
+    await run("same");
+    gateway.forbidden.add("/api/runtime/marketing-context");
+    await run("same");
+    const context = JSON.parse(
+      await readFile(join(dir, ".magister", "state", "marketing-context.json"), "utf8"),
+    );
+    expect(context.available).toBe(false);
+    expect(context.rendered).not.toContain("Private old brand rule");
+    expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("");
   });
 });

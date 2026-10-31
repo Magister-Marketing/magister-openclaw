@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -26,6 +26,70 @@ describe("MagisterMemoryContextEngine", () => {
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true });
   });
+
+  it("uses the shared provenance projection instead of labeling confirmed rules as inferred", async () => {
+    await mkdir(join(dir, ".magister", "state"), { recursive: true });
+    await writeFile(memoryPath, "old legacy note");
+    await writeFile(
+      join(dir, ".magister", "state", "marketing-context.json"),
+      JSON.stringify({
+        revision: 2,
+        rendered: "Confirmed rules: use short sentences.\nObserved style: candid.",
+        stale: true,
+      }),
+    );
+    const engine = new MagisterMemoryContextEngine({
+      memoryPath,
+      userPath,
+      projectPath,
+      brandPath,
+      inner: new LegacyContextEngine(),
+    });
+    const result = await engine.assemble({ sessionId: "same", messages: [] });
+    expect(result.systemPromptAddition).toContain("source=shared_marketing_context");
+    expect(result.systemPromptAddition).toContain("Confirmed rules: use short sentences");
+    expect(result.systemPromptAddition).toContain("Refresh failed");
+    expect(result.systemPromptAddition).not.toContain("older_inferred_memory");
+  });
+
+  it("an authoritative empty shared context suppresses a stale legacy copy", async () => {
+    await mkdir(join(dir, ".magister", "state"), { recursive: true });
+    await writeFile(memoryPath, "Retired brand rule");
+    await writeFile(userPath, "Keep the personal profile");
+    await writeFile(
+      join(dir, ".magister", "state", "marketing-context.json"),
+      JSON.stringify({ revision: 3, rendered: "" }),
+    );
+    const engine = new MagisterMemoryContextEngine({
+      memoryPath,
+      userPath,
+      projectPath,
+      brandPath,
+      inner: new LegacyContextEngine(),
+    });
+    const result = await engine.assemble({ sessionId: "empty-shared", messages: [] });
+    expect(result.systemPromptAddition).not.toContain("Retired brand rule");
+    expect(result.systemPromptAddition).not.toContain("older_inferred_memory");
+    expect(result.systemPromptAddition).toContain("Keep the personal profile");
+  });
+
+  it.each(["{", JSON.stringify({ rendered: null })])(
+    "retains legacy compatibility when the shared cache is invalid: %s",
+    async (cache) => {
+      await mkdir(join(dir, ".magister", "state"), { recursive: true });
+      await writeFile(memoryPath, "Legacy rule");
+      await writeFile(join(dir, ".magister", "state", "marketing-context.json"), cache);
+      const engine = new MagisterMemoryContextEngine({
+        memoryPath,
+        userPath,
+        projectPath,
+        brandPath,
+        inner: new LegacyContextEngine(),
+      });
+      const result = await engine.assemble({ sessionId: "invalid-shared", messages: [] });
+      expect(result.systemPromptAddition).toContain("Legacy rule");
+    },
+  );
 
   it("returns inner result unchanged when both files are absent", async () => {
     const engine = new MagisterMemoryContextEngine({
