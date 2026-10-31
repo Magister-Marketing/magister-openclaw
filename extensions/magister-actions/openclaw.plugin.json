@@ -100,6 +100,7 @@
       "magister_get_ad_creative",
       "magister_compare_ads",
       "magister_analyze_ad_creative",
+      "magister_remix_ad",
       "magister_get_creative_report",
       "magister_get_action_approval",
       "magister_generate_gemini_image",
