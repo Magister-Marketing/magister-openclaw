@@ -5087,6 +5087,46 @@
       "tool_name": "magister_call_mcp_tool"
     },
     {
+      "action": "sync_library",
+      "approval_policy": "exact_payload",
+      "async_status_adapter": "synchronous",
+      "description": "Copy Library files to the apps this brand's Library is copied to (Google Drive, Notion), or run Sync now there. Name files by Library path to copy them now; each then stays copied as it changes. It only works inside what a brand admin set up in Library \u203a Keeps a copy in, and asks the user first when that admin turned off agent sync. Claim a copy only where the result gives its link.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "idempotency_key",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "destination": {
+            "description": "Which app to copy to. Omit for every app this brand's Library is copied to.",
+            "enum": ["google_drive", "notion"],
+            "type": "string"
+          },
+          "files": {
+            "description": "Library paths or file ids to copy now; each stays copied when it changes. Omit to run Sync now for everything the destination already copies.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 25,
+            "type": "array"
+          },
+          "idempotency_key": {
+            "description": "Use one fresh key for each new logical operation. Reuse that key only when retrying the exact same arguments; a later user request, even with identical content, needs a new key.",
+            "maxLength": 256,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "type": "string"
+          }
+        },
+        "required": ["idempotency_key"],
+        "type": "object"
+      },
+      "retry_policy": "none",
+      "schema_delivery": "eager",
+      "side_effect": "external_write",
+      "spend_limited": false,
+      "tool_name": "magister_sync_library"
+    },
+    {
       "action": "send_agent_email",
       "approval_policy": "exact_payload",
       "async_status_adapter": "synchronous",
@@ -6152,6 +6192,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "dc38f2bb456f5e932f039825b075713da17ad04dd8bda8319182c1cfe7ad811d",
+  "registry_revision": "48cf50d4e1f102120c0ff564730f5e7692a64d54e9d4017fb0b34aac921790ea",
   "schema_version": 1
 }
