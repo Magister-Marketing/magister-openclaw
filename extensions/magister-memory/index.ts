@@ -10,7 +10,7 @@ import { Type } from "typebox";
 import {
   applyBrandMemory,
   type BrandMemoryOperation,
-  BrandMemorySessions,
+  syncMarketingContext,
   syncBrandMemory,
 } from "./brand-memory.js";
 import { withContextLock } from "./context-lock.js";
@@ -57,6 +57,9 @@ type MemoryToolParams = {
   target?: string;
   content?: string;
   old_text?: string;
+  entry_id?: string;
+  scope?: Record<string, string>;
+  expected_revision?: number;
 };
 
 const TOOL_DESCRIPTION = `Persistent curated memory. Two stores, one tool.
@@ -64,10 +67,9 @@ const TOOL_DESCRIPTION = `Persistent curated memory. Two stores, one tool.
 target='memory' — the brand's rules and facts (voice, audience, what to avoid), including what the user tells you about the brand. Shared: every Magister agent working on this brand reads it.
 target='user'   — only facts about the person (name, role, working style).
 
-Both load into your system prompt at session start; writes appear in the NEXT session.
+Both load into your system prompt at each turn; changes from other agents appear on the next turn.
 
-Use sparingly. Char limits are tight — every entry must be a single, durable, single-line fact.
-If you can't summarize it in 20 words, it's not memory, it's a task note.`;
+Save concise, durable facts the user confirmed. For brand rules, scope channel/account-specific preferences and replace contradictions by entry_id or unique old_text; expected_revision guards concurrent corrections. Use magister_record_marketing_feedback for item-specific corrections and reasons.`;
 
 function resolveWorkspaceDir(api: OpenClawPluginApi, ctx: OpenClawPluginToolContext): string {
   if (ctx.workspaceDir) {
@@ -90,19 +92,26 @@ function resolveConfig(api: OpenClawPluginApi): {
 
 /** Validate the tool's arguments; the error message is the tool's answer. */
 function readOperation(params: MemoryToolParams): BrandMemoryOperation | { error: string } {
+  const shared = {
+    ...(params.entry_id ? { entry_id: params.entry_id } : {}),
+    ...(params.scope ? { scope: params.scope } : {}),
+    ...(params.expected_revision !== undefined
+      ? { expected_revision: params.expected_revision }
+      : {}),
+  };
   if (params.action === "add") {
     return params.content
-      ? { action: "add", content: params.content }
+      ? { ...shared, action: "add", content: params.content }
       : { error: "content is required for add" };
   }
   if (params.action === "replace") {
-    return params.old_text && params.content
-      ? { action: "replace", old_text: params.old_text, content: params.content }
+    return (params.old_text || params.entry_id) && params.content
+      ? { ...shared, action: "replace", old_text: params.old_text, content: params.content }
       : { error: "old_text and content are required for replace" };
   }
   if (params.action === "remove") {
-    return params.old_text
-      ? { action: "remove", old_text: params.old_text }
+    return params.old_text || params.entry_id
+      ? { ...shared, action: "remove", old_text: params.old_text }
       : { error: "old_text is required for remove" };
   }
   return { error: `Unknown action: ${String(params.action)}` };
@@ -123,6 +132,24 @@ function createMemoryTool(api: OpenClawPluginApi, ctx: OpenClawPluginToolContext
       target: Type.Optional(Type.String({ enum: ["memory", "user"] })),
       content: Type.Optional(
         Type.String({ description: "Required for add/replace. The new entry text." }),
+      ),
+      entry_id: Type.Optional(
+        Type.String({
+          description: "Brand rule id for an exact replace/remove, instead of old_text.",
+        }),
+      ),
+      expected_revision: Type.Optional(Type.Integer({ minimum: 0 })),
+      scope: Type.Optional(
+        Type.Object(
+          {
+            channel: Type.Optional(Type.String({ maxLength: 500 })),
+            connection_instance_key: Type.Optional(Type.String({ maxLength: 500 })),
+            resource_id: Type.Optional(Type.String({ maxLength: 500 })),
+            objective: Type.Optional(Type.String({ maxLength: 500 })),
+            audience: Type.Optional(Type.String({ maxLength: 500 })),
+          },
+          { additionalProperties: false },
+        ),
       ),
       old_text: Type.Optional(
         Type.String({
@@ -146,6 +173,13 @@ function createMemoryTool(api: OpenClawPluginApi, ctx: OpenClawPluginToolContext
         );
       }
 
+      if (operation.action !== "add" && !operation.old_text) {
+        return jsonResult({
+          success: false,
+          target,
+          message: "old_text is required for personal memory",
+        });
+      }
       return memoryWriteQueue.enqueue(`${workspaceDir}:user`, async () =>
         withContextLock(workspaceDir, async () => {
           const store = new UserMemoryStore({
@@ -162,9 +196,9 @@ function createMemoryTool(api: OpenClawPluginApi, ctx: OpenClawPluginToolContext
           if (operation.action === "add") {
             res = await store.add(operation.content);
           } else if (operation.action === "replace") {
-            res = await store.replace(operation.old_text, operation.content);
+            res = await store.replace(operation.old_text ?? "", operation.content);
           } else {
-            res = await store.remove(operation.old_text);
+            res = await store.remove(operation.old_text ?? "");
           }
           return jsonResult(res);
         }),
@@ -186,22 +220,24 @@ export default definePluginEntry({
     const turnBudget = new TurnBudget(resolveTurnBudgetConfig(api.pluginConfig?.turnBudget));
     api.registerTool((ctx) => createMemoryTool(api, ctx), { name: "memory" });
     // Brand memory lives on the Gateway; refresh this machine's MEMORY.md copy
-    // once per session. before_model_resolve is awaited at the start of every
+    // on every turn. before_model_resolve is awaited at the start of every
     // run, before the run resolves its context engine, whose first assemble()
     // reads MEMORY.md into the prompt (session_start is fire and forget, and
     // before_prompt_build runs after assemble()).
     if (resolveConfig(api).enabled) {
-      const brandMemorySessions = new BrandMemorySessions();
       api.on("before_model_resolve", async (_event, ctx) => {
         const workspaceDir =
           ctx.workspaceDir ?? resolveAgentWorkspaceDir(api.config, ctx.agentId ?? "main");
-        if (!brandMemorySessions.claim(workspaceDir, ctx.sessionId)) {
-          return undefined;
-        }
         try {
-          await memoryWriteQueue.enqueue(`${workspaceDir}:memory`, () =>
-            syncBrandMemory(workspaceDir),
-          );
+          await memoryWriteQueue.enqueue(`${workspaceDir}:memory`, async () => {
+            // Complete the one-time legacy import before fetching modern context.
+            // A failed import must not prevent fresh shared context from being read.
+            try {
+              await syncBrandMemory(workspaceDir);
+            } finally {
+              await syncMarketingContext(workspaceDir);
+            }
+          });
         } catch (error) {
           api.logger.warn(
             `magister-memory: brand memory sync failed, keeping the local MEMORY.md (${

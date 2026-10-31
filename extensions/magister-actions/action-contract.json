@@ -92,6 +92,92 @@
       "tool_name": "magister_get_brand"
     },
     {
+      "action": "get_marketing_context",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "Returns the brand's shared marketing context for a task: user-confirmed rules, observed voice and style, measured lessons, supporting evidence, and per-account history coverage and freshness. Optional scope selects the relevant account, resource, channel, and objective.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "channel": {
+            "maxLength": 100,
+            "type": "string"
+          },
+          "connection_instance_key": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "objective": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "resource_id": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "task": {
+            "default": "",
+            "maxLength": 4000,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "schema_delivery": "eager",
+      "side_effect": "none",
+      "spend_limited": false,
+      "tool_name": "magister_get_marketing_context"
+    },
+    {
+      "action": "record_marketing_feedback",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "Records the user's marketing feedback and optional artifact revision as evidence for the brand's shared learning, returning a durable receipt. It does not publish content or treat an inferred preference as a confirmed rule.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "maxLength": 20000,
+            "type": "string"
+          },
+          "artifact_id": {
+            "type": "string"
+          },
+          "before": {
+            "maxLength": 20000,
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "feedback": {
+            "maxLength": 2200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "scope": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          }
+        },
+        "required": ["feedback"],
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "schema_delivery": "eager",
+      "side_effect": "internal_write",
+      "spend_limited": false,
+      "tool_name": "magister_record_marketing_feedback"
+    },
+    {
       "action": "list_integrations",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
@@ -6152,6 +6238,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "dc38f2bb456f5e932f039825b075713da17ad04dd8bda8319182c1cfe7ad811d",
+  "registry_revision": "469d0e4f550a4a477b38a333d2b50d690e101c09ad72c06173ceef31e50faca4",
   "schema_version": 1
 }

@@ -74,6 +74,7 @@ const BRAND_TASK_PATTERN = new RegExp(
 
 type Options = {
   memoryPath?: string;
+  marketingContextPath?: string;
   userPath?: string;
   projectPath?: string;
   brandPath?: string;
@@ -104,6 +105,7 @@ export class MagisterMemoryContextEngine implements ContextEngine {
 
   private readonly inner: ContextEngine;
   private readonly memoryPath: string;
+  private readonly marketingContextPath: string;
   private readonly userPath: string;
   private readonly projectPath: string;
   private readonly brandPath: string;
@@ -112,6 +114,9 @@ export class MagisterMemoryContextEngine implements ContextEngine {
   constructor(options: Options = {}) {
     this.inner = options.inner ?? new MagisterIntegrationsContextEngine();
     this.memoryPath = options.memoryPath ?? DEFAULT_MEMORY_PATH;
+    this.marketingContextPath =
+      options.marketingContextPath ??
+      join(this.memoryPath, "..", ".magister", "state", "marketing-context.json");
     this.userPath = options.userPath ?? DEFAULT_USER_PATH;
     this.projectPath = options.projectPath ?? DEFAULT_PROJECT_PATH;
     this.brandPath = options.brandPath ?? DEFAULT_BRAND_PATH;
@@ -206,14 +211,39 @@ export class MagisterMemoryContextEngine implements ContextEngine {
   }
 
   private async renderSnapshot(): Promise<string> {
-    const [memory, user, project] = await Promise.all([
+    const [memory, user, project, marketingContext] = await Promise.all([
       readTextOrEmpty(this.memoryPath),
       readTextOrEmpty(this.userPath),
       readTextOrEmpty(this.projectPath),
+      readTextOrEmpty(this.marketingContextPath),
     ]);
 
     const blocks: string[] = [];
-    if (memory) {
+    let shared: string | undefined;
+    if (marketingContext) {
+      try {
+        const context = JSON.parse(marketingContext) as { rendered?: unknown; stale?: unknown };
+        if (typeof context.rendered === "string") {
+          shared =
+            context.rendered +
+            (context.stale
+              ? "\nRefresh failed. This is the last known context; verify freshness before relying on performance claims."
+              : "");
+        }
+      } catch {
+        // Keep the legacy copy usable during rollout or a malformed cache.
+      }
+    }
+    if (shared) {
+      blocks.push(
+        renderMagisterContextBlock({
+          provenance: "trusted_project_state",
+          source: "shared_marketing_context",
+          title: "Shared Marketing Context",
+          content: shared,
+        }),
+      );
+    } else if (shared === undefined && memory) {
       blocks.push(
         renderMagisterContextBlock({
           provenance: "trusted_project_state",
