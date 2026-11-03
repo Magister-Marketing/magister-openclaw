@@ -119,26 +119,31 @@ export async function retireLegacyMemoryFile(
   const path = join(workspaceDir, "MEMORY.md");
   const retired = join(workspaceDir, RETIRED_COPY);
   await withContextLock(workspaceDir, async () => {
-    if (revoked) {
-      // The brand's notes must not outlive its access, in any copy. These state
-      // files are not Library projections, so the Library's gate does not govern
-      // them. The stamp stays, without the original: only its presence is read.
-      const stamp = join(workspaceDir, IMPORT_STAMP);
-      await rm(retired, { force: true });
-      if ((await readUtf8IfExists(stamp)) !== undefined) {
-        await atomicWriteFile(stamp, "{}\n");
+    try {
+      if (revoked) {
+        // The brand's notes must not outlive its access, in any copy. These state
+        // files are not Library projections, so the Library's gate does not govern
+        // them. The stamp stays, without the original: only its presence is read.
+        const stamp = join(workspaceDir, IMPORT_STAMP);
+        await rm(retired, { force: true });
+        if ((await readUtf8IfExists(stamp)) !== undefined) {
+          await atomicWriteFile(stamp, "{}\n");
+        }
       }
+    } finally {
+      // A state file that could not be purged must not also keep MEMORY.md. While
+      // access stays denied, every later turn retries the whole purge.
+      await writeLegacyWorkspaceFile(workspaceDir, async () => {
+        const current = (await readUtf8IfExists(path)) ?? "";
+        if (current === "") {
+          return;
+        }
+        if (!revoked) {
+          await atomicWriteFile(retired, `${(await readUtf8IfExists(retired)) ?? ""}${current}\n`);
+        }
+        await atomicWrite(path, "");
+      });
     }
-    await writeLegacyWorkspaceFile(workspaceDir, async () => {
-      const current = (await readUtf8IfExists(path)) ?? "";
-      if (current === "") {
-        return;
-      }
-      if (!revoked) {
-        await atomicWriteFile(retired, `${(await readUtf8IfExists(retired)) ?? ""}${current}\n`);
-      }
-      await atomicWrite(path, "");
-    });
   });
 }
 
@@ -184,7 +189,12 @@ export async function syncMarketingContext(
             rendered:
               "Shared marketing context is unavailable because access was denied. Do not use prior cached brand memory.",
           }),
-        ),
+        ).catch(async (failure: unknown) => {
+          // A full disk can refuse the write and still allow the unlink. Either
+          // way the cached context must not reach the next prompt.
+          await rm(path, { force: true, recursive: true });
+          throw failure;
+        }),
       );
       await attempt(
         "removing the local copies",

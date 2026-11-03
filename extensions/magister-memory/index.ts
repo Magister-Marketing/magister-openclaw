@@ -235,7 +235,7 @@ export default definePluginEntry({
             try {
               await syncMarketingContext(workspaceDir, (message) => api.logger.warn(message));
             } catch (error) {
-              // The refresh already handled a denial, with no copy kept.
+              // The refresh already purged after a denial: never make a new copy.
               denied = error instanceof RuntimeGatewayError && [401, 403].includes(error.status);
               throw error;
             } finally {

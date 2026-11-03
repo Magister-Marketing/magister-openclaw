@@ -178,8 +178,23 @@ describe("before_model_resolve hook", () => {
     expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("");
     await expect(stat(join(state, "memory-md-retired"))).rejects.toThrow();
     expect(await readFile(join(state, "brand-memory-import"), "utf8")).toBe("{}\n");
+    await expect(stat(join(state, "marketing-context.json"))).rejects.toThrow();
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining("the unavailable marker failed after access was denied"),
+    );
+  });
+
+  it("still empties MEMORY.md on revocation when a state copy cannot be purged", async () => {
+    const gateway = stubBrandMemoryGateway(["Private old brand rule"]);
+    // A directory here makes reading the stamp fail.
+    await mkdir(join(dir, ".magister", "state", "brand-memory-import"), { recursive: true });
+    await writeFile(join(dir, "MEMORY.md"), "Private old brand note", "utf8");
+    gateway.forbidden.add("/api/runtime/marketing-context");
+    const { run, warn } = registerHook();
+    await run("same");
+    expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("");
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("removing the local copies failed after access was denied"),
     );
   });
 
