@@ -11,7 +11,6 @@ import {
   applyBrandMemory,
   type BrandMemoryOperation,
   syncMarketingContext,
-  syncBrandMemory,
 } from "./brand-memory.js";
 import { withContextLock } from "./context-lock.js";
 import { resolveConversationCheckpointConfig } from "./conversation-config.js";
@@ -43,7 +42,7 @@ const DEFAULT_USER_CHAR_LIMIT = 1375;
 // this process (up to 4 run in parallel on the `main` lane, plus cron).
 // Without this, two USER.md writes can both loadFromDisk(), then the second
 // persist() silently drops the first turn's entry (last-writer-wins); and an
-// older brand-memory reply could overwrite MEMORY.md after a newer one.
+// older shared-context reply could overwrite the snapshot after a newer one.
 const memoryWriteQueue = new KeyedAsyncQueue();
 
 type MemoryPluginConfig = {
@@ -219,28 +218,22 @@ export default definePluginEntry({
     );
     const turnBudget = new TurnBudget(resolveTurnBudgetConfig(api.pluginConfig?.turnBudget));
     api.registerTool((ctx) => createMemoryTool(api, ctx), { name: "memory" });
-    // Brand memory lives on the Gateway; refresh this machine's MEMORY.md copy
-    // on every turn. before_model_resolve is awaited at the start of every
-    // run, before the run resolves its context engine, whose first assemble()
-    // reads MEMORY.md into the prompt (session_start is fire and forget, and
-    // before_prompt_build runs after assemble()).
+    // Brand memory lives on the Gateway; refresh this machine's shared-context
+    // snapshot on every turn. before_model_resolve is awaited at the start of
+    // every run, before the run resolves its context engine, whose first
+    // assemble() reads the snapshot into the prompt (session_start is fire and
+    // forget, and before_prompt_build runs after assemble()).
     if (resolveConfig(api).enabled) {
       api.on("before_model_resolve", async (_event, ctx) => {
         const workspaceDir =
           ctx.workspaceDir ?? resolveAgentWorkspaceDir(api.config, ctx.agentId ?? "main");
         try {
-          await memoryWriteQueue.enqueue(`${workspaceDir}:memory`, async () => {
-            // Complete the one-time legacy import before fetching modern context.
-            // A failed import must not prevent fresh shared context from being read.
-            try {
-              await syncBrandMemory(workspaceDir);
-            } finally {
-              await syncMarketingContext(workspaceDir);
-            }
-          });
+          await memoryWriteQueue.enqueue(`${workspaceDir}:memory`, () =>
+            syncMarketingContext(workspaceDir),
+          );
         } catch (error) {
           api.logger.warn(
-            `magister-memory: brand memory sync failed, keeping the local MEMORY.md (${
+            `magister-memory: shared marketing context refresh failed, keeping the last snapshot (${
               error instanceof Error ? error.message : String(error)
             })`,
           );

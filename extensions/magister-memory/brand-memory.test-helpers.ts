@@ -16,15 +16,9 @@ export type GatewayCall = {
 export function stubBrandMemoryGateway(initial: string[] = []) {
   const entries = [...initial];
   const calls: GatewayCall[] = [];
-  // Paths that answer HTTP 500, to simulate a Gateway failure mid-sync:
-  // `failing` before the write, `failingAfterCommit` after it (a timeout the
-  // machine sees once the server has already committed).
+  // Paths that answer HTTP 500 (a Gateway failure) or 403 (revoked authority).
   const failing = new Set<string>();
   const forbidden = new Set<string>();
-  const failingAfterCommit = new Set<string>();
-  // brand_memory_imports: the upload runs once per brand.
-  let importedOnce = false;
-  const norm = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
   const list = () => {
     const content = entries.join(ENTRY_DELIMITER);
     return {
@@ -65,7 +59,9 @@ export function stubBrandMemoryGateway(initial: string[] = []) {
       body,
       authorization: headers.get("Authorization") ?? undefined,
     });
-    if (forbidden.has(url.pathname)) return new Response("{}", { status: 403 });
+    if (forbidden.has(url.pathname)) {
+      return new Response("{}", { status: 403 });
+    }
     if (failing.has(url.pathname)) {
       return new Response("{}", { status: 500 });
     }
@@ -75,25 +71,6 @@ export function stubBrandMemoryGateway(initial: string[] = []) {
         revision: entries.length,
         rendered: `Confirmed rules: ${entries.join("; ")}`,
       });
-    }
-    if (url.pathname === "/api/runtime/brand-memory" && method === "GET") {
-      return reply(list());
-    }
-    if (url.pathname === "/api/runtime/brand-memory/import" && method === "POST") {
-      let imported = 0;
-      if (!importedOnce) {
-        importedOnce = true;
-        for (const text of (body?.entries as string[]) ?? []) {
-          if (!text.startsWith("[magister_seed:") && !entries.some((e) => norm(e) === norm(text))) {
-            entries.push(text);
-            imported += 1;
-          }
-        }
-      }
-      if (failingAfterCommit.has(url.pathname)) {
-        return new Response("{}", { status: 500 });
-      }
-      return reply({ ok: true, imported, ...list() });
     }
     if (url.pathname === "/api/runtime/marketing-context/rules" && method === "POST") {
       const content = typeof body?.content === "string" ? body.content.trim() : "";
@@ -123,7 +100,7 @@ export function stubBrandMemoryGateway(initial: string[] = []) {
   });
 
   vi.stubGlobal("fetch", fetchMock);
-  return { entries, calls, failing, forbidden, failingAfterCommit, fetchMock };
+  return { entries, calls, failing, forbidden, fetchMock };
 }
 
 /** Point the plugin's runtime channel at the machine broker, as on a machine. */

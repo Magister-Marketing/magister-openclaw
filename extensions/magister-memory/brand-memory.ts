@@ -1,20 +1,18 @@
 import { join } from "node:path";
-import { admitWorkspaceFiles, writeLegacyWorkspaceFile } from "openclaw/plugin-sdk/core";
-import { withContextLock } from "./context-lock.js";
 import { atomicWriteFile, isRecord, readUtf8IfExists } from "./file-utils.js";
 import { callRuntimeGateway, RuntimeGatewayError } from "./gateway-runtime.js";
-import { atomicWrite, type MemoryResult, parseMemoryEntries } from "./memory-store.js";
+import type { MemoryResult } from "./memory-store.js";
 
 /**
- * The hosted memory tool writes explicit brand rules to the shared Gateway.
- * Modern context refreshes before every turn with provenance and source coverage.
- * MEMORY.md remains only the stable legacy projection and one-time import source.
- * USER.md and episodic conversation checkpoints keep their separate local stores.
+ * The hosted memory tool writes explicit brand rules to the shared Gateway, and
+ * the shared marketing context refreshes before every turn with provenance and
+ * source coverage. MEMORY.md is no longer read or written here: the Gateway's
+ * shared context is the only brand memory. USER.md and episodic conversation
+ * checkpoints keep their separate local stores.
  */
 
 const READ_TIMEOUT_MS = 3_000;
 const WRITE_TIMEOUT_MS = 5_000;
-const SEED_PREFIX = "[magister_seed:";
 
 export type BrandMemoryOperation = (
   | { action: "add"; content: string }
@@ -39,45 +37,12 @@ function parseList(value: Record<string, unknown>): BrandMemoryList | undefined 
   return { entries: texts, content, charCount: Number(charCount) };
 }
 
-function requireList(value: Record<string, unknown>): BrandMemoryList {
-  const list = parseList(value);
-  if (!list) {
-    throw new Error("brand memory response is invalid");
-  }
-  return list;
-}
-
-async function readList(): Promise<BrandMemoryList> {
-  return requireList(
-    await callRuntimeGateway("brand-memory", { method: "GET", timeoutMs: READ_TIMEOUT_MS }),
-  );
-}
-
 function postOperation(operation: BrandMemoryOperation): Promise<Record<string, unknown>> {
   return callRuntimeGateway("marketing-context/rules", {
     method: "POST",
     body: operation,
     timeoutMs: WRITE_TIMEOUT_MS,
   });
-}
-
-/**
- * Rewrite the machine's MEMORY.md when it differs from the Gateway's list.
- * `atomicWrite` creates the file under the process umask (0027 on machines,
- * so 0640): the sandboxed shell reads workspace files through the host's
- * group, and a 0600 copy would hide MEMORY.md from it.
- */
-async function writeMemoryCopy(workspaceDir: string, content: string): Promise<void> {
-  const path = join(workspaceDir, "MEMORY.md");
-  await withContextLock(workspaceDir, async () => {
-    await writeLegacyWorkspaceFile(workspaceDir, async () => {
-      if (((await readUtf8IfExists(path)) ?? "") !== content) await atomicWrite(path, content);
-    });
-  });
-}
-
-function importStampPath(workspaceDir: string): string {
-  return join(workspaceDir, ".magister", "state", "brand-memory-import");
 }
 
 function unavailable(error: unknown): MemoryResult {
@@ -121,57 +86,6 @@ export async function applyBrandMemory(
   return { success: true, target: "memory", entries: list.entries, charCount: list.charCount };
 }
 
-/**
- * Move this machine's MEMORY.md entries to the Gateway, once per machine.
- * Gateway seed records are dropped: they repeat PROJECT.md, BRAND.md and the
- * plan. The Gateway imports once per brand and skips the entries it already
- * has (an MCP client or the analytics review may have written first), so a
- * retry after a timeout, or after the team removed every entry, adds nothing
- * back. A transport failure throws before the stamp is written, so the next
- * session retries. An entry the Gateway refuses (a duplicate in other letter
- * case, a blocked threat, a full list) is dropped: retrying could never
- * succeed and would keep this machine's copy unsynced. The stamp keeps the
- * original file, so nothing is lost for good.
- */
-async function importLocalEntries(
-  original: string,
-  list: BrandMemoryList,
-): Promise<BrandMemoryList> {
-  const local = parseMemoryEntries(original)
-    .map((entry) => entry.trim())
-    .filter((entry) => !entry.startsWith(SEED_PREFIX));
-  if (local.length === 0) {
-    return list;
-  }
-  return requireList(
-    await callRuntimeGateway("brand-memory/import", {
-      method: "POST",
-      body: { entries: local },
-      timeoutMs: WRITE_TIMEOUT_MS,
-    }),
-  );
-}
-
-/**
- * Turn-start legacy sync: fetch the Gateway's list and rewrite MEMORY.md when it
- * differs, running the one-time import first. Throws when the Gateway is
- * unreachable; the caller keeps the local file.
- */
-export async function syncBrandMemory(workspaceDir: string): Promise<void> {
-  if (await admitWorkspaceFiles(workspaceDir)) return;
-  let list = await readList();
-  const stampPath = importStampPath(workspaceDir);
-  if ((await readUtf8IfExists(stampPath)) === undefined) {
-    const original = (await readUtf8IfExists(join(workspaceDir, "MEMORY.md"))) ?? "";
-    list = await importLocalEntries(original, list);
-    await atomicWriteFile(
-      stampPath,
-      `${JSON.stringify({ imported_at: new Date().toISOString(), memory_md: original })}\n`,
-    );
-  }
-  await writeMemoryCopy(workspaceDir, list.content);
-}
-
 /** Refresh on every turn. A failed refresh keeps the last good context, marked stale. */
 export async function syncMarketingContext(workspaceDir: string): Promise<void> {
   const path = join(workspaceDir, ".magister", "state", "marketing-context.json");
@@ -195,7 +109,7 @@ export async function syncMarketingContext(workspaceDir: string): Promise<void> 
   } catch (error) {
     if (error instanceof RuntimeGatewayError && [401, 403].includes(error.status)) {
       // Revoked authority is not a transient outage. Do not inject another
-      // binding's cached knowledge or fall back to its legacy file.
+      // binding's cached knowledge.
       await atomicWriteFile(
         path,
         JSON.stringify({
@@ -204,7 +118,6 @@ export async function syncMarketingContext(workspaceDir: string): Promise<void> 
             "Shared marketing context is unavailable because access was denied. Do not use prior cached brand memory.",
         }),
       );
-      await writeMemoryCopy(workspaceDir, "");
       throw error;
     }
     const cached = await readUtf8IfExists(path);
