@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -100,6 +100,7 @@ describe("before_model_resolve hook", () => {
   });
   it("suppresses cached and legacy memory after an authorization denial", async () => {
     const gateway = stubBrandMemoryGateway(["Private old brand rule"]);
+    await writeFile(join(dir, "MEMORY.md"), "Private old brand note", "utf8");
     const { run } = registerHook();
     await run("same");
     gateway.forbidden.add("/api/runtime/marketing-context");
@@ -109,5 +110,28 @@ describe("before_model_resolve hook", () => {
     );
     expect(context.available).toBe(false);
     expect(context.rendered).not.toContain("Private old brand rule");
+    // Revoked: even a never-imported MEMORY.md is emptied, as before.
+    expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("");
+  });
+
+  it("empties a MEMORY.md whose entries already reached the Gateway", async () => {
+    stubBrandMemoryGateway(["Tone: plain"]);
+    await mkdir(join(dir, ".magister", "state"), { recursive: true });
+    await writeFile(
+      join(dir, ".magister", "state", "brand-memory-import"),
+      '{"memory_md":"Tone: plain"}\n',
+    );
+    await writeFile(join(dir, "MEMORY.md"), "Tone: plain (stale copy)", "utf8");
+    const { run } = registerHook();
+    await run("same");
+    expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("");
+  });
+
+  it("leaves a never-imported MEMORY.md for the Gateway's migration", async () => {
+    stubBrandMemoryGateway(["Tone: plain"]);
+    await writeFile(join(dir, "MEMORY.md"), "Owner prefers short emails.", "utf8");
+    const { run } = registerHook();
+    await run("same");
+    expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("Owner prefers short emails.");
   });
 });

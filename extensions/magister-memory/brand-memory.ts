@@ -1,7 +1,9 @@
 import { join } from "node:path";
+import { admitWorkspaceFiles, writeLegacyWorkspaceFile } from "openclaw/plugin-sdk/core";
+import { withContextLock } from "./context-lock.js";
 import { atomicWriteFile, isRecord, readUtf8IfExists } from "./file-utils.js";
 import { callRuntimeGateway, RuntimeGatewayError } from "./gateway-runtime.js";
-import type { MemoryResult } from "./memory-store.js";
+import { atomicWrite, type MemoryResult } from "./memory-store.js";
 
 /**
  * The hosted memory tool writes explicit brand rules to the shared Gateway, and
@@ -10,6 +12,12 @@ import type { MemoryResult } from "./memory-store.js";
  * shared context is the only brand memory. USER.md and episodic conversation
  * checkpoints keep their separate local stores.
  */
+
+/**
+ * Written once a machine's own MEMORY.md reached the Gateway (by the old
+ * plugin's upload or the Gateway's migration); it keeps the original file.
+ */
+const IMPORT_STAMP = join(".magister", "state", "brand-memory-import");
 
 const READ_TIMEOUT_MS = 3_000;
 const WRITE_TIMEOUT_MS = 5_000;
@@ -86,6 +94,32 @@ export async function applyBrandMemory(
   return { success: true, target: "memory", entries: list.entries, charCount: list.charCount };
 }
 
+/**
+ * Empty MEMORY.md: always after access was revoked, otherwise only once its
+ * entries reached the Gateway (the import stamp exists), since the file is then
+ * a stale copy the agent could still read with its file tools. A file that was
+ * never imported is left for the Gateway's one-time migration to read.
+ */
+export async function retireLegacyMemoryFile(
+  workspaceDir: string,
+  { revoked = false }: { revoked?: boolean } = {},
+): Promise<void> {
+  if (await admitWorkspaceFiles(workspaceDir)) {
+    return;
+  }
+  if (!revoked && (await readUtf8IfExists(join(workspaceDir, IMPORT_STAMP))) === undefined) {
+    return;
+  }
+  const path = join(workspaceDir, "MEMORY.md");
+  await withContextLock(workspaceDir, async () => {
+    await writeLegacyWorkspaceFile(workspaceDir, async () => {
+      if (((await readUtf8IfExists(path)) ?? "") !== "") {
+        await atomicWrite(path, "");
+      }
+    });
+  });
+}
+
 /** Refresh on every turn. A failed refresh keeps the last good context, marked stale. */
 export async function syncMarketingContext(workspaceDir: string): Promise<void> {
   const path = join(workspaceDir, ".magister", "state", "marketing-context.json");
@@ -118,6 +152,7 @@ export async function syncMarketingContext(workspaceDir: string): Promise<void> 
             "Shared marketing context is unavailable because access was denied. Do not use prior cached brand memory.",
         }),
       );
+      await retireLegacyMemoryFile(workspaceDir, { revoked: true });
       throw error;
     }
     const cached = await readUtf8IfExists(path);

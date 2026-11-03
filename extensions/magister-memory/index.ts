@@ -10,6 +10,7 @@ import { Type } from "typebox";
 import {
   applyBrandMemory,
   type BrandMemoryOperation,
+  retireLegacyMemoryFile,
   syncMarketingContext,
 } from "./brand-memory.js";
 import { withContextLock } from "./context-lock.js";
@@ -228,9 +229,10 @@ export default definePluginEntry({
         const workspaceDir =
           ctx.workspaceDir ?? resolveAgentWorkspaceDir(api.config, ctx.agentId ?? "main");
         try {
-          await memoryWriteQueue.enqueue(`${workspaceDir}:memory`, () =>
-            syncMarketingContext(workspaceDir),
-          );
+          await memoryWriteQueue.enqueue(`${workspaceDir}:memory`, async () => {
+            await syncMarketingContext(workspaceDir);
+            await retireLegacyMemoryFile(workspaceDir);
+          });
         } catch (error) {
           api.logger.warn(
             `magister-memory: shared marketing context refresh failed, keeping the last snapshot (${
