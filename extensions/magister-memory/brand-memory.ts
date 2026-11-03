@@ -104,8 +104,9 @@ export async function retireLegacyMemoryFile(
   workspaceDir: string,
   { revoked = false }: { revoked?: boolean } = {},
 ): Promise<void> {
-  // Revocation clears the file even while the Library owns workspace files,
-  // as the old sync did: the brand's notes must not outlive its access.
+  // Revocation still tries the clear when the Library admits this workspace,
+  // through its legacy-write gate as the old sync did. That gate refuses in the
+  // Library's active and recovery modes, where the cloud copy is authoritative.
   if (!revoked && (await admitWorkspaceFiles(workspaceDir))) {
     return;
   }

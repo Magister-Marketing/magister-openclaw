@@ -127,7 +127,31 @@ describe("before_model_resolve hook", () => {
     expect(context.rendered).toContain("could not be loaded");
   });
 
-  it("empties MEMORY.md on revocation even while the Library owns workspace files", async () => {
+  it("leaves the revocation clear to the Library's legacy-write gate", async () => {
+    const gateway = stubBrandMemoryGateway(["Private old brand rule"]);
+    await writeFile(join(dir, "MEMORY.md"), "Private old brand note", "utf8");
+    // Active or recovery: the Library refuses local projection writes.
+    const unregister = registerWorkspaceFileAuthority({
+      version: 1,
+      wrap: (tool) => tool,
+      admit: async () => true,
+      legacyWrite: async () => undefined,
+    });
+    try {
+      gateway.forbidden.add("/api/runtime/marketing-context");
+      const { run } = registerHook();
+      await run("same");
+      expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("Private old brand note");
+      const context = JSON.parse(
+        await readFile(join(dir, ".magister", "state", "marketing-context.json"), "utf8"),
+      );
+      expect(context.available).toBe(false);
+    } finally {
+      unregister();
+    }
+  });
+
+  it("empties MEMORY.md on revocation when the Library admits the workspace but allows the write", async () => {
     const gateway = stubBrandMemoryGateway(["Private old brand rule"]);
     await writeFile(join(dir, "MEMORY.md"), "Private old brand note", "utf8");
     const unregister = registerWorkspaceFileAuthority({
