@@ -182,6 +182,17 @@ describe("before_model_resolve hook", () => {
     expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("");
   });
 
+  it("empties a stamped MEMORY.md even when the refresh fails", async () => {
+    const gateway = stubBrandMemoryGateway(["Tone: plain"]);
+    gateway.failing.add("/api/runtime/marketing-context");
+    await mkdir(join(dir, ".magister", "state"), { recursive: true });
+    await writeFile(join(dir, ".magister", "state", "brand-memory-import"), "{}\n");
+    await writeFile(join(dir, "MEMORY.md"), "Tone: plain (stale copy)", "utf8");
+    const { run } = registerHook();
+    await run("same");
+    expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("");
+  });
+
   it("leaves a never-imported MEMORY.md for the Gateway's migration", async () => {
     stubBrandMemoryGateway(["Tone: plain"]);
     await writeFile(join(dir, "MEMORY.md"), "Owner prefers short emails.", "utf8");

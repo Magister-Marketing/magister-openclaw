@@ -230,8 +230,12 @@ export default definePluginEntry({
           ctx.workspaceDir ?? resolveAgentWorkspaceDir(api.config, ctx.agentId ?? "main");
         try {
           await memoryWriteQueue.enqueue(`${workspaceDir}:memory`, async () => {
-            await syncMarketingContext(workspaceDir);
-            await retireLegacyMemoryFile(workspaceDir);
+            try {
+              await syncMarketingContext(workspaceDir);
+            } finally {
+              // A failed refresh must not keep a stale copy on disk.
+              await retireLegacyMemoryFile(workspaceDir);
+            }
           });
         } catch (error) {
           api.logger.warn(
