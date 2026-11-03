@@ -143,6 +143,61 @@ describe("artifact promotion", () => {
     expect(fs.existsSync(row.staged)).toBe(false);
   });
 
+  it("finds the staged file when attempt_id names the exec session instead", async () => {
+    // Production, 2026-10-30: the agent's script printed `attempt_id=quiet-kelp`,
+    // a name it had read off an earlier exec, and the staged file was refused.
+    const row = fixture();
+    process.env.MAGISTER_LOCAL_MUTATION_ENFORCEMENT = "1";
+    const result = await promoteArtifact(
+      { ...request(row), attempt_id: "quiet-kelp" },
+      { workspace: row.workspace, agentToolUid: process.getuid?.() ?? 501 },
+    );
+    expect(result).toMatchObject({ status: "promoted", sha256: row.sha256 });
+    expect(fs.readFileSync(path.join(row.workspace, "deliverables", "report.txt"), "utf8")).toBe(
+      "bounded artifact",
+    );
+    expect(fs.existsSync(row.staged)).toBe(false);
+  });
+
+  it("only accepts another attempt's file when its bytes match the hash", async () => {
+    const row = fixture();
+    process.env.MAGISTER_LOCAL_MUTATION_ENFORCEMENT = "1";
+    await expect(
+      promoteArtifact(
+        { ...request(row), attempt_id: "quiet-kelp", sha256: "a".repeat(64) },
+        { workspace: row.workspace, agentToolUid: process.getuid?.() ?? 501 },
+      ),
+    ).rejects.toMatchObject({
+      statusCode: 404,
+      message: expect.stringContaining("MAGISTER_ATTEMPT_ID"),
+    });
+    expect(fs.existsSync(row.staged)).toBe(true);
+    expect(fs.existsSync(path.join(row.workspace, "deliverables", "report.txt"))).toBe(false);
+  });
+
+  it("keeps a hash mismatch in the named attempt a conflict, not a search", async () => {
+    const row = fixture();
+    process.env.MAGISTER_LOCAL_MUTATION_ENFORCEMENT = "1";
+    await expect(
+      promoteArtifact(
+        { ...request(row), sha256: "a".repeat(64) },
+        { workspace: row.workspace, agentToolUid: process.getuid?.() ?? 501 },
+      ),
+    ).rejects.toMatchObject({ statusCode: 409, message: "staged artifact hash mismatch" });
+  });
+
+  it("does not take a file owned by someone else from another attempt", async () => {
+    const row = fixture();
+    process.env.MAGISTER_LOCAL_MUTATION_ENFORCEMENT = "1";
+    await expect(
+      promoteArtifact(
+        { ...request(row), attempt_id: "quiet-kelp" },
+        { workspace: row.workspace, agentToolUid: (process.getuid?.() ?? 501) + 1 },
+      ),
+    ).rejects.toMatchObject({ statusCode: 404 });
+    expect(fs.existsSync(row.staged)).toBe(true);
+  });
+
   it("leaves a promoted artifact readable by the agent's tools, and staging owner-only", async () => {
     // Promoted at 0600 inside a 0700 directory, an artifact was invisible to
     // `exec` until the next restart re-ran the boot-time read-surface pass.

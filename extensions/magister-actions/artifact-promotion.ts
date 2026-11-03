@@ -208,6 +208,83 @@ async function assertComponents(
   return current;
 }
 
+type StagedArtifact = { attemptRoot: string; staged: string; stat: fs.Stats };
+
+const STAGED_ARTIFACT_MISSING =
+  "staged artifact is missing: attempt_id is this command's MAGISTER_ATTEMPT_ID (the name of the " +
+  "directory holding MAGISTER_PROMOTION_DIR), not the exec session name, and a command that exits " +
+  "non-zero discards its staging, so stage again and print that id from the same command";
+
+/** The file at `staged_path` under one attempt, or null when it is not there. */
+async function stagedFileIn(
+  attemptRoot: string,
+  stagedPath: string,
+): Promise<StagedArtifact | null> {
+  try {
+    const staged = await assertComponents(attemptRoot, stagedPath, { createParents: false });
+    return { attemptRoot, staged, stat: await fs.promises.lstat(staged) };
+  } catch (error) {
+    const missing =
+      (error as NodeJS.ErrnoException).code === "ENOENT" ||
+      (error instanceof ArtifactPromotionError && error.statusCode === 404);
+    if (missing) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+/** The staged file a request means, even when its `attempt_id` is wrong.
+ *
+ *  The model is never handed the attempt id; it has to read it from the
+ *  sandbox's environment, and sometimes takes the exec session's name instead
+ *  (`print('attempt_id=quiet-kelp')`). The file was staged correctly, so the
+ *  promotion failed for nothing and the deliverable lost its verified write.
+ *  `sha256` is what actually binds the request to its bytes: any retained
+ *  attempt holding an owned regular file with exactly that hash at that path
+ *  is the file the caller staged. Attempts are this one tenant's own, expire
+ *  in an hour, and are bounded by the scratch quota, so the walk is short. */
+async function locateStagedArtifact(
+  workspace: string,
+  request: PromotionRequest,
+  expectedUid: number,
+): Promise<StagedArtifact> {
+  const attemptsRelative = path.join(".magister", "tmp", "attempts");
+  const named = await assertComponents(workspace, path.join(attemptsRelative, request.attempt_id), {
+    createParents: false,
+  });
+  const direct = await stagedFileIn(named, request.staged_path);
+  if (direct) {
+    return direct;
+  }
+  const attemptsRoot = path.join(workspace, attemptsRelative);
+  const entries = await fs.promises
+    .readdir(attemptsRoot, { withFileTypes: true })
+    .catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return [];
+      }
+      throw error;
+    });
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name === request.attempt_id) {
+      continue;
+    }
+    const candidate = await stagedFileIn(path.join(attemptsRoot, entry.name), request.staged_path);
+    if (
+      candidate &&
+      candidate.stat.isFile() &&
+      candidate.stat.nlink === 1 &&
+      candidate.stat.uid === expectedUid &&
+      candidate.stat.size <= MAX_ARTIFACT_BYTES &&
+      (await hashFile(candidate.staged)) === request.sha256
+    ) {
+      return candidate;
+    }
+  }
+  throw new ArtifactPromotionError(STAGED_ARTIFACT_MISSING, 404);
+}
+
 async function hashFile(filePath: string): Promise<string> {
   const digest = createHash("sha256");
   const stream = fs.createReadStream(filePath);
@@ -288,19 +365,11 @@ export async function promoteArtifact(
     };
   }
 
-  const attemptRootRelative = path.join(".magister", "tmp", "attempts", request.attempt_id);
-  const attemptRoot = await assertComponents(workspace, attemptRootRelative, {
-    createParents: false,
-  });
-  const staged = await assertComponents(attemptRoot, request.staged_path, {
-    createParents: false,
-  });
-  const stagedStat = await fs.promises.lstat(staged).catch((error) => {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new ArtifactPromotionError("staged artifact is missing", 404);
-    }
-    throw error;
-  });
+  const {
+    attemptRoot,
+    staged,
+    stat: stagedStat,
+  } = await locateStagedArtifact(workspace, request, expectedUid);
   if (
     stagedStat.isSymbolicLink() ||
     !stagedStat.isFile() ||
