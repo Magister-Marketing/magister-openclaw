@@ -1538,7 +1538,7 @@ describe("prepare with an unusable base", () => {
  *  the sandbox's writes look like from the host. */
 function fakeLauncher(
   root: string,
-  options: { fetchExit?: number; rootOwnedWork?: boolean } = {},
+  options: { fetchExit?: number; fetchOutput?: string; rootOwnedWork?: boolean } = {},
 ): string {
   const dir = scratch("magister-launcher-");
   const log = path.join(dir, "launcher.log");
@@ -1561,7 +1561,7 @@ function fakeLauncher(
       String.raw`printf '%s %s\n' "$P" "$*" >> "$LOG"`,
       'REL="${W#$ROOT/}"; LAYER="$ROOT/.work/$REL"',
       'case "$P" in',
-      `  fetcher) mkdir -p "$LAYER/upper/node_modules"; echo x > "$LAYER/upper/node_modules/.installed"; exit ${options.fetchExit ?? 0};;`,
+      `  fetcher) ${options.fetchOutput ? `printf '%s' '${options.fetchOutput}';` : ""} mkdir -p "$LAYER/upper/node_modules"; echo x > "$LAYER/upper/node_modules/.installed"; exit ${options.fetchExit ?? 0};;`,
       `  tool) mkdir -p "$LAYER"; ${record}; exit 0;;`,
       // The real supervisor is root; this stand-in runs as the test user, so
       // it lifts the read-only owner directory a root-owned one stands for.
@@ -1679,6 +1679,27 @@ describe("installing dependencies", () => {
     });
     // Reported once: the marker forgot the failure, so this starts over.
     expect((await installRepoDependencies(install())).status).toBe("installing");
+    await awaitRepositoryIdle("github", "acme/site");
+  });
+
+  it("says why an install failed from the end of its output, not its warnings", async () => {
+    const { repoDir, root } = upstreamAndCheckout();
+    fs.writeFileSync(path.join(repoDir, "package-lock.json"), "{}");
+    const why = "tool-sandbox: stopped: this command ran out of memory";
+    fakeLauncher(root, {
+      fetchExit: 137,
+      fetchOutput: `${"npm warn deprecated ".repeat(200)}${why}`,
+    });
+
+    expect((await installRepoDependencies(install())).status).toBe("installing");
+    await settled(
+      () => Promise.resolve((readMarkerFile(repoDir).deps as { state: string } | undefined)?.state),
+      (state) => state === "failed",
+    );
+    await expect(installRepoDependencies(install())).rejects.toMatchObject({
+      statusCode: 422,
+      userAction: expect.stringMatching(/ran out of memory$/),
+    });
     await awaitRepositoryIdle("github", "acme/site");
   });
 

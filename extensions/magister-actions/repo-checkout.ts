@@ -1739,6 +1739,13 @@ function truncate(value: string, limit = 400): string {
   return collapsed.length > limit ? `${collapsed.slice(0, limit)}…` : collapsed;
 }
 
+/** The end of a command's output, which is where a failure says why: the head of
+ *  a failed install is its deprecation warnings. */
+function outputTail(value: string, limit: number): string {
+  const collapsed = value.replace(/\s+/g, " ").trim();
+  return collapsed.length > limit ? `…${collapsed.slice(-limit)}` : collapsed;
+}
+
 async function performCheckout(request: CheckoutRequest): Promise<CheckoutReceipt> {
   const parsed = parseRepo(request.repo, request.provider);
   const { full } = parsed;
@@ -2802,8 +2809,8 @@ async function runInstall(
         finished_at: new Date().toISOString(),
         error:
           fetched.code === 124
-            ? `The install exceeded ${INSTALL_TIMEOUT_SECONDS}s. ${truncate(fetched.output, 1_000)}`
-            : truncate(fetched.output, 1_200),
+            ? `The install exceeded ${INSTALL_TIMEOUT_SECONDS}s. ${outputTail(fetched.output, 900)}`
+            : outputTail(fetched.output, 950),
       });
       return;
     }
@@ -2816,7 +2823,7 @@ async function runInstall(
       rebuild = { ran: true, exit_code: rebuilt.code };
       if (rebuilt.code !== 0) {
         warnings.push(
-          `Lifecycle scripts exited ${rebuilt.code}. A package that downloads during install cannot here, because the sandbox has no network: ${truncate(rebuilt.output, 300)}`,
+          `Lifecycle scripts exited ${rebuilt.code}. A package that downloads during install cannot here, because the sandbox has no network: ${outputTail(rebuilt.output, 300)}`,
         );
       }
     }
