@@ -44,9 +44,11 @@ export const MAX_REQUEST_BYTES = 16 * 1024;
 export const MAX_CHECKOUT_FILES = 20_000;
 export const MAX_CHECKOUT_BYTES = 256 * 1024 * 1024;
 /** The real guard. A per-checkout cap alone never bounds the root — N
- *  checkouts still fill a 5 GB volume. Mirrors the attempt/total scratch pair
- *  in `sandbox_supervisor.py` (64 MiB / 256 MiB), same 4:1 shape. */
-export const MAX_TOTAL_BYTES = 1024 * 1024 * 1024;
+ *  checkouts still fill a 5 GB volume. Below the supervisor's 3 GiB
+ *  `REPO_ROOT_MAX_BYTES`, so a checkout admitted here still has room to install.
+ *  At 1 GiB, one installed Next.js project with a build refused every other
+ *  checkout. */
+export const MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024;
 export const CLONE_TIMEOUT_MS = 120_000;
 export const GIT_COMMAND_TIMEOUT_MS = 30_000;
 export const CHECKOUT_TTL_MS = 24 * 60 * 60 * 1000;
@@ -1006,6 +1008,10 @@ export async function measureTree(
 ): Promise<TreeStats> {
   let files = 0;
   let bytes = 0;
+  // A hard-linked file takes its bytes once: pnpm links every package file
+  // between its store and its virtual store. Same rule as `lenient_usage` in
+  // `sandbox_supervisor.py`.
+  const linked = new Set<string>();
   const stack = [root];
   while (stack.length > 0) {
     const current = stack.pop() as string;
@@ -1027,7 +1033,14 @@ export async function measureTree(
       }
       files += 1;
       try {
-        bytes += (await fs.promises.lstat(full)).size;
+        const stats = await fs.promises.lstat(full);
+        const inode = `${stats.dev}:${stats.ino}`;
+        if (!linked.has(inode)) {
+          bytes += stats.size;
+        }
+        if (stats.nlink > 1) {
+          linked.add(inode);
+        }
       } catch {
         continue;
       }
@@ -2868,12 +2881,17 @@ async function performInstall(request: InstallRequest): Promise<InstallReceipt> 
     manager: manager.name,
     lockfile: manager.lockfile,
     rebuild,
-    byte_size: (
-      await measureTree(layer.upper, {
-        maxFiles: Number.POSITIVE_INFINITY,
-        maxBytes: Number.POSITIVE_INFINITY,
-      })
-    ).bytes,
+    // Not while installing: walking a tree mid-install, on a shared CPU the
+    // install is using, made a poll take over 30 seconds to say "still going".
+    byte_size:
+      status === "installing"
+        ? 0
+        : (
+            await measureTree(layer.upper, {
+              maxFiles: Number.POSITIVE_INFINITY,
+              maxBytes: Number.POSITIVE_INFINITY,
+            })
+          ).bytes,
     warnings,
     ...(status === "installing" ? { poll_after_seconds: INSTALL_POLL_SECONDS } : {}),
   });

@@ -302,6 +302,20 @@ describe("token scrubbing", () => {
 });
 
 describe("tree measurement", () => {
+  it("counts a hard-linked file once, as the disk does", async () => {
+    // pnpm links every package file between its store and its virtual store;
+    // counting names read one project as twice its size and refused new checkouts.
+    const root = scratch("magister-links-");
+    fs.writeFileSync(path.join(root, "store"), "x".repeat(100));
+    fs.linkSync(path.join(root, "store"), path.join(root, "virtual-store"));
+    fs.writeFileSync(path.join(root, "other"), "y".repeat(10));
+
+    const stats = await measureTree(root, { maxFiles: 100, maxBytes: 1_000 });
+
+    expect(stats.bytes).toBe(110);
+    expect(stats.files).toBe(3);
+  });
+
   it("counts files and bytes without following symlinks", async () => {
     const root = scratch("magister-measure-");
     fs.mkdirSync(path.join(root, "nested"), { recursive: true });
@@ -1680,6 +1694,21 @@ describe("installing dependencies", () => {
     // Reported once: the marker forgot the failure, so this starts over.
     expect((await installRepoDependencies(install())).status).toBe("installing");
     await awaitRepositoryIdle("github", "acme/site");
+  });
+
+  it("answers a poll without measuring the tree the install is still writing", async () => {
+    const { repoDir, root } = upstreamAndCheckout();
+    fs.writeFileSync(path.join(repoDir, "package-lock.json"), "{}");
+    fakeLauncher(root);
+
+    const started = await installRepoDependencies(install());
+
+    expect(started.status).toBe("installing");
+    expect(started.byte_size).toBe(0);
+    await awaitRepositoryIdle("github", "acme/site");
+    const finished = await installRepoDependencies(install());
+    expect(finished.status).toBe("installed");
+    expect(finished.byte_size).toBeGreaterThan(0);
   });
 
   it("says why an install failed from the end of its output, not its warnings", async () => {
