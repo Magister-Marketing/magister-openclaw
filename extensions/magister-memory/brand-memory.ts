@@ -117,18 +117,19 @@ export async function retireLegacyMemoryFile(
     return;
   }
   const path = join(workspaceDir, "MEMORY.md");
+  const retired = join(workspaceDir, RETIRED_COPY);
   await withContextLock(workspaceDir, async () => {
-    await writeLegacyWorkspaceFile(workspaceDir, async () => {
-      const retired = join(workspaceDir, RETIRED_COPY);
+    if (revoked) {
+      // The brand's notes must not outlive its access, in any copy. These state
+      // files are not Library projections, so the Library's gate does not govern
+      // them. The stamp stays, without the original: only its presence is read.
       const stamp = join(workspaceDir, IMPORT_STAMP);
-      if (revoked) {
-        // The brand's notes must not outlive its access, in any copy. The stamp
-        // stays, without the original: only its presence is ever read.
-        await rm(retired, { force: true });
-        if ((await readUtf8IfExists(stamp)) !== undefined) {
-          await atomicWriteFile(stamp, "{}\n");
-        }
+      await rm(retired, { force: true });
+      if ((await readUtf8IfExists(stamp)) !== undefined) {
+        await atomicWriteFile(stamp, "{}\n");
       }
+    }
+    await writeLegacyWorkspaceFile(workspaceDir, async () => {
       const current = (await readUtf8IfExists(path)) ?? "";
       if (current === "") {
         return;

@@ -128,9 +128,17 @@ describe("before_model_resolve hook", () => {
     expect(context.rendered).toContain("could not be loaded");
   });
 
-  it("leaves the revocation clear to the Library's legacy-write gate", async () => {
+  it("leaves MEMORY.md to the Library's legacy-write gate but purges the state copies on revocation", async () => {
     const gateway = stubBrandMemoryGateway(["Private old brand rule"]);
+    const state = join(dir, ".magister", "state");
+    await mkdir(state, { recursive: true });
     await writeFile(join(dir, "MEMORY.md"), "Private old brand note", "utf8");
+    await writeFile(join(state, "memory-md-retired"), "Private earlier note\n", "utf8");
+    await writeFile(
+      join(state, "brand-memory-import"),
+      '{"memory_md":"Private original"}\n',
+      "utf8",
+    );
     // Active or recovery: the Library refuses local projection writes.
     const unregister = registerWorkspaceFileAuthority({
       version: 1,
@@ -143,9 +151,9 @@ describe("before_model_resolve hook", () => {
       const { run } = registerHook();
       await run("same");
       expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("Private old brand note");
-      const context = JSON.parse(
-        await readFile(join(dir, ".magister", "state", "marketing-context.json"), "utf8"),
-      );
+      await expect(stat(join(state, "memory-md-retired"))).rejects.toThrow();
+      expect(await readFile(join(state, "brand-memory-import"), "utf8")).toBe("{}\n");
+      const context = JSON.parse(await readFile(join(state, "marketing-context.json"), "utf8"));
       expect(context.available).toBe(false);
     } finally {
       unregister();
