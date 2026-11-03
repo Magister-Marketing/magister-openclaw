@@ -83,8 +83,8 @@ type Options = {
 
 /**
  * Wraps another context engine (default: MagisterIntegrationsContextEngine) and
- * folds MEMORY.md + USER.md + PROJECT.md content into the system prompt as a
- * snapshot read once per run.
+ * folds the shared marketing context + USER.md + PROJECT.md into the system
+ * prompt as a snapshot read once per run.
  *
  * resolveContextEngine builds a new engine for every run, so the snapshot is
  * held for the model calls of one turn and read again on the next turn. That
@@ -211,8 +211,9 @@ export class MagisterMemoryContextEngine implements ContextEngine {
   }
 
   private async renderSnapshot(): Promise<string> {
-    const [memory, user, project, marketingContext] = await Promise.all([
-      readTextOrEmpty(this.memoryPath),
+    // MEMORY.md is still owned (so the host never injects the stale legacy
+    // copy as a bootstrap file) but no longer read: shared context replaced it.
+    const [user, project, marketingContext] = await Promise.all([
       readTextOrEmpty(this.userPath),
       readTextOrEmpty(this.projectPath),
       readTextOrEmpty(this.marketingContextPath),
@@ -231,7 +232,7 @@ export class MagisterMemoryContextEngine implements ContextEngine {
               : "");
         }
       } catch {
-        // Keep the legacy copy usable during rollout or a malformed cache.
+        // A malformed cache supplies no shared context.
       }
     }
     if (shared) {
@@ -241,15 +242,6 @@ export class MagisterMemoryContextEngine implements ContextEngine {
           source: "shared_marketing_context",
           title: "Shared Marketing Context",
           content: shared,
-        }),
-      );
-    } else if (shared === undefined && memory) {
-      blocks.push(
-        renderMagisterContextBlock({
-          provenance: "trusted_project_state",
-          source: "older_inferred_memory",
-          title: "Memory (about the project)",
-          content: memory,
         }),
       );
     }
@@ -460,7 +452,7 @@ export function createMagisterMemoryContextEngine(options?: {
 
 export function registerMagisterMemoryContextEngine(): void {
   // Compose ON TOP of magister-plan so the active 'magister-memory' slot folds
-  // MEMORY.md + USER.md + PROJECT.md (a snapshot read once per run), the live
+  // shared marketing context + USER.md + PROJECT.md (a snapshot read once per run), the live
   // marketing plan, WORKFLOWS.md, and INTEGRATIONS.md. The chain is:
   //   MagisterMemoryContextEngine (once per run)
   //     -> MagisterPlanContextEngine (per-turn gateway summary + PLAN.md fallback)
