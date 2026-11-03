@@ -98,8 +98,10 @@ function checkoutLockWaitMs(): number {
   const configured = Number(process.env.MAGISTER_CHECKOUT_LOCK_WAIT_MS);
   return Number.isFinite(configured) && configured >= 0 ? configured : 30_000;
 }
-/** A dependency install and a rebuild each get this long inside the sandbox. */
-export const INSTALL_TIMEOUT_SECONDS = 300;
+/** A dependency install and a rebuild each get this long inside the sandbox.
+ *  Nothing waits on it but polls, and the machine's CPU quota can run out: the
+ *  same install measured 53, 84 and 205 seconds, and npm with its rebuild 288. */
+export const INSTALL_TIMEOUT_SECONDS = 600;
 const SANDBOX_OUTPUT_TAIL_CHARS = 4_000;
 /** How many run records a freeze attaches as its evidence. */
 export const MAX_VERIFICATION_RECORDS = 20;
