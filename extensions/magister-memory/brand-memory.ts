@@ -104,7 +104,9 @@ export async function retireLegacyMemoryFile(
   workspaceDir: string,
   { revoked = false }: { revoked?: boolean } = {},
 ): Promise<void> {
-  if (await admitWorkspaceFiles(workspaceDir)) {
+  // Revocation clears the file even while the Library owns workspace files,
+  // as the old sync did: the brand's notes must not outlive its access.
+  if (!revoked && (await admitWorkspaceFiles(workspaceDir))) {
     return;
   }
   if (!revoked && (await readUtf8IfExists(join(workspaceDir, IMPORT_STAMP))) === undefined) {
@@ -155,16 +157,31 @@ export async function syncMarketingContext(workspaceDir: string): Promise<void> 
       await retireLegacyMemoryFile(workspaceDir, { revoked: true });
       throw error;
     }
+    let kept = false;
     const cached = await readUtf8IfExists(path);
     if (cached) {
       try {
         const previous: unknown = JSON.parse(cached);
         if (isRecord(previous) && typeof previous.rendered === "string") {
           await atomicWriteFile(path, JSON.stringify({ ...previous, stale: true }));
+          kept = true;
         }
       } catch {
-        // An unreadable cache cannot supply context; never replace it with empty learning.
+        // An unreadable cache cannot supply context.
       }
+    }
+    if (!kept) {
+      // No last good context: say so, rather than let the turn run as if the
+      // brand had no rules (an authoritative empty context renders nothing).
+      await atomicWriteFile(
+        path,
+        JSON.stringify({
+          available: false,
+          stale: true,
+          rendered:
+            "Shared marketing context could not be loaded, so this brand's confirmed rules and learned style are missing from this turn. Do not guess brand preferences; say they could not be loaded when they matter.",
+        }),
+      );
     }
     throw error;
   }

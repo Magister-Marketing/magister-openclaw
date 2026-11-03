@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { registerWorkspaceFileAuthority } from "openclaw/plugin-sdk/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stubBrandMemoryGateway, useMachineGatewayEnv } from "./brand-memory.test-helpers.js";
 import plugin from "./index.js";
@@ -112,6 +113,36 @@ describe("before_model_resolve hook", () => {
     expect(context.rendered).not.toContain("Private old brand rule");
     // Revoked: even a never-imported MEMORY.md is emptied, as before.
     expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("");
+  });
+
+  it("says shared context is unavailable when the first refresh fails", async () => {
+    const gateway = stubBrandMemoryGateway(["Tone: plain"]);
+    gateway.failing.add("/api/runtime/marketing-context");
+    const { run } = registerHook();
+    await run("same");
+    const context = JSON.parse(
+      await readFile(join(dir, ".magister", "state", "marketing-context.json"), "utf8"),
+    );
+    expect(context).toMatchObject({ available: false, stale: true });
+    expect(context.rendered).toContain("could not be loaded");
+  });
+
+  it("empties MEMORY.md on revocation even while the Library owns workspace files", async () => {
+    const gateway = stubBrandMemoryGateway(["Private old brand rule"]);
+    await writeFile(join(dir, "MEMORY.md"), "Private old brand note", "utf8");
+    const unregister = registerWorkspaceFileAuthority({
+      version: 1,
+      wrap: (tool) => tool,
+      admit: async () => true,
+    });
+    try {
+      gateway.forbidden.add("/api/runtime/marketing-context");
+      const { run } = registerHook();
+      await run("same");
+      expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("");
+    } finally {
+      unregister();
+    }
   });
 
   it("empties a MEMORY.md whose entries already reached the Gateway", async () => {
