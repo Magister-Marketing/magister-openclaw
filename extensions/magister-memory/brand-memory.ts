@@ -18,6 +18,8 @@ import { atomicWrite, type MemoryResult } from "./memory-store.js";
  * plugin's upload or the Gateway's migration); it keeps the original file.
  */
 const IMPORT_STAMP = join(".magister", "state", "brand-memory-import");
+/** What a stamped MEMORY.md held when it was emptied: later edits reached no store. */
+const RETIRED_COPY = join(".magister", "state", "memory-md-retired");
 
 const READ_TIMEOUT_MS = 3_000;
 const WRITE_TIMEOUT_MS = 5_000;
@@ -116,9 +118,16 @@ export async function retireLegacyMemoryFile(
   const path = join(workspaceDir, "MEMORY.md");
   await withContextLock(workspaceDir, async () => {
     await writeLegacyWorkspaceFile(workspaceDir, async () => {
-      if (((await readUtf8IfExists(path)) ?? "") !== "") {
-        await atomicWrite(path, "");
+      const current = (await readUtf8IfExists(path)) ?? "";
+      if (current === "") {
+        return;
       }
+      // Revoked: the brand's notes must not outlive its access.
+      if (!revoked) {
+        const retired = join(workspaceDir, RETIRED_COPY);
+        await atomicWriteFile(retired, `${(await readUtf8IfExists(retired)) ?? ""}${current}\n`);
+      }
+      await atomicWrite(path, "");
     });
   });
 }

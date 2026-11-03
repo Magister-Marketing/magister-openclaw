@@ -111,8 +111,9 @@ describe("before_model_resolve hook", () => {
     );
     expect(context.available).toBe(false);
     expect(context.rendered).not.toContain("Private old brand rule");
-    // Revoked: even a never-imported MEMORY.md is emptied, as before.
+    // Revoked: even a never-imported MEMORY.md is emptied, as before, with no copy kept.
     expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("");
+    await expect(stat(join(dir, ".magister", "state", "memory-md-retired"))).rejects.toThrow();
   });
 
   it("says shared context is unavailable when the first refresh fails", async () => {
@@ -180,6 +181,14 @@ describe("before_model_resolve hook", () => {
     const { run } = registerHook();
     await run("same");
     expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("");
+    // A later local edit reached no store: it is kept, not lost.
+    expect(await readFile(join(dir, ".magister", "state", "memory-md-retired"), "utf8")).toBe(
+      "Tone: plain (stale copy)\n",
+    );
+    await run("same");
+    expect(await readFile(join(dir, ".magister", "state", "memory-md-retired"), "utf8")).toBe(
+      "Tone: plain (stale copy)\n",
+    );
   });
 
   it("empties a stamped MEMORY.md even when the refresh fails", async () => {
