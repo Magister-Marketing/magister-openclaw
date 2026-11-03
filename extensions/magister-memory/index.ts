@@ -16,6 +16,7 @@ import {
 import { withContextLock } from "./context-lock.js";
 import { resolveConversationCheckpointConfig } from "./conversation-config.js";
 import { ConversationCheckpointManager } from "./conversation-manager.js";
+import { RuntimeGatewayError } from "./gateway-runtime.js";
 import { type MemoryResult, UserMemoryStore } from "./memory-store.js";
 import { memoryOperationId, withHostMutationBoundary } from "./mutation-boundary.js";
 import { isInteractiveSession, resolveTurnBudgetConfig, TurnBudget } from "./turn-budget.js";
@@ -230,11 +231,18 @@ export default definePluginEntry({
           ctx.workspaceDir ?? resolveAgentWorkspaceDir(api.config, ctx.agentId ?? "main");
         try {
           await memoryWriteQueue.enqueue(`${workspaceDir}:memory`, async () => {
+            let denied = false;
             try {
               await syncMarketingContext(workspaceDir);
+            } catch (error) {
+              // The refresh already handled a denial, with no copy kept.
+              denied = error instanceof RuntimeGatewayError && [401, 403].includes(error.status);
+              throw error;
             } finally {
               // A failed refresh must not keep a stale copy on disk.
-              await retireLegacyMemoryFile(workspaceDir);
+              if (!denied) {
+                await retireLegacyMemoryFile(workspaceDir);
+              }
             }
           });
         } catch (error) {

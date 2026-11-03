@@ -202,6 +202,23 @@ describe("before_model_resolve hook", () => {
     expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("");
   });
 
+  it("removes every copy of the notes on revocation, keeping only the stamp's presence", async () => {
+    const gateway = stubBrandMemoryGateway(["Tone: plain"]);
+    const state = join(dir, ".magister", "state");
+    await mkdir(state, { recursive: true });
+    await writeFile(join(state, "brand-memory-import"), '{"memory_md":"Private original"}\n');
+    await writeFile(join(dir, "MEMORY.md"), "Private later edit", "utf8");
+    const { run } = registerHook();
+    await run("same");
+    expect(await readFile(join(state, "memory-md-retired"), "utf8")).toBe("Private later edit\n");
+
+    gateway.forbidden.add("/api/runtime/marketing-context");
+    await run("same");
+    await expect(stat(join(state, "memory-md-retired"))).rejects.toThrow();
+    expect(await readFile(join(state, "brand-memory-import"), "utf8")).toBe("{}\n");
+    expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("");
+  });
+
   it("leaves a never-imported MEMORY.md for the Gateway's migration", async () => {
     stubBrandMemoryGateway(["Tone: plain"]);
     await writeFile(join(dir, "MEMORY.md"), "Owner prefers short emails.", "utf8");

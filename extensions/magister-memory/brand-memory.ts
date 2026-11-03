@@ -1,3 +1,4 @@
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { admitWorkspaceFiles, writeLegacyWorkspaceFile } from "openclaw/plugin-sdk/core";
 import { withContextLock } from "./context-lock.js";
@@ -118,13 +119,21 @@ export async function retireLegacyMemoryFile(
   const path = join(workspaceDir, "MEMORY.md");
   await withContextLock(workspaceDir, async () => {
     await writeLegacyWorkspaceFile(workspaceDir, async () => {
+      const retired = join(workspaceDir, RETIRED_COPY);
+      const stamp = join(workspaceDir, IMPORT_STAMP);
+      if (revoked) {
+        // The brand's notes must not outlive its access, in any copy. The stamp
+        // stays, without the original: only its presence is ever read.
+        await rm(retired, { force: true });
+        if ((await readUtf8IfExists(stamp)) !== undefined) {
+          await atomicWriteFile(stamp, "{}\n");
+        }
+      }
       const current = (await readUtf8IfExists(path)) ?? "";
       if (current === "") {
         return;
       }
-      // Revoked: the brand's notes must not outlive its access.
       if (!revoked) {
-        const retired = join(workspaceDir, RETIRED_COPY);
         await atomicWriteFile(retired, `${(await readUtf8IfExists(retired)) ?? ""}${current}\n`);
       }
       await atomicWrite(path, "");
