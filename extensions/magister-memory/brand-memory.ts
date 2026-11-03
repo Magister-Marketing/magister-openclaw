@@ -143,7 +143,10 @@ export async function retireLegacyMemoryFile(
 }
 
 /** Refresh on every turn. A failed refresh keeps the last good context, marked stale. */
-export async function syncMarketingContext(workspaceDir: string): Promise<void> {
+export async function syncMarketingContext(
+  workspaceDir: string,
+  warn: (message: string) => void = () => undefined,
+): Promise<void> {
   const path = join(workspaceDir, ".magister", "state", "marketing-context.json");
   try {
     const result = await callRuntimeGateway("marketing-context", {
@@ -165,16 +168,28 @@ export async function syncMarketingContext(workspaceDir: string): Promise<void> 
   } catch (error) {
     if (error instanceof RuntimeGatewayError && [401, 403].includes(error.status)) {
       // Revoked authority is not a transient outage. Do not inject another
-      // binding's cached knowledge.
-      await atomicWriteFile(
-        path,
-        JSON.stringify({
-          available: false,
-          rendered:
-            "Shared marketing context is unavailable because access was denied. Do not use prior cached brand memory.",
-        }),
+      // binding's cached knowledge. Each step runs whichever fails, and the
+      // caller still sees the denial, which is what tells it no copy may be kept.
+      const attempt = (step: string, work: Promise<void>) =>
+        work.catch((failure: unknown) => {
+          const detail = failure instanceof Error ? failure.message : String(failure);
+          warn(`magister-memory: ${step} failed after access was denied (${detail})`);
+        });
+      await attempt(
+        "the unavailable marker",
+        atomicWriteFile(
+          path,
+          JSON.stringify({
+            available: false,
+            rendered:
+              "Shared marketing context is unavailable because access was denied. Do not use prior cached brand memory.",
+          }),
+        ),
       );
-      await retireLegacyMemoryFile(workspaceDir, { revoked: true });
+      await attempt(
+        "removing the local copies",
+        retireLegacyMemoryFile(workspaceDir, { revoked: true }),
+      );
       throw error;
     }
     let kept = false;

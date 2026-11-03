@@ -233,7 +233,7 @@ export default definePluginEntry({
           await memoryWriteQueue.enqueue(`${workspaceDir}:memory`, async () => {
             let denied = false;
             try {
-              await syncMarketingContext(workspaceDir);
+              await syncMarketingContext(workspaceDir, (message) => api.logger.warn(message));
             } catch (error) {
               // The refresh already handled a denial, with no copy kept.
               denied = error instanceof RuntimeGatewayError && [401, 403].includes(error.status);

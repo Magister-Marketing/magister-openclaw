@@ -160,6 +160,29 @@ describe("before_model_resolve hook", () => {
     }
   });
 
+  it("still removes every copy on revocation when the unavailable marker cannot be written", async () => {
+    const gateway = stubBrandMemoryGateway(["Private old brand rule"]);
+    const state = join(dir, ".magister", "state");
+    // A directory here makes the marker's rename fail.
+    await mkdir(join(state, "marketing-context.json", "blocked"), { recursive: true });
+    await writeFile(join(dir, "MEMORY.md"), "Private old brand note", "utf8");
+    await writeFile(join(state, "memory-md-retired"), "Private earlier note\n", "utf8");
+    await writeFile(
+      join(state, "brand-memory-import"),
+      '{"memory_md":"Private original"}\n',
+      "utf8",
+    );
+    gateway.forbidden.add("/api/runtime/marketing-context");
+    const { run, warn } = registerHook();
+    await run("same");
+    expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("");
+    await expect(stat(join(state, "memory-md-retired"))).rejects.toThrow();
+    expect(await readFile(join(state, "brand-memory-import"), "utf8")).toBe("{}\n");
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("the unavailable marker failed after access was denied"),
+    );
+  });
+
   it("empties MEMORY.md on revocation when the Library admits the workspace but allows the write", async () => {
     const gateway = stubBrandMemoryGateway(["Private old brand rule"]);
     await writeFile(join(dir, "MEMORY.md"), "Private old brand note", "utf8");
