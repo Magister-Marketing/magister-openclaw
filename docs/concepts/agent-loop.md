@@ -162,7 +162,7 @@ surfaces, while Codex native hooks remain a separate lower-level Codex mechanism
 
 ## Timeouts
 
-- `agent.wait` default: 30s (just the wait). `timeoutMs` param overrides.
+- `agent.wait` default: 30s (just the wait). `timeoutMs` param overrides. A `timeout` answer carries `unknownRun: true` when this process has never heard of the run, because it started in an earlier process: nothing here will finish it, so waiting longer cannot help.
 - Agent runtime: `agents.defaults.timeoutSeconds` default 172800s (48 hours); enforced in `runEmbeddedPiAgent` abort timer.
 - Cron runtime: isolated agent-turn `timeoutSeconds` is owned by cron. The scheduler starts that timer when execution begins, aborts the underlying run at the configured deadline, then runs bounded cleanup before recording the timeout so a stale child session cannot keep the lane stuck.
 - Session liveness diagnostics: with diagnostics enabled, `diagnostics.stuckSessionWarnMs` classifies long `processing` sessions that have no observed reply, tool, status, block, or ACP progress. Active embedded runs, model calls, and tool calls report as `session.long_running`; active work with no recent progress reports as `session.stalled`; `session.stuck` is reserved for stale session bookkeeping with no active work. Stale session bookkeeping releases the affected session lane immediately; stalled embedded runs are abort-drained only after an extended no-progress window (at least 10 minutes and 5x the warning threshold) so queued work can resume without cutting off merely slow runs. Repeated `session.stuck` diagnostics back off while the session remains unchanged.

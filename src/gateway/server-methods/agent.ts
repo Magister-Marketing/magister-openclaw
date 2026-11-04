@@ -43,7 +43,7 @@ import {
   updateSessionStore,
 } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { registerAgentRunContext } from "../../infra/agent-events.js";
+import { hasHeardOfAgentRun, registerAgentRunContext } from "../../infra/agent-events.js";
 import { formatUncaughtError } from "../../infra/errors.js";
 import {
   resolveAgentDeliveryPlan,
@@ -2246,9 +2246,15 @@ export const agentHandlers: GatewayRequestHandlers = {
     }
 
     if (!snapshot) {
+      // Answered after the whole wait, so a caller that asks right after starting
+      // a run still sees it arrive. `status` stays "timeout" for every caller that
+      // knows only the three statuses; `unknownRun` says nothing here will ever
+      // finish this run, because it started in an earlier process.
+      const unknownRun = !hasHeardOfAgentRun(runId) && !context.chatAbortControllers.has(runId);
       respond(true, {
         runId,
         status: "timeout",
+        ...(unknownRun ? { unknownRun: true } : {}),
       });
       return;
     }

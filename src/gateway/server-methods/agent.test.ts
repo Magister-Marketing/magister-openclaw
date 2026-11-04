@@ -106,6 +106,7 @@ vi.mock("../../auto-reply/reply/session-reset-prompt.js", async () => {
 
 vi.mock("../../infra/agent-events.js", () => ({
   emitAgentEvent: mocks.emitAgentEvent,
+  hasHeardOfAgentRun: vi.fn(() => true),
   registerAgentRunContext: mocks.registerAgentRunContext,
   onAgentEvent: vi.fn(),
 }));
