@@ -5451,6 +5451,33 @@
             "maxLength": 160,
             "type": "string"
           },
+          "communities": {
+            "description": "redditads only: subreddits to target, such as marketing or r/startups.",
+            "items": {
+              "maxLength": 100,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "conversation_keywords": {
+            "description": "redditads only: place the ad in Reddit conversations about these.",
+            "items": {
+              "maxLength": 200,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "countries": {
+            "description": "redditads only: ISO 3166-1 alpha-2 codes; with none, the ad targets US.",
+            "items": {
+              "maxLength": 2,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
           "descriptions": {
             "description": "googleads only: 2-4 descriptions, at most 90 characters each.",
             "items": {
@@ -5527,7 +5554,15 @@
             "type": "string"
           },
           "platform": {
-            "enum": ["metaads", "tiktokads", "linkedinads", "pinterestads", "xads", "googleads"],
+            "enum": [
+              "metaads",
+              "tiktokads",
+              "linkedinads",
+              "pinterestads",
+              "xads",
+              "redditads",
+              "googleads"
+            ],
             "type": "string"
           }
         },
@@ -6279,6 +6314,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "e1be42a93b4e3c0c7abc2264fbccb3da10e6dfc70fb8acd7e2bf9f79aac0a3de",
+  "registry_revision": "5a4f68cca5aa20eae02970d20de3d8614c5ac671237b80b356ca93cc0d18762b",
   "schema_version": 1
 }
