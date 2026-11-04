@@ -44,9 +44,11 @@ export const MAX_REQUEST_BYTES = 16 * 1024;
 export const MAX_CHECKOUT_FILES = 20_000;
 export const MAX_CHECKOUT_BYTES = 256 * 1024 * 1024;
 /** The real guard. A per-checkout cap alone never bounds the root — N
- *  checkouts still fill a 5 GB volume. Mirrors the attempt/total scratch pair
- *  in `sandbox_supervisor.py` (64 MiB / 256 MiB), same 4:1 shape. */
-export const MAX_TOTAL_BYTES = 1024 * 1024 * 1024;
+ *  checkouts still fill a 5 GB volume. Below the supervisor's 3 GiB
+ *  `REPO_ROOT_MAX_BYTES`, so a checkout admitted here still has room to install.
+ *  At 1 GiB, one installed Next.js project with a build refused every other
+ *  checkout. */
+export const MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024;
 export const CLONE_TIMEOUT_MS = 120_000;
 export const GIT_COMMAND_TIMEOUT_MS = 30_000;
 export const CHECKOUT_TTL_MS = 24 * 60 * 60 * 1000;
@@ -96,8 +98,10 @@ function checkoutLockWaitMs(): number {
   const configured = Number(process.env.MAGISTER_CHECKOUT_LOCK_WAIT_MS);
   return Number.isFinite(configured) && configured >= 0 ? configured : 30_000;
 }
-/** A dependency install and a rebuild each get this long inside the sandbox. */
-export const INSTALL_TIMEOUT_SECONDS = 300;
+/** A dependency install and a rebuild each get this long inside the sandbox.
+ *  Nothing waits on it but polls, and the machine's CPU quota can run out: the
+ *  same install measured 53, 84 and 205 seconds, and npm with its rebuild 288. */
+export const INSTALL_TIMEOUT_SECONDS = 600;
 const SANDBOX_OUTPUT_TAIL_CHARS = 4_000;
 /** How many run records a freeze attaches as its evidence. */
 export const MAX_VERIFICATION_RECORDS = 20;
@@ -1006,6 +1010,10 @@ export async function measureTree(
 ): Promise<TreeStats> {
   let files = 0;
   let bytes = 0;
+  // A hard-linked file takes its bytes once: pnpm links every package file
+  // between its store and its virtual store. Same rule as `lenient_usage` in
+  // `sandbox_supervisor.py`.
+  const linked = new Set<string>();
   const stack = [root];
   while (stack.length > 0) {
     const current = stack.pop() as string;
@@ -1027,7 +1035,14 @@ export async function measureTree(
       }
       files += 1;
       try {
-        bytes += (await fs.promises.lstat(full)).size;
+        const stats = await fs.promises.lstat(full);
+        const inode = `${stats.dev}:${stats.ino}`;
+        if (!linked.has(inode)) {
+          bytes += stats.size;
+        }
+        if (stats.nlink > 1) {
+          linked.add(inode);
+        }
       } catch {
         continue;
       }
@@ -1737,6 +1752,13 @@ function describeRef(ref: { ref: string; isSha: boolean } | null): string {
 function truncate(value: string, limit = 400): string {
   const collapsed = value.replace(/\s+/g, " ").trim();
   return collapsed.length > limit ? `${collapsed.slice(0, limit)}…` : collapsed;
+}
+
+/** The end of a command's output, which is where a failure says why: the head of
+ *  a failed install is its deprecation warnings. */
+function outputTail(value: string, limit: number): string {
+  const collapsed = value.replace(/\s+/g, " ").trim();
+  return collapsed.length > limit ? `…${collapsed.slice(-limit)}` : collapsed;
 }
 
 async function performCheckout(request: CheckoutRequest): Promise<CheckoutReceipt> {
@@ -2802,8 +2824,8 @@ async function runInstall(
         finished_at: new Date().toISOString(),
         error:
           fetched.code === 124
-            ? `The install exceeded ${INSTALL_TIMEOUT_SECONDS}s. ${truncate(fetched.output, 1_000)}`
-            : truncate(fetched.output, 1_200),
+            ? `The install exceeded ${INSTALL_TIMEOUT_SECONDS}s. ${outputTail(fetched.output, 900)}`
+            : outputTail(fetched.output, 950),
       });
       return;
     }
@@ -2816,7 +2838,7 @@ async function runInstall(
       rebuild = { ran: true, exit_code: rebuilt.code };
       if (rebuilt.code !== 0) {
         warnings.push(
-          `Lifecycle scripts exited ${rebuilt.code}. A package that downloads during install cannot here, because the sandbox has no network: ${truncate(rebuilt.output, 300)}`,
+          `Lifecycle scripts exited ${rebuilt.code}. A package that downloads during install cannot here, because the sandbox has no network: ${outputTail(rebuilt.output, 300)}`,
         );
       }
     }
@@ -2861,12 +2883,17 @@ async function performInstall(request: InstallRequest): Promise<InstallReceipt> 
     manager: manager.name,
     lockfile: manager.lockfile,
     rebuild,
-    byte_size: (
-      await measureTree(layer.upper, {
-        maxFiles: Number.POSITIVE_INFINITY,
-        maxBytes: Number.POSITIVE_INFINITY,
-      })
-    ).bytes,
+    // Not while installing: walking a tree mid-install, on a shared CPU the
+    // install is using, made a poll take over 30 seconds to say "still going".
+    byte_size:
+      status === "installing"
+        ? 0
+        : (
+            await measureTree(layer.upper, {
+              maxFiles: Number.POSITIVE_INFINITY,
+              maxBytes: Number.POSITIVE_INFINITY,
+            })
+          ).bytes,
     warnings,
     ...(status === "installing" ? { poll_after_seconds: INSTALL_POLL_SECONDS } : {}),
   });

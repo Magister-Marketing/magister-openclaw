@@ -6267,6 +6267,7 @@
         "additionalProperties": false,
         "properties": {
           "attempt_id": {
+            "description": "The MAGISTER_ATTEMPT_ID of the exec command that staged the file: print it from that same command. Every exec is a new attempt, so another command's id or a session name does not work.",
             "maxLength": 120,
             "minLength": 1,
             "pattern": "^[A-Za-z0-9._-]+$",
@@ -6313,6 +6314,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "25cccdcbbdde12d0a2fce43af5b32a51b69f3cc370932399612538b754c756be",
+  "registry_revision": "5a4f68cca5aa20eae02970d20de3d8614c5ac671237b80b356ca93cc0d18762b",
   "schema_version": 1
 }
