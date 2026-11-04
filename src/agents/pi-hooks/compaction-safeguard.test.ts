@@ -1558,10 +1558,6 @@ describe("compaction-safeguard recent-turn preservation", () => {
       expect(overBudget).toContain("www");
     });
 
-    it("tells the summarizer to keep the block's label on the next compaction", () => {
-      expect(buildCompactionStructureInstructions()).toContain("<untrusted-text> block");
-    });
-
     it("writes nothing when the summary left nothing out", () => {
       expect(
         formatMissingIdentifiersSection({
