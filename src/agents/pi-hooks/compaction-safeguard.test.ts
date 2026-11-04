@@ -871,7 +871,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
       "Track id a1b2c3d4e5f6 plus A1B2C3D4E5F6 and URL https://example.com/a and /tmp/x.log plus port host.local:18789",
     );
     expect(identifiers.length).toBeGreaterThan(0);
-    expect(identifiers).toContain("A1B2C3D4E5F6"); // pragma: allowlist secret
+    expect(identifiers).toContain("a1b2c3d4e5f6"); // pragma: allowlist secret
 
     const summary = [
       "## Decisions",
@@ -894,11 +894,47 @@ describe("compaction-safeguard recent-turn preservation", () => {
     expect(quality.ok).toBe(true);
   });
 
+  it("keeps a UUID whole instead of two hex fragments", () => {
+    expect(extractOpaqueIdentifiers("project 55bc0b4f-37c0-472a-b89d-b8f00401698c")).toEqual([
+      "55bc0b4f-37c0-472a-b89d-b8f00401698c",
+    ]);
+  });
+
+  it("takes no hex fragment out of a longer token", () => {
+    expect(extractOpaqueIdentifiers("op_8c7f73837ad7 cus_abcdef123456 run-abcdef12")).toEqual([]);
+  });
+
+  it("keeps a machine id exactly as written", () => {
+    expect(extractOpaqueIdentifiers("machine e2865ab3c12d48")).toEqual(["e2865ab3c12d48"]);
+  });
+
+  it("ends a URL where its surroundings begin", () => {
+    expect(
+      extractOpaqueIdentifiers(
+        [
+          JSON.stringify({ url: "https://a.example/one", title: "x".repeat(50) }),
+          '<a href="https://b.example/two">Text</a>',
+          "see **https://c.example/three**",
+          "`https://d.example/four`",
+        ].join(" "),
+      ),
+    ).toEqual([
+      "https://a.example/one",
+      "https://b.example/two",
+      "https://c.example/three",
+      "https://d.example/four",
+    ]);
+  });
+
+  it("drops a match too long to be an identifier", () => {
+    expect(extractOpaqueIdentifiers(`https://a.example/${"x".repeat(400)}`)).toEqual([]);
+  });
+
   it("dedupes pure-hex identifiers across case variants", () => {
     const identifiers = extractOpaqueIdentifiers(
       "Track id a1b2c3d4e5f6 plus A1B2C3D4E5F6 and again a1b2c3d4e5f6",
     );
-    expect(identifiers.filter((id) => id === "A1B2C3D4E5F6")).toHaveLength(1); // pragma: allowlist secret
+    expect(identifiers).toEqual(["a1b2c3d4e5f6"]); // pragma: allowlist secret
   });
 
   it("dedupes identifiers before applying the result cap", () => {
@@ -911,8 +947,8 @@ describe("compaction-safeguard recent-turn preservation", () => {
 
     expect(identifiers).toHaveLength(12);
     expect(new Set(identifiers).size).toBe(12);
-    expect(identifiers).toContain("A0B0C0D0");
-    expect(identifiers).toContain(uniqueTail[10]?.toUpperCase());
+    expect(identifiers).toContain("a0b0c0d0");
+    expect(identifiers).toContain(uniqueTail[10]);
   });
 
   it("filters ordinary short numbers and trims wrapped punctuation", () => {
@@ -1393,6 +1429,131 @@ describe("compaction-safeguard recent-turn preservation", () => {
 
     expect(result.cancel).not.toBe(true);
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(1);
+  });
+
+  describe("identifiers the summary left out", () => {
+    const summaryWithoutTheIdentifier = [
+      "## Decisions",
+      "Keep current flow.",
+      "## Open TODOs",
+      "None.",
+      "## Constraints/Rules",
+      "Follow rules.",
+      "## Pending user asks",
+      "latest ask status",
+      "## Exact identifiers",
+      "None.",
+    ].join("\n");
+
+    const compactWithIdentifier = async (
+      runtime: { identifierPolicy?: "strict" | "off"; qualityGuardEnabled?: boolean } = {},
+    ) => {
+      const sessionManager = stubSessionManager();
+      setCompactionSafeguardRuntime(sessionManager, {
+        model: createAnthropicModelFixture(),
+        recentTurnsPreserve: 0,
+        qualityGuardEnabled: true,
+        qualityGuardMaxRetries: 1,
+        ...runtime,
+      });
+      const result = (await createCompactionHandler()(
+        {
+          preparation: {
+            messagesToSummarize: [
+              {
+                role: "user",
+                content: "latest ask status for https://brand.example/pricing",
+                timestamp: 1,
+              },
+              { role: "assistant", content: "Read it.", timestamp: 2 } as unknown as AgentMessage,
+            ],
+            turnPrefixMessages: [],
+            firstKeptEntryId: "entry-1",
+            tokensBefore: 1_500,
+            fileOps: { read: [], edited: [], written: [] },
+            settings: { reserveTokens: 4_000 },
+            previousSummary: undefined,
+            isSplitTurn: false,
+          },
+          customInstructions: "",
+          signal: new AbortController().signal,
+        },
+        createCompactionContext({
+          sessionManager,
+          getApiKeyMock: vi.fn().mockResolvedValue("test-key"),
+        }),
+      )) as { cancel?: boolean; compaction?: { summary?: string } };
+      expect(result.cancel).not.toBe(true);
+      return result.compaction?.summary ?? "";
+    };
+
+    it("adds them without a second summarizing call", async () => {
+      mockSummarizeInStages.mockReset();
+      mockSummarizeInStages.mockResolvedValue(summaryWithoutTheIdentifier);
+
+      const summary = await compactWithIdentifier();
+
+      expect(mockSummarizeInStages).toHaveBeenCalledTimes(1);
+      const section = summary.slice(summary.indexOf("## Exact identifiers"));
+      expect(section).toContain("https://brand.example/pricing");
+    });
+
+    it("adds them after a retry a missing section still needs", async () => {
+      mockSummarizeInStages.mockReset();
+      mockSummarizeInStages
+        .mockResolvedValueOnce("latest ask status")
+        .mockResolvedValueOnce(summaryWithoutTheIdentifier);
+
+      const summary = await compactWithIdentifier();
+
+      expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
+      const section = summary.slice(summary.indexOf("## Exact identifiers"));
+      expect(section).toContain("https://brand.example/pricing");
+    });
+
+    it("leaves them out when the identifier policy is off", async () => {
+      mockSummarizeInStages.mockReset();
+      mockSummarizeInStages.mockResolvedValue(summaryWithoutTheIdentifier);
+
+      const summary = await compactWithIdentifier({ identifierPolicy: "off" });
+
+      expect(mockSummarizeInStages).toHaveBeenCalledTimes(1);
+      expect(summary).not.toContain("https://brand.example/pricing");
+    });
+
+    it("leaves them out when the quality guard is disabled", async () => {
+      mockSummarizeInStages.mockReset();
+      mockSummarizeInStages.mockResolvedValue(summaryWithoutTheIdentifier);
+
+      const summary = await compactWithIdentifier({ qualityGuardEnabled: false });
+
+      expect(mockSummarizeInStages).toHaveBeenCalledTimes(1);
+      expect(summary).not.toContain("https://brand.example/pricing");
+    });
+
+    it("keeps them when capping cuts the model's own section", async () => {
+      mockSummarizeInStages.mockReset();
+      mockSummarizeInStages.mockResolvedValue(
+        summaryWithoutTheIdentifier.replace("Keep current flow.", "z".repeat(20_000)),
+      );
+
+      const summary = await compactWithIdentifier();
+
+      expect(summary).toContain("https://brand.example/pricing");
+      expect(summary.length).toBeLessThanOrEqual(16_000);
+    });
+
+    it("does not repeat one the summary already holds", async () => {
+      mockSummarizeInStages.mockReset();
+      mockSummarizeInStages.mockResolvedValue(
+        summaryWithoutTheIdentifier.replace("None.", "https://brand.example/pricing"),
+      );
+
+      const summary = await compactWithIdentifier();
+
+      expect(mockSummarizeInStages).toHaveBeenCalledTimes(1);
+      expect(summary.split("https://brand.example/pricing")).toHaveLength(2);
+    });
   });
 
   it("retries when generated summary misses headings even if preserved turns contain them", async () => {

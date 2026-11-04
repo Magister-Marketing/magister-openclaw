@@ -43,6 +43,9 @@ import {
   buildCompactionStructureInstructions,
   buildStructuredFallbackSummary,
   extractOpaqueIdentifiers,
+  formatMissingIdentifiersSection,
+  summaryNeedsRegeneration,
+  summaryQualityCategories,
   wrapUntrustedInstructionBlock,
 } from "./compaction-safeguard-quality.js";
 import {
@@ -178,6 +181,7 @@ async function summarizeViaLLM(params: {
  */
 function assembleSuffix(parts: {
   splitTurnSection?: string;
+  missingIdentifiersSection?: string;
   preservedTurnsSection?: string;
   toolFailureSection?: string;
   fileOpsSummary?: string;
@@ -185,6 +189,7 @@ function assembleSuffix(parts: {
 }): string {
   let suffix = "";
   suffix = appendSummarySection(suffix, parts.splitTurnSection ?? "");
+  suffix = appendSummarySection(suffix, parts.missingIdentifiersSection ?? "");
   suffix = appendSummarySection(suffix, parts.preservedTurnsSection ?? "");
   suffix = appendSummarySection(suffix, parts.toolFailureSection ?? "");
   suffix = appendSummarySection(suffix, parts.fileOpsSummary ?? "");
@@ -1137,7 +1142,11 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
           identifierPolicy,
         });
         summary = summaryWithPreservedTurns;
-        if (quality.ok || attempt >= totalAttempts - 1) {
+        log.info(
+          `Compaction safeguard: quality audit attempt ${attempt + 1}: ` +
+            (quality.ok ? "ok" : summaryQualityCategories(quality.reasons).join(", ")),
+        );
+        if (!summaryNeedsRegeneration(quality.reasons) || attempt >= totalAttempts - 1) {
           break;
         }
         const reasons = quality.reasons.join(", ");
@@ -1159,6 +1168,14 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       const workspaceContext = await readWorkspaceContextForSummary();
       const suffix = assembleSuffix({
         splitTurnSection: lastSplitTurnSection,
+        missingIdentifiersSection: qualityGuardEnabled
+          ? formatMissingIdentifiersSection({
+              summary: lastHistorySummary || summary,
+              identifiers,
+              identifierPolicy,
+              alongside: `${lastSplitTurnSection}\n${preservedTurnsSection}`,
+            })
+          : "",
         preservedTurnsSection,
         toolFailureSection,
         fileOpsSummary,

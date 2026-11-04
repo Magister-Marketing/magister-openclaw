@@ -4,9 +4,12 @@ import type { CompactionSummarizationInstructions } from "../compaction.js";
 import { wrapUntrustedPromptDataBlock } from "../sanitize-for-prompt.js";
 
 const MAX_EXTRACTED_IDENTIFIERS = 12;
+// A longer match is a URL that ran on into its surroundings, not an identifier.
+const MAX_IDENTIFIER_CHARS = 300;
 const MAX_UNTRUSTED_INSTRUCTION_CHARS = 4000;
 const MAX_ASK_OVERLAP_TOKENS = 12;
 const MIN_ASK_OVERLAP_TOKENS_FOR_DOUBLE_MATCH = 3;
+const MISSING_IDENTIFIERS_REASON = "missing_identifiers";
 const REQUIRED_SUMMARY_SECTIONS = [
   "## Decisions",
   "## Open TODOs",
@@ -155,16 +158,21 @@ function summaryIncludesIdentifier(summary: string, identifier: string): boolean
 export function extractOpaqueIdentifiers(text: string): string[] {
   const matches =
     text.match(
-      /([A-Fa-f0-9]{8,}|https?:\/\/\S+|\/[\w.-]{2,}(?:\/[\w.-]+)+|[A-Za-z]:\\[\w\\.-]+|[A-Za-z0-9._-]+\.[A-Za-z0-9._/-]+:\d{1,5}|\b\d{6,}\b)/g,
+      /([A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}|(?<![\w-])[A-Fa-f0-9]{8,}(?![\w-])|https?:\/\/[^\s"'<>|*`\\]+|\/[\w.-]{2,}(?:\/[\w.-]+)+|[A-Za-z]:\\[\w\\.-]+|[A-Za-z0-9._-]+\.[A-Za-z0-9._/-]+:\d{1,5}|\b\d{6,}\b)/g,
     ) ?? [];
-  return Array.from(
-    new Set(
-      matches
-        .map((value) => sanitizeExtractedIdentifier(value))
-        .map((value) => normalizeOpaqueIdentifier(value))
-        .filter((value) => value.length >= 4),
-    ),
-  ).slice(0, MAX_EXTRACTED_IDENTIFIERS);
+  // Hex case variants are one identifier, kept as first written: these are "exact".
+  const byKey = new Map<string, string>();
+  for (const match of matches) {
+    const value = sanitizeExtractedIdentifier(match);
+    if (value.length < 4 || value.length > MAX_IDENTIFIER_CHARS) {
+      continue;
+    }
+    const key = normalizeOpaqueIdentifier(value);
+    if (!byKey.has(key)) {
+      byKey.set(key, value);
+    }
+  }
+  return Array.from(byKey.values()).slice(0, MAX_EXTRACTED_IDENTIFIERS);
 }
 
 function tokenizeAskOverlapText(text: string): string[] {
@@ -236,11 +244,48 @@ export function auditSummaryQuality(params: {
       (identifier) => !summaryIncludesIdentifier(params.summary, identifier),
     );
     if (missingIdentifiers.length > 0) {
-      reasons.push(`missing_identifiers:${missingIdentifiers.slice(0, 3).join(",")}`);
+      reasons.push(`${MISSING_IDENTIFIERS_REASON}:${missingIdentifiers.slice(0, 3).join(",")}`);
     }
   }
   if (!hasAskOverlap(params.summary, params.latestAsk)) {
     reasons.push("latest_user_ask_not_reflected");
   }
   return { ok: reasons.length === 0, reasons };
+}
+
+/** Audit reasons without their values, which can hold customer URLs and ids. */
+export function summaryQualityCategories(reasons: string[]): string[] {
+  return reasons.map((reason) => reason.split(":", 1)[0] ?? reason);
+}
+
+/**
+ * Whether only a new summary can fix these reasons. Missing identifiers cannot
+ * ask for one: formatMissingIdentifiersSection adds them for free, and a second call
+ * cost a full summary and on real pages still left them out.
+ */
+export function summaryNeedsRegeneration(reasons: string[]): boolean {
+  return reasons.some((reason) => !reason.startsWith(`${MISSING_IDENTIFIERS_REASON}:`));
+}
+
+/**
+ * The identifiers the summary left out, for the suffix capping cannot cut: inside
+ * the model's own section they would be lost with it, or displace what it wrote.
+ */
+export function formatMissingIdentifiersSection(params: {
+  summary: string;
+  identifiers: string[];
+  identifierPolicy?: CompactionSummarizationInstructions["identifierPolicy"];
+  /** Summary text kept beside this one, such as the preserved turns. */
+  alongside?: string;
+}): string {
+  if ((params.identifierPolicy ?? "strict") !== "strict") {
+    return "";
+  }
+  const kept = `${params.summary}\n${params.alongside ?? ""}`;
+  const entries = params.identifiers
+    .filter((identifier) => !summaryIncludesIdentifier(kept, identifier))
+    .map((identifier) => `- ${identifier}`);
+  return entries.length > 0
+    ? `\n\n**Exact identifiers the summary left out:**\n${entries.join("\n")}`
+    : "";
 }
