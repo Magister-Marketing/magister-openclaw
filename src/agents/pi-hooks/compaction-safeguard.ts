@@ -202,6 +202,20 @@ function assembleSuffix(parts: {
   return suffix;
 }
 
+/**
+ * An over-budget suffix is cut from its head, and half of the identifiers block
+ * would lose the label that marks it as data. They go whole, or not at all.
+ */
+function assembleSuffixWithinBudget(
+  parts: Parameters<typeof assembleSuffix>[0],
+  maxChars = MAX_COMPACTION_SUMMARY_CHARS,
+): string {
+  const suffix = assembleSuffix(parts);
+  return suffix.length < maxChars
+    ? suffix
+    : assembleSuffix({ ...parts, missingIdentifiersSection: "" });
+}
+
 type ToolFailure = {
   toolCallId: string;
   toolName: string;
@@ -1166,7 +1180,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       // Cap the main history body first, then append split-turn context, preserved
       // turns, diagnostics, and workspace rules so they survive truncation.
       const workspaceContext = await readWorkspaceContextForSummary();
-      const suffix = assembleSuffix({
+      const suffix = assembleSuffixWithinBudget({
         splitTurnSection: lastSplitTurnSection,
         missingIdentifiersSection: qualityGuardEnabled
           ? formatMissingIdentifiersSection({
@@ -1221,7 +1235,9 @@ export const __testing = {
   appendSummarySection,
   resolveRecentTurnsPreserve,
   resolveQualityGuardMaxRetries,
+  assembleSuffixWithinBudget,
   extractOpaqueIdentifiers,
+  formatMissingIdentifiersSection,
   auditSummaryQuality,
   capCompactionSummary,
   capCompactionSummaryPreservingSuffix,
