@@ -369,6 +369,19 @@ function normalizeProviderWebFetchPayload(params: {
   };
 }
 
+function assertFinalUrlNotRefused(finalUrl: unknown): void {
+  if (typeof finalUrl !== "string") {
+    return;
+  }
+  let hostname: string;
+  try {
+    hostname = new URL(finalUrl).hostname;
+  } catch {
+    return;
+  }
+  assertHostNotRefused(hostname);
+}
+
 async function maybeFetchProviderWebFetchPayload(
   params: WebFetchRuntimeParams & {
     urlToFetch: string;
@@ -393,6 +406,8 @@ async function maybeFetchProviderWebFetchPayload(
     maxChars: params.maxChars,
     tookMs: params.tookMs,
   });
+  // A provider follows redirects on its own side, past the per-hop guard.
+  assertFinalUrlNotRefused(payload.finalUrl);
   writeCache(FETCH_CACHE, params.cacheKey, payload, params.cacheTtlMs);
   return payload;
 }
@@ -425,6 +440,8 @@ async function runWebFetch(params: WebFetchRuntimeParams): Promise<Record<string
   assertHostNotRefused(parsedUrl.hostname);
   const cached = readCache(FETCH_CACHE, cacheKey);
   if (cached) {
+    // The page it redirected to may have become refused since it was cached.
+    assertFinalUrlNotRefused(cached.value.finalUrl);
     return { ...cached.value, cached: true };
   }
 
@@ -536,7 +553,11 @@ async function runWebFetch(params: WebFetchRuntimeParams): Promise<Record<string
               cacheKey,
               tookMs: Date.now() - start,
             });
-          } catch {
+          } catch (error) {
+            // A refusal is final: only an extraction failure falls through.
+            if (error instanceof SsrFBlockedError) {
+              throw error;
+            }
             payload = null;
           }
           if (payload) {
