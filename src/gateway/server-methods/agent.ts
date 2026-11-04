@@ -2248,8 +2248,8 @@ export const agentHandlers: GatewayRequestHandlers = {
     if (!snapshot) {
       // Answered after the whole wait, so a caller that asks right after starting
       // a run still sees it arrive. `status` stays "timeout" for every caller that
-      // knows only the three statuses; `unknownRun` says nothing here will ever
-      // finish this run, because it started in an earlier process.
+      // knows only the three statuses; `unknownRun` says this process has no record
+      // of the run, which in practice means it started in an earlier process.
       const unknownRun = !hasHeardOfAgentRun(runId) && !context.chatAbortControllers.has(runId);
       respond(true, {
         runId,

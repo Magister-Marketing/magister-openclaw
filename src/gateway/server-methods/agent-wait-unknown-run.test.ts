@@ -78,10 +78,10 @@ describe("agent.wait for a run this process never heard of", () => {
     await expect(agentWait("run-events-only")).resolves.not.toHaveProperty("unknownRun");
   });
 
-  it("knows a chat.send run from its abort controller", async () => {
+  it.each(["chat-send", "agent"])("knows a %s run from its abort controller", async (kind) => {
     await expect(
-      agentWait("run-chat-send", {
-        chatAbortControllers: new Map([["run-chat-send", { kind: "chat-send" }]]),
+      agentWait("run-with-controller", {
+        chatAbortControllers: new Map([["run-with-controller", { kind }]]),
       }),
     ).resolves.not.toHaveProperty("unknownRun");
   });
