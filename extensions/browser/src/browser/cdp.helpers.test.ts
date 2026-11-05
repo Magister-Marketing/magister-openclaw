@@ -117,14 +117,14 @@ describe("cdp helpers", () => {
     expect(release).toHaveBeenCalledTimes(1);
   });
 
-  it.each([401, 403])("says an HTTP %i is about credentials, not a site", async (status) => {
+  it.each([401, 403])("says an HTTP %i is about this machine, not a site", async (status) => {
     fetchWithSsrFGuardMock.mockResolvedValueOnce({
       response: { ok: false, status },
       release: vi.fn(async () => {}),
     });
 
     await expect(fetchOk("http://127.0.0.1:9222/json/version")).rejects.toThrow(
-      `HTTP ${status}: the browser endpoint refused this machine's credentials`,
+      `HTTP ${status}: the browser endpoint refused this machine (its credentials or access policy), not the site`,
     );
   });
 

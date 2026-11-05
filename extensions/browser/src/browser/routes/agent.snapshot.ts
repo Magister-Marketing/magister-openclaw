@@ -1,4 +1,5 @@
 import path from "node:path";
+import { SsrFBlockedError } from "../../infra/net/ssrf.js";
 import { ensureMediaDir, saveMediaBuffer } from "../../media/store.js";
 import { resolveBrowserNavigationProxyMode } from "../browser-proxy-mode.js";
 import { captureScreenshot, snapshotAria, snapshotRoleViaCdp } from "../cdp.js";
@@ -17,6 +18,7 @@ import { DEFAULT_BROWSER_SCREENSHOT_TIMEOUT_MS } from "../constants.js";
 import {
   assertBrowserNavigationAllowed,
   assertBrowserNavigationResultAllowed,
+  InvalidBrowserNavigationUrlError,
 } from "../navigation-guard.js";
 import { withBrowserNavigationPolicy } from "../navigation-guard.js";
 import { getBrowserProfileCapabilities } from "../profile-capabilities.js";
@@ -46,6 +48,18 @@ import type { BrowserResponse, BrowserRouteRegistrar } from "./types.js";
 import { asyncBrowserRoute, jsonError, toBoolean, toNumber, toStringOrEmpty } from "./utils.js";
 
 const CHROME_MCP_OVERLAY_ATTR = "data-openclaw-mcp-overlay";
+
+// The navigation guard refused this page and closed it. Reading it some other way
+// would hand over exactly what the guard withheld. BlockedBrowserTargetError is
+// matched by name so this route does not load Playwright's session module eagerly.
+function isNavigationPolicyDenial(err: unknown): boolean {
+  return (
+    err instanceof SsrFBlockedError ||
+    err instanceof InvalidBrowserNavigationUrlError ||
+    (err instanceof Error && err.name === "BlockedBrowserTargetError")
+  );
+}
+
 const CDP_FALLBACK_SNAPSHOT_NOTE =
   "(Read from the accessibility tree because page scripts were unavailable, so these refs cannot be clicked. To click, take a screenshot and use clickCoords.)";
 
@@ -669,6 +683,13 @@ export function registerBrowserAgentSnapshotRoutes(
           // on a brand with a URL allowlist or read-only mode. The accessibility tree
           // needs none, but its refs are not ones Playwright can click.
           const cdpFallbackSnapshot = async (err: unknown) => {
+            if (isNavigationPolicyDenial(err)) {
+              throw err;
+            }
+            const navigationPolicy = browserNavigationPolicyForProfile(ctx, profileCtx);
+            if (navigationPolicy.ssrfPolicy) {
+              await assertBrowserNavigationResultAllowed({ url: tab.url, ...navigationPolicy });
+            }
             const fallback = await cdpRoleSnapshot().catch(() => null);
             if (!fallback) {
               throw err;

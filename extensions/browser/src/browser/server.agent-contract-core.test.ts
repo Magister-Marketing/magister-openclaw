@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_AI_SNAPSHOT_MAX_CHARS } from "./constants.js";
+import { InvalidBrowserNavigationUrlError } from "./navigation-guard.js";
 import {
   installAgentContractHooks,
   postJson,
@@ -396,6 +397,23 @@ describe("browser control server", () => {
       error?: string;
     };
     expect(failed.error).toContain("Timeout 5000ms exceeded");
+
+    // A page the navigation guard refused is never read some other way.
+    const readsBefore = cdpMocks.snapshotRoleViaCdp.mock.calls.length;
+    pwMocks.snapshotAiViaPlaywright.mockRejectedValueOnce(
+      new InvalidBrowserNavigationUrlError("Navigation blocked: private network"),
+    );
+    const denied = (await realFetch(`${base}/snapshot?format=ai`).then((r) => r.json())) as {
+      ok?: boolean;
+      error?: string;
+    };
+    expect(denied.ok).not.toBe(true);
+    expect(denied.error).toContain("Navigation blocked");
+    const quarantined = new Error("Browser target is unavailable after SSRF policy blocked it.");
+    quarantined.name = "BlockedBrowserTargetError";
+    pwMocks.snapshotAiViaPlaywright.mockRejectedValueOnce(quarantined);
+    await realFetch(`${base}/snapshot?format=ai`).then((r) => r.json());
+    expect(cdpMocks.snapshotRoleViaCdp.mock.calls.length).toBe(readsBefore);
   });
 
   it("agent contract: doctor deep runs a live snapshot probe", async () => {

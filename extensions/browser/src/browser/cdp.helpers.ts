@@ -374,7 +374,7 @@ export async function fetchCdpChecked(
         // A fault in this machine's connection, which a bare status would let the
         // agent mistake for a site it is not allowed to visit.
         throw new Error(
-          `HTTP ${res.status}: the browser endpoint refused this machine's credentials`,
+          `HTTP ${res.status}: the browser endpoint refused this machine (its credentials or access policy), not the site`,
         );
       }
       throw new Error(`HTTP ${res.status}`);
