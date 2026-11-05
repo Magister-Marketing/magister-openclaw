@@ -46,6 +46,8 @@ import type { BrowserResponse, BrowserRouteRegistrar } from "./types.js";
 import { asyncBrowserRoute, jsonError, toBoolean, toNumber, toStringOrEmpty } from "./utils.js";
 
 const CHROME_MCP_OVERLAY_ATTR = "data-openclaw-mcp-overlay";
+const CDP_FALLBACK_SNAPSHOT_NOTE =
+  "(Read from the accessibility tree because page scripts were unavailable, so these refs cannot be clicked. To click, take a screenshot and use clickCoords.)";
 
 function browserNavigationPolicyForProfile(ctx: BrowserRouteContext, profileCtx: ProfileContext) {
   return withBrowserNavigationPolicy(ctx.state().resolved.ssrfPolicy, {
@@ -653,6 +655,7 @@ export function registerBrowserAgentSnapshotRoutes(
             }
             return await snapshotRoleViaCdp({
               wsUrl: tab.wsUrl,
+              targetId: tab.targetId,
               urls: plan.urls,
               options: {
                 interactive: plan.interactive ?? undefined,
@@ -662,27 +665,42 @@ export function registerBrowserAgentSnapshotRoutes(
             });
           };
 
+          // Playwright reads a page by running scripts in it, which a relay refuses
+          // on a brand with a URL allowlist or read-only mode. The accessibility tree
+          // needs none, but its refs are not ones Playwright can click.
+          const cdpFallbackSnapshot = async (err: unknown) => {
+            const fallback = await cdpRoleSnapshot().catch(() => null);
+            if (!fallback) {
+              throw err;
+            }
+            const snapshot = `${CDP_FALLBACK_SNAPSHOT_NOTE}\n${fallback.snapshot}`;
+            const limit = plan.resolvedMaxChars;
+            return limit && snapshot.length > limit
+              ? {
+                  ...fallback,
+                  snapshot: `${snapshot.slice(0, limit)}\n\n[...TRUNCATED - page too large]`,
+                  truncated: true,
+                }
+              : { ...fallback, snapshot };
+          };
+
           const pw = await getPwAiModule();
           const snap = plan.wantsRoleSnapshot
             ? pw
-              ? await pw.snapshotRoleViaPlaywright(roleSnapshotArgs).catch(async (err) => {
-                  const fallback = await cdpRoleSnapshot();
-                  if (fallback) {
-                    return fallback;
-                  }
-                  throw err;
-                })
+              ? await pw.snapshotRoleViaPlaywright(roleSnapshotArgs).catch(cdpFallbackSnapshot)
               : await cdpRoleSnapshot()
             : pw
-              ? await pw.snapshotAiViaPlaywright({
-                  cdpUrl: profileCtx.profile.cdpUrl,
-                  targetId: tab.targetId,
-                  ssrfPolicy: ctx.state().resolved.ssrfPolicy,
-                  urls: plan.urls,
-                  ...(typeof plan.resolvedMaxChars === "number"
-                    ? { maxChars: plan.resolvedMaxChars }
-                    : {}),
-                })
+              ? await pw
+                  .snapshotAiViaPlaywright({
+                    cdpUrl: profileCtx.profile.cdpUrl,
+                    targetId: tab.targetId,
+                    ssrfPolicy: ctx.state().resolved.ssrfPolicy,
+                    urls: plan.urls,
+                    ...(typeof plan.resolvedMaxChars === "number"
+                      ? { maxChars: plan.resolvedMaxChars }
+                      : {}),
+                  })
+                  .catch(cdpFallbackSnapshot)
               : await cdpRoleSnapshot();
           if (!snap) {
             await requirePwAi(res, "ai snapshot");
@@ -753,7 +771,7 @@ export function registerBrowserAgentSnapshotRoutes(
                 });
               });
             })()
-          : snapshotAria({ wsUrl: tab.wsUrl ?? "", limit: plan.limit });
+          : snapshotAria({ wsUrl: tab.wsUrl ?? "", targetId: tab.targetId, limit: plan.limit });
 
         const resolved = await Promise.resolve(snap);
         if (!resolved) {
