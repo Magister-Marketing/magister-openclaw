@@ -32,7 +32,9 @@ export async function atomicWrite(
   directoryMode = 0o700,
 ): Promise<void> {
   await fs.mkdir(path.dirname(file), { recursive: true, mode: directoryMode });
-  const temporary = `${file}.${randomUUID()}.tmp`;
+  // Beside the file, under a short name: a suffix on a long file name (the Library
+  // allows 255 bytes) would pass the filesystem's limit, and the write could never land.
+  const temporary = path.join(path.dirname(file), `.${randomUUID()}.tmp`);
   const handle = await fs.open(temporary, "wx", mode);
   try {
     await handle.writeFile(value);
@@ -90,8 +92,14 @@ export function libraryRelative(workspace: string, input: string): string | unde
   return relative;
 }
 
-/** All managed I/O rejects symlinked parents and non-regular leaves. */
-export async function safeLibraryPath(workspace: string, relative: string): Promise<string> {
+/** All managed I/O rejects symlinked parents and non-regular leaves. `installing`
+ * also lets a regular file stand where the path needs a folder: an install moves it
+ * aside (LibraryStore.makeWay), and nothing below it can exist to check. */
+export async function safeLibraryPath(
+  workspace: string,
+  relative: string,
+  { installing = false }: { installing?: boolean } = {},
+): Promise<string> {
   if (libraryRelative(workspace, relative) !== relative) throw new Error("invalid_path");
   let current = workspace;
   const pieces = relative.split("/");
@@ -105,10 +113,13 @@ export async function safeLibraryPath(workspace: string, relative: string): Prom
     if (
       stat.isSymbolicLink() ||
       (!stat.isFile() && !stat.isDirectory()) ||
-      (index < pieces.length - 1 && !stat.isDirectory()) ||
       (stat.isFile() && stat.nlink !== 1)
     )
       throw new Error("invalid_path: symlink, hard link or unsupported filesystem entry");
+    if (index < pieces.length - 1 && !stat.isDirectory()) {
+      if (installing) return path.join(workspace, relative);
+      throw new Error("invalid_path: symlink, hard link or unsupported filesystem entry");
+    }
   }
   return current;
 }
@@ -120,6 +131,11 @@ type ManifestPage = {
   next_cursor?: string | null;
   complete: boolean;
 };
+
+/** What removing a Library entry may find instead of what the Library put there: a
+ * local-only entry the migration left on the volume (`tmp/`, `node_modules/`,
+ * `.DS_Store`) keeps its folder, or something else now holds the path. It stays. */
+const leftInPlace = new Set(["ENOENT", "ENOTEMPTY", "ENOTDIR", "EISDIR", "ERR_FS_EISDIR"]);
 
 const invalidSequence = (error: unknown) =>
   error instanceof LibraryHttpError &&
@@ -257,7 +273,7 @@ export class LibraryStore {
       for (const file of page.files) {
         if (file.project_id !== projectId || !file.file_id || !file.revision_id)
           throw new Error("Invalid Library manifest identity");
-        await safeLibraryPath(this.workspace, file.path);
+        await safeLibraryPath(this.workspace, file.path, { installing: true });
         if (file.path.startsWith(".magister/") || file.path.startsWith(".openclaw/"))
           throw new Error("Reserved Library materialization path");
         files[file.file_id] = file;
@@ -304,6 +320,36 @@ export class LibraryStore {
       clearTimeout(timer);
     }
   }
+  /** Takes a Library entry off the volume. A path that no longer leads where the
+   * Library put it holds nothing of ours, and is not followed. */
+  private async removeLocal(relative: string, directory: boolean): Promise<void> {
+    const target = await safeLibraryPath(this.workspace, relative).catch(() => undefined);
+    if (!target) return;
+    await (directory ? fs.rmdir(target) : fs.rm(target, { force: true })).catch((error) => {
+      if (!leftInPlace.has((error as NodeJS.ErrnoException).code ?? "")) throw error;
+    });
+  }
+  /** A local-only entry holds this path in the wrong shape: a folder where the Library
+   * now has a file, or a file where it needs a folder. The Library's path wins, and
+   * the entry is moved aside whole, so its bytes survive and the install can finish. */
+  private async makeWay(file: LibraryFile): Promise<void> {
+    const pieces = file.path.split("/");
+    let current = this.workspace;
+    for (const [index, piece] of pieces.entries()) {
+      current = path.join(current, piece);
+      const stat = await fs.lstat(current).catch((error) => {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+        throw error;
+      });
+      if (!stat || stat.isSymbolicLink()) return; // Absent, or safeLibraryPath's to refuse.
+      const needsFolder = index < pieces.length - 1 || file.entry_type === "directory";
+      if (stat.isDirectory() === needsFolder) continue;
+      const aside = path.join(this.directory, "displaced", randomUUID());
+      await fs.mkdir(aside, { recursive: true, mode: 0o700 });
+      await fs.rename(current, path.join(aside, piece));
+      return;
+    }
+  }
   private async install({ previous, next }: InstallJournal): Promise<void> {
     const current = await this.cache();
     // Sequences restart with each epoch, so only compare them within one.
@@ -318,14 +364,7 @@ export class LibraryStore {
     const removed = Object.values(previous.files)
       .filter((file) => file.lifecycle === "active" && retained.get(file.path) !== file.entry_type)
       .sort((left, right) => right.path.length - left.path.length);
-    for (const file of removed) {
-      const target = await safeLibraryPath(this.workspace, file.path);
-      if (file.entry_type === "directory") {
-        await fs.rmdir(target).catch((error) => {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        });
-      } else await fs.rm(target, { force: true });
-    }
+    for (const file of removed) await this.removeLocal(file.path, file.entry_type === "directory");
     const desiredDirectories = new Set<string>();
     for (const file of active) {
       if (file.entry_type === "directory") desiredDirectories.add(file.path);
@@ -337,11 +376,7 @@ export class LibraryStore {
       for (let parent = path.dirname(file.path); parent !== "."; parent = path.dirname(parent))
         oldParents.add(parent);
     for (const parent of [...oldParents].sort((a, b) => b.length - a.length)) {
-      if (desiredDirectories.has(parent)) continue;
-      await fs.rmdir(await safeLibraryPath(this.workspace, parent)).catch((error) => {
-        if (!["ENOENT", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? ""))
-          throw error;
-      });
+      if (!desiredDirectories.has(parent)) await this.removeLocal(parent, true);
     }
     for (const file of active.sort((left, right) => left.path.length - right.path.length)) {
       const old = previous.files[file.file_id];
@@ -353,6 +388,7 @@ export class LibraryStore {
         old.lifecycle === "active"
       )
         continue;
+      await this.makeWay(file);
       const target = await safeLibraryPath(this.workspace, file.path);
       if (file.entry_type === "directory") {
         await fs.mkdir(target, { recursive: true, mode: 0o755 });
