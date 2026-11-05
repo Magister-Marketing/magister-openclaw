@@ -294,4 +294,53 @@ describe("web_fetch provider fallback normalization", () => {
     expect(secondDetails.text).toContain("perplexity-fetch fallback body");
     expect(secondDetails.cached).toBeUndefined();
   });
+
+  it("refuses a provider fallback that landed on a Webflow site, and does not cache it", async () => {
+    global.fetch = withFetchPreconnect(
+      vi.fn(async () => {
+        throw new Error("network failed");
+      }),
+    );
+    resolveWebFetchDefinitionMock.mockReturnValue({
+      provider: { id: "firecrawl" },
+      definition: {
+        description: "firecrawl",
+        parameters: {},
+        execute: async () => ({
+          url: "https://redirects.example/",
+          finalUrl: "https://site.webflow.io/",
+          status: 200,
+          contentType: "text/plain",
+          extractor: "custom-provider",
+          text: "the site's page",
+        }),
+      },
+    });
+    const tool = createWebFetchTool({
+      config: { tools: { web: { fetch: { cacheTtlMinutes: 5 } } } } as OpenClawConfig,
+      sandboxed: false,
+    });
+    await expect(tool?.execute?.("call", { url: "https://redirects.example/" })).rejects.toThrow(
+      /Webflow/,
+    );
+    await expect(tool?.execute?.("call", { url: "https://redirects.example/" })).rejects.toThrow(
+      /Webflow/,
+    );
+  });
+
+  it("refuses a Webflow site without trying the page or the provider", async () => {
+    const fetcher = vi.fn();
+    global.fetch = withFetchPreconnect(fetcher);
+    const execute = vi.fn();
+    resolveWebFetchDefinitionMock.mockReturnValue({
+      provider: { id: "firecrawl" },
+      definition: { description: "firecrawl", parameters: {}, execute },
+    });
+    const tool = createWebFetchTool({ config: {} as OpenClawConfig, sandboxed: false });
+    await expect(tool?.execute?.("call", { url: "https://site.webflow.io/" })).rejects.toThrow(
+      /Webflow/,
+    );
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
 });

@@ -57,6 +57,31 @@ const sourcePaths = new Set([
 // Every folder a Gateway publication creates outside resources/ (library_publication.py;
 // gateway/tests/test_library_publication_roots.py fails if the two lists drift).
 const publishedRoots = ["audits", "data", "plans"];
+// What stays on this volume on an active brand, as a legacy brand keeps it: the
+// platform's files, context other writers keep current, and runtime folders. Mirrors
+// what gateway/app/services/library_machine_scan.py leaves out of the migration
+// (gateway/tests/test_library_publication_roots.py fails if they drift). Any other
+// file an agent writes is a Library file: saved at the path it named and listed in
+// the Library, so a deliverable is never a local file no surface can see.
+const machineLocalRoots = new Set([
+  "AGENTS.md",
+  "SOUL.md",
+  "TOOLS.md",
+  "IDENTITY.md",
+  "BOOTSTRAP.md",
+  "HEARTBEAT.md",
+  "USER.md",
+  "PROJECT.md",
+  "product-marketing-context.md",
+  "memory",
+  "memory.archive",
+  "skills",
+  "hooks",
+]);
+const machineLocalFolders = new Set(["node_modules", "__pycache__", "venv", "tmp", "temp"]);
+// The native tools read these as plain spaces before they resolve a path.
+const withPlainSpaces = (input: string) =>
+  input.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ");
 const jsonResult = (value: unknown) => ({
   content: [{ type: "text" as const, text: JSON.stringify(value) }],
   details: value,
@@ -91,6 +116,20 @@ export async function libraryActivated(workspace: string): Promise<boolean> {
   return !!(await readJson(path.join(workspace, marker)));
 }
 
+/** Where a link takes a tool's path, as given and as the tool reads it; empty when none does. */
+const linkedPaths = async (workspace: string, input: string) => {
+  const realWorkspace = await fs.realpath(workspace);
+  const landing = await Promise.all(
+    [input, withPlainSpaces(input)].map(async (spelling) => {
+      const resolved = libraryRelative(
+        realWorkspace,
+        await resolveLibraryToolTarget(path.resolve(workspace, expandLibraryToolPath(spelling))),
+      );
+      return resolved === libraryRelative(workspace, spelling) ? undefined : resolved;
+    }),
+  );
+  return landing.filter((entry) => entry !== undefined);
+};
 export class LibraryRuntime {
   readonly store: LibraryStore;
   private acknowledged: string | undefined;
@@ -497,6 +536,16 @@ export class LibraryRuntime {
         ))
     );
   }
+  /** Whether a write to this path goes to the Library rather than the volume. */
+  private libraryWritePath(relative: string | undefined, cache: LibraryCache): boolean {
+    if (this.managedPath(relative, cache)) return true;
+    if (!relative) return false;
+    const pieces = relative.split("/");
+    return (
+      !machineLocalRoots.has(pieces[0]) &&
+      !pieces.some((piece) => piece.startsWith(".") || machineLocalFolders.has(piece))
+    );
+  }
   private async base(
     relative: string,
     session: string,
@@ -640,7 +689,7 @@ export class LibraryRuntime {
   ): Promise<LibraryChange[]> {
     const relative = (input: string) => {
       const value = libraryRelative(this.workspace, input);
-      if (!value || !this.managedPath(value, cache))
+      if (!value || !this.libraryWritePath(value, cache))
         throw new Error("invalid_path: mixed Library and local patch targets");
       return value;
     };
@@ -809,6 +858,9 @@ export class LibraryRuntime {
           }
         }
         const targets = patch?.paths ?? (typeof rawPath === "string" ? [rawPath] : []);
+        const mutating = ["write", "edit", "apply_patch"].includes(tool.name);
+        const libraryPath = (entry: string | undefined, cache: LibraryCache) =>
+          mutating ? runtime.libraryWritePath(entry, cache) : runtime.managedPath(entry, cache);
         const admitted = await runtime.admitted();
         if (!admitted)
           return runtime.legacyTool(tool, context, [toolCallId, args, signal, onUpdate], targets);
@@ -823,7 +875,6 @@ export class LibraryRuntime {
             sequence: admitted.state.sequence,
             files: { ...admitted.cache?.files },
           };
-          const mutating = ["write", "edit", "apply_patch"].includes(tool.name);
           try {
             for (const file of Object.values(await runtime.recoveryPaths(admitted.state)))
               cache.files[`listed:${file.file_id}`] = file;
@@ -831,30 +882,27 @@ export class LibraryRuntime {
             // Without the list no write can be proven safe; reads still use the cache.
             if (mutating) throw recoveryError();
           }
-          for (const input of targets)
-            if (runtime.managedPath(libraryRelative(runtime.workspace, input), cache))
+          // Checked where it lands too: a link under a local folder can reach a Library path.
+          for (const input of targets) {
+            const linked = await linkedPaths(runtime.workspace, input);
+            if (
+              libraryPath(libraryRelative(runtime.workspace, input), cache) ||
+              libraryPath(libraryRelative(runtime.workspace, withPlainSpaces(input)), cache) ||
+              linked.some((entry) => libraryPath(entry, cache))
+            )
               throw recoveryError();
+          }
           return tool.execute(toolCallId, args, signal, onUpdate);
         }
         const session = context.sessionId || context.sessionKey;
         if (!session) throw new Error("precondition_required: Library session identity is missing");
-        const realWorkspace = await fs.realpath(runtime.workspace);
         for (const input of patch?.paths ?? (typeof rawPath === "string" ? [rawPath] : [])) {
           const relative = libraryRelative(runtime.workspace, input);
-          const resolved = libraryRelative(
-            realWorkspace,
-            await resolveLibraryToolTarget(
-              path.resolve(runtime.workspace, expandLibraryToolPath(input)),
-            ),
-          );
-          const normalized = libraryRelative(
-            runtime.workspace,
-            input.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " "),
-          );
+          const linked = await linkedPaths(runtime.workspace, input);
+          const normalized = libraryRelative(runtime.workspace, withPlainSpaces(input));
           if (
-            (resolved !== relative && runtime.managedPath(resolved, admitted.cache)) ||
-            (!runtime.managedPath(relative, admitted.cache) &&
-              runtime.managedPath(normalized, admitted.cache))
+            linked.some((entry) => libraryPath(entry, admitted.cache)) ||
+            (!libraryPath(relative, admitted.cache) && libraryPath(normalized, admitted.cache))
           )
             throw new Error("invalid_path: aliases cannot bypass Library file authority");
         }
@@ -862,15 +910,15 @@ export class LibraryRuntime {
           typeof rawPath === "string" ? libraryRelative(runtime.workspace, rawPath) : undefined;
         const patchPaths = patch?.paths.map((entry) => libraryRelative(runtime.workspace, entry));
         const managed = patchPaths
-          ? patchPaths.some((entry) => runtime.managedPath(entry, admitted.cache))
-          : runtime.managedPath(relative, admitted.cache);
+          ? patchPaths.some((entry) => libraryPath(entry, admitted.cache))
+          : libraryPath(relative, admitted.cache);
         if (
           patchPaths &&
           managed &&
-          !patchPaths.every((entry) => runtime.managedPath(entry, admitted.cache))
+          !patchPaths.every((entry) => libraryPath(entry, admitted.cache))
         )
           throw new Error("invalid_path: an atomic patch cannot mix Library and local paths");
-        if (["write", "edit", "apply_patch"].includes(tool.name)) {
+        if (mutating) {
           if (!managed) return tool.execute(toolCallId, args, signal, onUpdate);
           return runtime.lock("exclusive", async () => {
             await runtime.store.recover();

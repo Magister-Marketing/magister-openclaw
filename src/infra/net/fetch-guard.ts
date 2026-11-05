@@ -4,6 +4,7 @@ import { captureHttpExchange } from "../../proxy-capture/runtime.js";
 import { buildTimeoutAbortSignal } from "../../utils/fetch-timeout.js";
 import { hasProxyEnvConfigured, shouldUseEnvHttpProxyForUrl } from "./proxy-env.js";
 import { retainSafeHeadersForCrossOriginRedirect as retainSafeRedirectHeaders } from "./redirect-headers.js";
+import { isRefusedHost, REFUSED_HOST_MESSAGE } from "./refused-hosts.js";
 import {
   fetchWithRuntimeDispatcher,
   isMockedFetch,
@@ -348,6 +349,11 @@ export async function fetchWithSsrFGuard(params: GuardedFetchOptions): Promise<G
     if (!["http:", "https:"].includes(parsedUrl.protocol)) {
       await release();
       throw new Error("Invalid URL: must be http or https");
+    }
+    // Checked on every hop: a redirect must not reach a site the first URL could not.
+    if (isRefusedHost(parsedUrl.hostname)) {
+      await release();
+      throw new SsrFBlockedError(REFUSED_HOST_MESSAGE);
     }
     if (params.requireHttps === true && parsedUrl.protocol !== "https:") {
       await release();
