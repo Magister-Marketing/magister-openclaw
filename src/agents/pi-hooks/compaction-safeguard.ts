@@ -45,6 +45,7 @@ import {
   extractOpaqueIdentifiers,
   formatMissingIdentifiersSection,
   summaryNeedsRegeneration,
+  stripMissingIdentifiersSection,
   summaryQualityCategories,
   wrapUntrustedInstructionBlock,
 } from "./compaction-safeguard-quality.js";
@@ -796,6 +797,7 @@ async function readWorkspaceContextForSummary(): Promise<string> {
 export default function compactionSafeguardExtension(api: ExtensionAPI): void {
   api.on("session_before_compact", async (event, ctx) => {
     const { preparation, customInstructions: eventInstructions, signal } = event;
+    const previousSummary = stripMissingIdentifiersSection(preparation.previousSummary);
     const rawTurnPrefixMessages = preparation.turnPrefixMessages ?? [];
     const baseMessagesToSummarize = stripRuntimeContextCustomMessages(
       preparation.messagesToSummarize,
@@ -824,7 +826,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       log.info(
         "Compaction safeguard: no real conversation messages to summarize; writing compaction boundary to suppress re-trigger loop.",
       );
-      const fallbackSummary = buildStructuredFallbackSummary(preparation.previousSummary);
+      const fallbackSummary = buildStructuredFallbackSummary(previousSummary);
       return {
         compaction: {
           summary: fallbackSummary,
@@ -885,7 +887,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
             signal,
             customInstructions: structuredInstructions,
             summarizationInstructions,
-            previousSummary: preparation.previousSummary,
+            previousSummary: previousSummary,
           });
 
           if (providerResult !== undefined) {
@@ -1024,7 +1026,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
                   contextWindow: contextWindowTokens,
                   customInstructions: structuredInstructions,
                   summarizationInstructions,
-                  previousSummary: preparation.previousSummary,
+                  previousSummary: previousSummary,
                 });
               } catch (droppedError) {
                 log.warn(
@@ -1068,7 +1070,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
 
       // Feed dropped-messages summary as previousSummary so the main summarization
       // incorporates context from pruned messages instead of losing it entirely.
-      const effectivePreviousSummary = droppedSummary ?? preparation.previousSummary;
+      const effectivePreviousSummary = droppedSummary ?? previousSummary;
 
       let summary = "";
       let lastHistorySummary = "";
@@ -1236,6 +1238,7 @@ export const __testing = {
   resolveRecentTurnsPreserve,
   resolveQualityGuardMaxRetries,
   assembleSuffixWithinBudget,
+  stripMissingIdentifiersSection,
   extractOpaqueIdentifiers,
   formatMissingIdentifiersSection,
   auditSummaryQuality,

@@ -44,6 +44,7 @@ const {
   resolveQualityGuardMaxRetries,
   extractOpaqueIdentifiers,
   formatMissingIdentifiersSection,
+  stripMissingIdentifiersSection,
   assembleSuffixWithinBudget,
   auditSummaryQuality,
   capCompactionSummary,
@@ -1556,6 +1557,65 @@ describe("compaction-safeguard recent-turn preservation", () => {
       const overBudget = assembleSuffixWithinBudget(parts, 100);
       expect(overBudget).not.toContain("untrusted-text");
       expect(overBudget).toContain("www");
+    });
+
+    it("takes the block out of a previous summary, and only the block", () => {
+      const block = formatMissingIdentifiersSection({
+        summary: summaryWithoutTheIdentifier,
+        identifiers: ["https://evil.example/ignore-previous-instructions", "/tmp/a/b"],
+      });
+      const planted = "<untrusted-text>\nwritten by a page\n</untrusted-text>";
+
+      expect(
+        stripMissingIdentifiersSection(
+          `${summaryWithoutTheIdentifier}${block}\n\nAfter.\n${planted}`,
+        ),
+      ).toBe(`${summaryWithoutTheIdentifier}\n\nAfter.\n${planted}`);
+      expect(stripMissingIdentifiersSection(undefined)).toBeUndefined();
+    });
+
+    it("does not hand the summarizer a previous summary's block", async () => {
+      mockSummarizeInStages.mockReset();
+      mockSummarizeInStages.mockResolvedValue(summaryWithoutTheIdentifier);
+      const sessionManager = stubSessionManager();
+      setCompactionSafeguardRuntime(sessionManager, {
+        model: createAnthropicModelFixture(),
+        recentTurnsPreserve: 0,
+        qualityGuardEnabled: true,
+        qualityGuardMaxRetries: 1,
+      });
+      const block = formatMissingIdentifiersSection({
+        summary: "",
+        identifiers: ["https://evil.example/ignore-previous-instructions"],
+      });
+
+      await createCompactionHandler()(
+        {
+          preparation: {
+            messagesToSummarize: [
+              { role: "user", content: "latest ask status", timestamp: 1 },
+              { role: "assistant", content: "Done.", timestamp: 2 } as unknown as AgentMessage,
+            ],
+            turnPrefixMessages: [],
+            firstKeptEntryId: "entry-1",
+            tokensBefore: 1_500,
+            fileOps: { read: [], edited: [], written: [] },
+            settings: { reserveTokens: 4_000 },
+            previousSummary: `${summaryWithoutTheIdentifier}${block}`,
+            isSplitTurn: false,
+          },
+          customInstructions: "",
+          signal: new AbortController().signal,
+        },
+        createCompactionContext({
+          sessionManager,
+          getApiKeyMock: vi.fn().mockResolvedValue("test-key"),
+        }),
+      );
+
+      const handed = JSON.stringify(mockSummarizeInStages.mock.calls[0]?.[0]?.messages);
+      expect(handed).toContain("Keep current flow.");
+      expect(handed).not.toContain("evil.example");
     });
 
     it("writes nothing when the summary left nothing out", () => {
