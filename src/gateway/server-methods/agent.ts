@@ -43,7 +43,11 @@ import {
   updateSessionStore,
 } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { hasHeardOfAgentRun, registerAgentRunContext } from "../../infra/agent-events.js";
+import {
+  hasHeardOfAgentRun,
+  registerAgentRunContext,
+  rememberAgentRun,
+} from "../../infra/agent-events.js";
 import { formatUncaughtError } from "../../infra/errors.js";
 import {
   resolveAgentDeliveryPlan,
@@ -1767,6 +1771,9 @@ export const agentHandlers: GatewayRequestHandlers = {
     }
 
     const runId = idem;
+    // A request naming only a session id registers no context above, and a run queued
+    // past agent.wait's poll has emitted nothing yet. It must not read as unknown.
+    rememberAgentRun(runId);
     const connId = typeof client?.connId === "string" ? client.connId : undefined;
     const wantsToolEvents = hasGatewayClientCap(
       client?.connect?.caps,

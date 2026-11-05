@@ -21,6 +21,7 @@ import type { GatewayRequestContext } from "./types.js";
 const ORIGINAL_STATE_DIR = process.env.OPENCLAW_STATE_DIR;
 
 const mocks = vi.hoisted(() => ({
+  rememberAgentRun: vi.fn(),
   loadSessionEntry: vi.fn(),
   loadGatewaySessionRow: vi.fn(),
   updateSessionStore: vi.fn(),
@@ -105,6 +106,7 @@ vi.mock("../../auto-reply/reply/session-reset-prompt.js", async () => {
 });
 
 vi.mock("../../infra/agent-events.js", () => ({
+  rememberAgentRun: mocks.rememberAgentRun,
   emitAgentEvent: mocks.emitAgentEvent,
   hasHeardOfAgentRun: vi.fn(() => true),
   registerAgentRunContext: mocks.registerAgentRunContext,
@@ -414,6 +416,20 @@ describe("gateway agent handler", () => {
     mocks.resolveBareResetBootstrapFileAccess.mockReset().mockReturnValue(true);
     mocks.listAgentIds.mockReset().mockReturnValue(["main"]);
     mocks.resolveSendPolicy.mockReset().mockReturnValue("allow");
+  });
+
+  it("remembers a run accepted by session id alone, so agent.wait does not call it unknown", async () => {
+    mocks.rememberAgentRun.mockClear();
+    const respond = await invokeAgent(
+      {
+        message: "hi",
+        sessionId: "session-without-a-key",
+        idempotencyKey: "run-by-session-id",
+      } as AgentParams,
+      { reqId: "session-id-only" },
+    );
+    expect(respond.mock.calls[0]?.[0]).toBe(true);
+    expect(mocks.rememberAgentRun).toHaveBeenCalledWith("run-by-session-id");
   });
 
   it("continues a resolved permission in-place and dedupes its receiver", async () => {
