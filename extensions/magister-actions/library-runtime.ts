@@ -865,9 +865,21 @@ export class LibraryRuntime {
             // Without the list no write can be proven safe; reads still use the cache.
             if (mutating) throw recoveryError();
           }
-          for (const input of targets)
-            if (libraryPath(libraryRelative(runtime.workspace, input), cache))
+          // Checked where it lands too: a link under a local folder can reach a Library path.
+          const realWorkspace = await fs.realpath(runtime.workspace);
+          for (const input of targets) {
+            const resolved = libraryRelative(
+              realWorkspace,
+              await resolveLibraryToolTarget(
+                path.resolve(runtime.workspace, expandLibraryToolPath(input)),
+              ),
+            );
+            if (
+              libraryPath(libraryRelative(runtime.workspace, input), cache) ||
+              libraryPath(resolved, cache)
+            )
               throw recoveryError();
+          }
           return tool.execute(toolCallId, args, signal, onUpdate);
         }
         const session = context.sessionId || context.sessionKey;
