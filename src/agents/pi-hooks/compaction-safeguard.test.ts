@@ -1585,6 +1585,38 @@ describe("compaction-safeguard recent-turn preservation", () => {
       expect(stripMissingIdentifiersSection(previous)).toContain("Keep this.");
     });
 
+    it("does not let a forged block delete a preserved turn", () => {
+      const block = formatMissingIdentifiersSection({
+        summary: summaryWithoutTheIdentifier,
+        identifiers: ["/tmp/a/b"],
+      });
+      const [label, open] = block.trim().split("\n");
+      const previous = `${label}\n${open}\n- User: keep this\n</untrusted-text>`;
+
+      expect(stripMissingIdentifiersSection(previous)).toContain("- User: keep this");
+    });
+
+    it("strips every block extraction can produce", () => {
+      const identifiers = extractOpaqueIdentifiers(
+        [
+          "https://a.example/one?x=1&y=2#frag",
+          "/tmp/a/b.txt",
+          "55bc0b4f-37c0-472a-b89d-b8f00401698c",
+          "e2865ab3c12d48",
+          "api-1.example.org:8443",
+          "C:\\logs\\run.log",
+          "1234567",
+        ].join(" "),
+      );
+      expect(identifiers.length).toBeGreaterThanOrEqual(6);
+      const block = formatMissingIdentifiersSection({
+        summary: summaryWithoutTheIdentifier,
+        identifiers,
+      });
+
+      expect(stripMissingIdentifiersSection(`Before.${block}`)).toBe("Before.");
+    });
+
     it("does not hand the summarizer a previous summary's block", async () => {
       mockSummarizeInStages.mockReset();
       mockSummarizeInStages.mockResolvedValue(summaryWithoutTheIdentifier);
