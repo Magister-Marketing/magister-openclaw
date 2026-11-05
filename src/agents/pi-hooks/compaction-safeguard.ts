@@ -43,6 +43,10 @@ import {
   buildCompactionStructureInstructions,
   buildStructuredFallbackSummary,
   extractOpaqueIdentifiers,
+  formatMissingIdentifiersSection,
+  summaryNeedsRegeneration,
+  stripMissingIdentifiersSection,
+  summaryQualityCategories,
   wrapUntrustedInstructionBlock,
 } from "./compaction-safeguard-quality.js";
 import {
@@ -63,6 +67,7 @@ const MAX_COMPACTION_SUMMARY_CHARS = 16_000;
 const MAX_FILE_OPS_SECTION_CHARS = 2_000;
 const MAX_FILE_OPS_LIST_CHARS = 900;
 const SUMMARY_TRUNCATED_MARKER = "\n\n[Compaction summary truncated to fit budget]";
+const MAX_CAP_PASSES = 12;
 const DEFAULT_RECENT_TURNS_PRESERVE = 3;
 const DEFAULT_QUALITY_GUARD_MAX_RETRIES = 1;
 const MAX_RECENT_TURNS_PRESERVE = 12;
@@ -178,6 +183,7 @@ async function summarizeViaLLM(params: {
  */
 function assembleSuffix(parts: {
   splitTurnSection?: string;
+  missingIdentifiersSection?: string;
   preservedTurnsSection?: string;
   toolFailureSection?: string;
   fileOpsSummary?: string;
@@ -185,6 +191,7 @@ function assembleSuffix(parts: {
 }): string {
   let suffix = "";
   suffix = appendSummarySection(suffix, parts.splitTurnSection ?? "");
+  suffix = appendSummarySection(suffix, parts.missingIdentifiersSection ?? "");
   suffix = appendSummarySection(suffix, parts.preservedTurnsSection ?? "");
   suffix = appendSummarySection(suffix, parts.toolFailureSection ?? "");
   suffix = appendSummarySection(suffix, parts.fileOpsSummary ?? "");
@@ -195,6 +202,20 @@ function assembleSuffix(parts: {
     suffix = `\n\n${suffix}`;
   }
   return suffix;
+}
+
+/**
+ * An over-budget suffix is cut from its head, and half of the identifiers block
+ * would lose the label that marks it as data. They go whole, or not at all.
+ */
+function assembleSuffixWithinBudget(
+  parts: Parameters<typeof assembleSuffix>[0],
+  maxChars = MAX_COMPACTION_SUMMARY_CHARS,
+): string {
+  const suffix = assembleSuffix(parts);
+  return suffix.length < maxChars
+    ? suffix
+    : assembleSuffix({ ...parts, missingIdentifiersSection: "" });
 }
 
 type ToolFailure = {
@@ -494,6 +515,28 @@ function capCompactionSummaryPreservingSuffix(
   return `${cappedBody}${suffix}`;
 }
 
+/**
+ * Caps a body beside a suffix built from what the body kept. The cut can take an
+ * identifier the body held, and listing it takes more room from the body, so this
+ * repeats until the two agree. Bounded because a block over budget is dropped whole,
+ * which can give the room back.
+ */
+function capBodyBesideSuffix(
+  body: string,
+  suffixFor: (keptBody: string) => string,
+  maxChars = MAX_COMPACTION_SUMMARY_CHARS,
+): string {
+  let suffix = suffixFor(body);
+  for (let pass = 0; pass < MAX_CAP_PASSES; pass += 1) {
+    const next = suffixFor(capCompactionSummary(body, maxChars - suffix.length));
+    if (next === suffix) {
+      break;
+    }
+    suffix = next;
+  }
+  return capCompactionSummaryPreservingSuffix(body, suffix, maxChars);
+}
+
 function extractMessageText(message: AgentMessage): string {
   const content = (message as { content?: unknown }).content;
   if (typeof content === "string") {
@@ -777,6 +820,7 @@ async function readWorkspaceContextForSummary(): Promise<string> {
 export default function compactionSafeguardExtension(api: ExtensionAPI): void {
   api.on("session_before_compact", async (event, ctx) => {
     const { preparation, customInstructions: eventInstructions, signal } = event;
+    const previousSummary = stripMissingIdentifiersSection(preparation.previousSummary);
     const rawTurnPrefixMessages = preparation.turnPrefixMessages ?? [];
     const baseMessagesToSummarize = stripRuntimeContextCustomMessages(
       preparation.messagesToSummarize,
@@ -805,7 +849,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       log.info(
         "Compaction safeguard: no real conversation messages to summarize; writing compaction boundary to suppress re-trigger loop.",
       );
-      const fallbackSummary = buildStructuredFallbackSummary(preparation.previousSummary);
+      const fallbackSummary = buildStructuredFallbackSummary(previousSummary);
       return {
         compaction: {
           summary: fallbackSummary,
@@ -866,7 +910,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
             signal,
             customInstructions: structuredInstructions,
             summarizationInstructions,
-            previousSummary: preparation.previousSummary,
+            previousSummary: previousSummary,
           });
 
           if (providerResult !== undefined) {
@@ -1005,7 +1049,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
                   contextWindow: contextWindowTokens,
                   customInstructions: structuredInstructions,
                   summarizationInstructions,
-                  previousSummary: preparation.previousSummary,
+                  previousSummary: previousSummary,
                 });
               } catch (droppedError) {
                 log.warn(
@@ -1049,7 +1093,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
 
       // Feed dropped-messages summary as previousSummary so the main summarization
       // incorporates context from pruned messages instead of losing it entirely.
-      const effectivePreviousSummary = droppedSummary ?? preparation.previousSummary;
+      const effectivePreviousSummary = droppedSummary ?? previousSummary;
 
       let summary = "";
       let lastHistorySummary = "";
@@ -1137,7 +1181,11 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
           identifierPolicy,
         });
         summary = summaryWithPreservedTurns;
-        if (quality.ok || attempt >= totalAttempts - 1) {
+        log.info(
+          `Compaction safeguard: quality audit attempt ${attempt + 1}: ` +
+            (quality.ok ? "ok" : summaryQualityCategories(quality.reasons).join(", ")),
+        );
+        if (!summaryNeedsRegeneration(quality.reasons) || attempt >= totalAttempts - 1) {
           break;
         }
         const reasons = quality.reasons.join(", ");
@@ -1157,15 +1205,23 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       // Cap the main history body first, then append split-turn context, preserved
       // turns, diagnostics, and workspace rules so they survive truncation.
       const workspaceContext = await readWorkspaceContextForSummary();
-      const suffix = assembleSuffix({
-        splitTurnSection: lastSplitTurnSection,
-        preservedTurnsSection,
-        toolFailureSection,
-        fileOpsSummary,
-        workspaceContext,
-      });
-      const bodyToCap = lastHistorySummary || summary;
-      summary = capCompactionSummaryPreservingSuffix(bodyToCap, suffix);
+      summary = capBodyBesideSuffix(lastHistorySummary || summary, (keptBody) =>
+        assembleSuffixWithinBudget({
+          splitTurnSection: lastSplitTurnSection,
+          missingIdentifiersSection: qualityGuardEnabled
+            ? formatMissingIdentifiersSection({
+                summary: keptBody,
+                identifiers,
+                identifierPolicy,
+                alongside: `${lastSplitTurnSection}\n${preservedTurnsSection}`,
+              })
+            : "",
+          preservedTurnsSection,
+          toolFailureSection,
+          fileOpsSummary,
+          workspaceContext,
+        }),
+      );
 
       return {
         compaction: {
@@ -1204,7 +1260,11 @@ export const __testing = {
   appendSummarySection,
   resolveRecentTurnsPreserve,
   resolveQualityGuardMaxRetries,
+  assembleSuffixWithinBudget,
+  capBodyBesideSuffix,
+  stripMissingIdentifiersSection,
   extractOpaqueIdentifiers,
+  formatMissingIdentifiersSection,
   auditSummaryQuality,
   capCompactionSummary,
   capCompactionSummaryPreservingSuffix,
