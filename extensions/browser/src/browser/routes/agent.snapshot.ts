@@ -61,7 +61,7 @@ function isNavigationPolicyDenial(err: unknown): boolean {
 }
 
 const CDP_FALLBACK_SNAPSHOT_NOTE =
-  "(Read from the accessibility tree because page scripts were unavailable, so these refs cannot be clicked. To click, take a screenshot and use clickCoords.)";
+  "(Read from the accessibility tree, so these refs cannot be clicked. To click, take a screenshot and use clickCoords.)";
 
 function browserNavigationPolicyForProfile(ctx: BrowserRouteContext, profileCtx: ProfileContext) {
   return withBrowserNavigationPolicy(ctx.state().resolved.ssrfPolicy, {
