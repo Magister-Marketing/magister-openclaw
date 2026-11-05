@@ -688,7 +688,14 @@ export function registerBrowserAgentSnapshotRoutes(
             }
             const navigationPolicy = browserNavigationPolicyForProfile(ctx, profileCtx);
             if (navigationPolicy.ssrfPolicy) {
-              await assertBrowserNavigationResultAllowed({ url: tab.url, ...navigationPolicy });
+              // Check where the page is now: it may have moved since the tab was looked up.
+              const current = (await profileCtx.listTabs().catch(() => [])).find(
+                (candidate) => candidate.targetId === tab.targetId,
+              );
+              if (!current) {
+                throw err;
+              }
+              await assertBrowserNavigationResultAllowed({ url: current.url, ...navigationPolicy });
             }
             const fallback = await cdpRoleSnapshot().catch(() => null);
             if (!fallback) {

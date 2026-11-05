@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_AI_SNAPSHOT_MAX_CHARS } from "./constants.js";
+import * as navigationGuardModule from "./navigation-guard.js";
 import { InvalidBrowserNavigationUrlError } from "./navigation-guard.js";
 import {
   installAgentContractHooks,
@@ -413,6 +414,30 @@ describe("browser control server", () => {
     quarantined.name = "BlockedBrowserTargetError";
     pwMocks.snapshotAiViaPlaywright.mockRejectedValueOnce(quarantined);
     await realFetch(`${base}/snapshot?format=ai`).then((r) => r.json());
+    expect(cdpMocks.snapshotRoleViaCdp.mock.calls.length).toBe(readsBefore);
+
+    // The page moved somewhere the policy refuses while Playwright was trying.
+    const startUrl = state.tabUrl;
+    const movedUrl = "https://moved.example/private";
+    const guard = vi
+      .spyOn(navigationGuardModule, "assertBrowserNavigationResultAllowed")
+      .mockImplementation(async ({ url }) => {
+        if (url === movedUrl) {
+          throw new InvalidBrowserNavigationUrlError("Navigation blocked: moved page");
+        }
+      });
+    pwMocks.snapshotAiViaPlaywright.mockImplementationOnce(async () => {
+      state.tabUrl = movedUrl;
+      throw timeout;
+    });
+    const moved = (await realFetch(`${base}/snapshot?format=ai`).then((r) => r.json())) as {
+      ok?: boolean;
+      error?: string;
+    };
+    state.tabUrl = startUrl;
+    guard.mockRestore();
+    expect(moved.ok).not.toBe(true);
+    expect(moved.error).toContain("Navigation blocked: moved page");
     expect(cdpMocks.snapshotRoleViaCdp.mock.calls.length).toBe(readsBefore);
   });
 
