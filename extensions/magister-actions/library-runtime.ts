@@ -72,7 +72,9 @@ const machineLocalRoots = new Set([
   "HEARTBEAT.md",
   "USER.md",
   "PROJECT.md",
+  "product-marketing-context.md",
   "memory",
+  "memory.archive",
   "skills",
   "hooks",
 ]);

@@ -510,6 +510,8 @@ describe("hosted Library tool authority", () => {
     "USER.md",
     "PROJECT.md",
     "HEARTBEAT.md",
+    "product-marketing-context.md",
+    "memory.archive/USER.md",
     "memory/2026-11-04.md",
     "skills/mine/SKILL.md",
     "hooks/mine/handler.js",
