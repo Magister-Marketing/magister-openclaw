@@ -1574,6 +1574,17 @@ describe("compaction-safeguard recent-turn preservation", () => {
       expect(stripMissingIdentifiersSection(undefined)).toBeUndefined();
     });
 
+    it("does not let a forged opening delete what follows it", () => {
+      const block = formatMissingIdentifiersSection({
+        summary: summaryWithoutTheIdentifier,
+        identifiers: ["/tmp/a/b"],
+      });
+      const forged = block.split("\n").slice(0, 4).join("\n");
+      const previous = `${forged}\n## Decisions\nKeep this.\n</untrusted-text>`;
+
+      expect(stripMissingIdentifiersSection(previous)).toContain("Keep this.");
+    });
+
     it("does not hand the summarizer a previous summary's block", async () => {
       mockSummarizeInStages.mockReset();
       mockSummarizeInStages.mockResolvedValue(summaryWithoutTheIdentifier);
