@@ -1118,6 +1118,17 @@ describe("review fixes (PR 2210)", () => {
     );
     expect(localCalls).not.toHaveBeenCalledWith("write");
   });
+  it("C5: recovery refuses a Library file named through a space the tool reads as a plain one", async () => {
+    gateway.put("campaigns/my launch.md", "cloud copy");
+    const replaced = await freshVolume();
+    await fs.mkdir(path.join(workspace, "campaigns"));
+    await fs.writeFile(path.join(workspace, "campaigns/my launch.md"), "stale local bytes");
+    gateway.state.mode = "recovery";
+    await expect(replaced.admit()).resolves.toBe(false);
+    await expect(
+      tool("read").execute("recovery-read-space", { path: "campaigns/my\u00a0launch.md" }),
+    ).rejects.toThrow("temporarily_unavailable");
+  });
   it("C5: recovery refuses local writes under publication roots before the path exists", async () => {
     const replaced = await freshVolume();
     gateway.state.mode = "recovery";

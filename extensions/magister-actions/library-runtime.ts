@@ -887,6 +887,7 @@ export class LibraryRuntime {
             const linked = await linkedPaths(runtime.workspace, input);
             if (
               libraryPath(libraryRelative(runtime.workspace, input), cache) ||
+              libraryPath(libraryRelative(runtime.workspace, withPlainSpaces(input)), cache) ||
               linked.some((entry) => libraryPath(entry, cache))
             )
               throw recoveryError();
