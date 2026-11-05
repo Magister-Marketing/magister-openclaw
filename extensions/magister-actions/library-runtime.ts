@@ -79,6 +79,9 @@ const machineLocalRoots = new Set([
   "hooks",
 ]);
 const machineLocalFolders = new Set(["node_modules", "__pycache__", "venv", "tmp", "temp"]);
+// The native tools read these as plain spaces before they resolve a path.
+const withPlainSpaces = (input: string) =>
+  input.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ");
 const jsonResult = (value: unknown) => ({
   content: [{ type: "text" as const, text: JSON.stringify(value) }],
   details: value,
@@ -113,6 +116,20 @@ export async function libraryActivated(workspace: string): Promise<boolean> {
   return !!(await readJson(path.join(workspace, marker)));
 }
 
+/** Where a link takes a tool's path, as given and as the tool reads it; empty when none does. */
+const linkedPaths = async (workspace: string, input: string) => {
+  const realWorkspace = await fs.realpath(workspace);
+  const landing = await Promise.all(
+    [input, withPlainSpaces(input)].map(async (spelling) => {
+      const resolved = libraryRelative(
+        realWorkspace,
+        await resolveLibraryToolTarget(path.resolve(workspace, expandLibraryToolPath(spelling))),
+      );
+      return resolved === libraryRelative(workspace, spelling) ? undefined : resolved;
+    }),
+  );
+  return landing.filter((entry) => entry !== undefined);
+};
 export class LibraryRuntime {
   readonly store: LibraryStore;
   private acknowledged: string | undefined;
@@ -866,17 +883,11 @@ export class LibraryRuntime {
             if (mutating) throw recoveryError();
           }
           // Checked where it lands too: a link under a local folder can reach a Library path.
-          const realWorkspace = await fs.realpath(runtime.workspace);
           for (const input of targets) {
-            const resolved = libraryRelative(
-              realWorkspace,
-              await resolveLibraryToolTarget(
-                path.resolve(runtime.workspace, expandLibraryToolPath(input)),
-              ),
-            );
+            const linked = await linkedPaths(runtime.workspace, input);
             if (
               libraryPath(libraryRelative(runtime.workspace, input), cache) ||
-              libraryPath(resolved, cache)
+              linked.some((entry) => libraryPath(entry, cache))
             )
               throw recoveryError();
           }
@@ -884,21 +895,12 @@ export class LibraryRuntime {
         }
         const session = context.sessionId || context.sessionKey;
         if (!session) throw new Error("precondition_required: Library session identity is missing");
-        const realWorkspace = await fs.realpath(runtime.workspace);
         for (const input of patch?.paths ?? (typeof rawPath === "string" ? [rawPath] : [])) {
           const relative = libraryRelative(runtime.workspace, input);
-          const resolved = libraryRelative(
-            realWorkspace,
-            await resolveLibraryToolTarget(
-              path.resolve(runtime.workspace, expandLibraryToolPath(input)),
-            ),
-          );
-          const normalized = libraryRelative(
-            runtime.workspace,
-            input.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " "),
-          );
+          const linked = await linkedPaths(runtime.workspace, input);
+          const normalized = libraryRelative(runtime.workspace, withPlainSpaces(input));
           if (
-            (resolved !== relative && libraryPath(resolved, admitted.cache)) ||
+            linked.some((entry) => libraryPath(entry, admitted.cache)) ||
             (!libraryPath(relative, admitted.cache) && libraryPath(normalized, admitted.cache))
           )
             throw new Error("invalid_path: aliases cannot bypass Library file authority");

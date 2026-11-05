@@ -1099,6 +1099,25 @@ describe("review fixes (PR 2210)", () => {
     );
     expect(localCalls).not.toHaveBeenCalledWith("write");
   });
+  it("refuses a link reached through a space the tool reads as a plain one, in recovery and active", async () => {
+    gateway.put("resources/report.md", "cloud copy");
+    const replaced = await freshVolume();
+    await fs.mkdir(path.join(workspace, "resources"), { recursive: true });
+    await fs.writeFile(path.join(workspace, "resources/report.md"), "legacy bytes");
+    await fs.mkdir(path.join(workspace, "tmp"));
+    await fs.symlink(path.join(workspace, "resources"), path.join(workspace, "tmp/my alias"));
+    gateway.state.mode = "recovery";
+    await expect(replaced.admit()).resolves.toBe(false);
+    await expect(write("tmp/my\u00a0alias/report.md", "x", "recovery-space")).rejects.toThrow(
+      "temporarily_unavailable",
+    );
+    gateway.state.mode = "active";
+    await replaced.admit();
+    await expect(write("tmp/my\u00a0alias/report.md", "x", "active-space")).rejects.toThrow(
+      "invalid_path",
+    );
+    expect(localCalls).not.toHaveBeenCalledWith("write");
+  });
   it("C5: recovery refuses local writes under publication roots before the path exists", async () => {
     const replaced = await freshVolume();
     gateway.state.mode = "recovery";
