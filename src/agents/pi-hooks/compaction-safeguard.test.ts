@@ -46,6 +46,7 @@ const {
   formatMissingIdentifiersSection,
   stripMissingIdentifiersSection,
   assembleSuffixWithinBudget,
+  capBodyBesideSuffix,
   auditSummaryQuality,
   capCompactionSummary,
   capCompactionSummaryPreservingSuffix,
@@ -929,6 +930,16 @@ describe("compaction-safeguard recent-turn preservation", () => {
     ]);
   });
 
+  it("keeps an apostrophe inside a URL, and ends a URL quoted in a list", () => {
+    expect(extractOpaqueIdentifiers("https://en.wikipedia.org/wiki/O'Connor")).toEqual([
+      "https://en.wikipedia.org/wiki/O'Connor",
+    ]);
+    expect(extractOpaqueIdentifiers("['https://a.example/one','https://b.example/two']")).toEqual([
+      "https://a.example/one",
+      "https://b.example/two",
+    ]);
+  });
+
   it("drops a match too long to be an identifier", () => {
     expect(extractOpaqueIdentifiers(`https://a.example/${"x".repeat(400)}`)).toEqual([]);
   });
@@ -1668,6 +1679,64 @@ describe("compaction-safeguard recent-turn preservation", () => {
           identifiers: ["https://brand.example/pricing"],
         }),
       ).toBe("");
+    });
+
+    it("does not count a longer identifier as holding a shorter one", () => {
+      const missing = (summary: string, identifier: string) =>
+        formatMissingIdentifiersSection({ summary, identifiers: [identifier] });
+
+      expect(
+        missing("see https://brand.example/pricing-archive", "https://brand.example/pricing"),
+      ).toContain("- https://brand.example/pricing\n");
+      expect(missing("id ABCDEF123456", "abcdef12")).toContain("- abcdef12\n");
+    });
+
+    it("counts an identifier that prose or markdown ends", () => {
+      const held = (summary: string) =>
+        formatMissingIdentifiersSection({
+          summary,
+          identifiers: ["https://brand.example/pricing"],
+        });
+
+      expect(held("See https://brand.example/pricing.")).toBe("");
+      expect(held("[a](https://brand.example/pricing), then more")).toBe("");
+      expect(held("**https://brand.example/pricing**")).toBe("");
+      expect(held("`https://brand.example/pricing`: the page")).toBe("");
+    });
+
+    it("lists one the cap cut out of the model's own section", async () => {
+      mockSummarizeInStages.mockReset();
+      mockSummarizeInStages.mockResolvedValue(
+        `${summaryWithoutTheIdentifier.replace("Keep current flow.", "z".repeat(20_000))}\nhttps://brand.example/pricing`,
+      );
+
+      const summary = await compactWithIdentifier();
+
+      expect(mockSummarizeInStages).toHaveBeenCalledTimes(1);
+      expect(summary).toContain(
+        "<untrusted-text>\n- https://brand.example/pricing\n</untrusted-text>",
+      );
+      expect(summary.length).toBeLessThanOrEqual(16_000);
+    });
+
+    it("lists one the block's own length pushed out of the body", () => {
+      const pushed = "/tmp/aa/one";
+      const cut = "/tmp/bb/two";
+      const maxChars = 1_000;
+      const blockFor = (body: string) =>
+        formatMissingIdentifiersSection({ summary: body, identifiers: [pushed, cut] });
+      // Past where the body ends once the block lists `cut`, inside it until then.
+      const pushedEnds =
+        maxChars -
+        formatMissingIdentifiersSection({ summary: "", identifiers: [cut] }).length -
+        SUMMARY_TRUNCATED_MARKER.length +
+        1;
+      const body = `${"x".repeat(pushedEnds - pushed.length - 1)} ${pushed} ${"y".repeat(400)} ${cut}`;
+
+      const summary = capBodyBesideSuffix(body, blockFor, maxChars);
+
+      expect(summary).toContain(`- ${pushed}\n- ${cut}\n`);
+      expect(summary.length).toBeLessThanOrEqual(maxChars);
     });
 
     it("keeps them when capping cuts the model's own section", async () => {

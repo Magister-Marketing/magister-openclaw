@@ -156,22 +156,27 @@ function normalizeOpaqueIdentifier(value: string): string {
   return isPureHexIdentifier(value) ? value.toUpperCase() : value;
 }
 
-function summaryIncludesIdentifier(summary: string, identifier: string): boolean {
-  if (isPureHexIdentifier(identifier)) {
-    return summary.toUpperCase().includes(identifier.toUpperCase());
-  }
-  return summary.includes(identifier);
+// A URL takes an apostrophe or asterisk only mid-token: O'Connor stays whole, while
+// 'https://a','https://b' and **https://a** end where their surroundings begin.
+const OPAQUE_IDENTIFIER_PATTERN =
+  /([A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}|(?<![\w-])[A-Fa-f0-9]{8,}(?![\w-])|https?:\/\/(?:[^\s"'<>|*`\\]|['*](?=\w))+|\/[\w.-]{2,}(?:\/[\w.-]+)+|[A-Za-z]:\\[\w\\.-]+|[A-Za-z0-9._-]+\.[A-Za-z0-9._/-]+:\d{1,5}|\b\d{6,}\b)/g;
+
+function matchOpaqueIdentifiers(text: string): string[] {
+  return (text.match(OPAQUE_IDENTIFIER_PATTERN) ?? []).map(sanitizeExtractedIdentifier);
+}
+
+/**
+ * The identifiers a text holds whole: `.../pricing-archive` does not hold `.../pricing`.
+ * Read the way they were extracted, so a miss costs a repeated line, not a lost value.
+ */
+function heldIdentifierKeys(text: string): Set<string> {
+  return new Set(matchOpaqueIdentifiers(text).map(normalizeOpaqueIdentifier));
 }
 
 export function extractOpaqueIdentifiers(text: string): string[] {
-  const matches =
-    text.match(
-      /([A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}|(?<![\w-])[A-Fa-f0-9]{8,}(?![\w-])|https?:\/\/[^\s"'<>|*`\\]+|\/[\w.-]{2,}(?:\/[\w.-]+)+|[A-Za-z]:\\[\w\\.-]+|[A-Za-z0-9._-]+\.[A-Za-z0-9._/-]+:\d{1,5}|\b\d{6,}\b)/g,
-    ) ?? [];
   // Hex case variants are one identifier, kept as first written: these are "exact".
   const byKey = new Map<string, string>();
-  for (const match of matches) {
-    const value = sanitizeExtractedIdentifier(match);
+  for (const value of matchOpaqueIdentifiers(text)) {
     if (value.length < 4 || value.length > MAX_IDENTIFIER_CHARS) {
       continue;
     }
@@ -248,8 +253,9 @@ export function auditSummaryQuality(params: {
   }
   const enforceIdentifiers = (params.identifierPolicy ?? "strict") === "strict";
   if (enforceIdentifiers) {
+    const held = heldIdentifierKeys(params.summary);
     const missingIdentifiers = params.identifiers.filter(
-      (identifier) => !summaryIncludesIdentifier(params.summary, identifier),
+      (identifier) => !held.has(normalizeOpaqueIdentifier(identifier)),
     );
     if (missingIdentifiers.length > 0) {
       reasons.push(`${MISSING_IDENTIFIERS_REASON}:${missingIdentifiers.slice(0, 3).join(",")}`);
@@ -289,9 +295,9 @@ export function formatMissingIdentifiersSection(params: {
   if ((params.identifierPolicy ?? "strict") !== "strict") {
     return "";
   }
-  const kept = `${params.summary}\n${params.alongside ?? ""}`;
+  const held = heldIdentifierKeys(`${params.summary}\n${params.alongside ?? ""}`);
   const entries = params.identifiers
-    .filter((identifier) => !summaryIncludesIdentifier(kept, identifier))
+    .filter((identifier) => !held.has(normalizeOpaqueIdentifier(identifier)))
     .map((identifier) => `- ${identifier}`);
   // These come from tool results, so a scraped page chooses them, and no model
   // reads them on the way in: label them as data, or they read as this summary's word.

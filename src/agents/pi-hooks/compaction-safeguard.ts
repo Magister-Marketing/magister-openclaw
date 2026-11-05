@@ -67,6 +67,7 @@ const MAX_COMPACTION_SUMMARY_CHARS = 16_000;
 const MAX_FILE_OPS_SECTION_CHARS = 2_000;
 const MAX_FILE_OPS_LIST_CHARS = 900;
 const SUMMARY_TRUNCATED_MARKER = "\n\n[Compaction summary truncated to fit budget]";
+const MAX_CAP_PASSES = 12;
 const DEFAULT_RECENT_TURNS_PRESERVE = 3;
 const DEFAULT_QUALITY_GUARD_MAX_RETRIES = 1;
 const MAX_RECENT_TURNS_PRESERVE = 12;
@@ -512,6 +513,28 @@ function capCompactionSummaryPreservingSuffix(
   const bodyBudget = Math.max(0, maxChars - suffix.length);
   const cappedBody = capCompactionSummary(summaryBody, bodyBudget);
   return `${cappedBody}${suffix}`;
+}
+
+/**
+ * Caps a body beside a suffix built from what the body kept. The cut can take an
+ * identifier the body held, and listing it takes more room from the body, so this
+ * repeats until the two agree. Bounded because a block over budget is dropped whole,
+ * which can give the room back.
+ */
+function capBodyBesideSuffix(
+  body: string,
+  suffixFor: (keptBody: string) => string,
+  maxChars = MAX_COMPACTION_SUMMARY_CHARS,
+): string {
+  let suffix = suffixFor(body);
+  for (let pass = 0; pass < MAX_CAP_PASSES; pass += 1) {
+    const next = suffixFor(capCompactionSummary(body, maxChars - suffix.length));
+    if (next === suffix) {
+      break;
+    }
+    suffix = next;
+  }
+  return capCompactionSummaryPreservingSuffix(body, suffix, maxChars);
 }
 
 function extractMessageText(message: AgentMessage): string {
@@ -1182,23 +1205,23 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       // Cap the main history body first, then append split-turn context, preserved
       // turns, diagnostics, and workspace rules so they survive truncation.
       const workspaceContext = await readWorkspaceContextForSummary();
-      const suffix = assembleSuffixWithinBudget({
-        splitTurnSection: lastSplitTurnSection,
-        missingIdentifiersSection: qualityGuardEnabled
-          ? formatMissingIdentifiersSection({
-              summary: lastHistorySummary || summary,
-              identifiers,
-              identifierPolicy,
-              alongside: `${lastSplitTurnSection}\n${preservedTurnsSection}`,
-            })
-          : "",
-        preservedTurnsSection,
-        toolFailureSection,
-        fileOpsSummary,
-        workspaceContext,
-      });
-      const bodyToCap = lastHistorySummary || summary;
-      summary = capCompactionSummaryPreservingSuffix(bodyToCap, suffix);
+      summary = capBodyBesideSuffix(lastHistorySummary || summary, (keptBody) =>
+        assembleSuffixWithinBudget({
+          splitTurnSection: lastSplitTurnSection,
+          missingIdentifiersSection: qualityGuardEnabled
+            ? formatMissingIdentifiersSection({
+                summary: keptBody,
+                identifiers,
+                identifierPolicy,
+                alongside: `${lastSplitTurnSection}\n${preservedTurnsSection}`,
+              })
+            : "",
+          preservedTurnsSection,
+          toolFailureSection,
+          fileOpsSummary,
+          workspaceContext,
+        }),
+      );
 
       return {
         compaction: {
@@ -1238,6 +1261,7 @@ export const __testing = {
   resolveRecentTurnsPreserve,
   resolveQualityGuardMaxRetries,
   assembleSuffixWithinBudget,
+  capBodyBesideSuffix,
   stripMissingIdentifiersSection,
   extractOpaqueIdentifiers,
   formatMissingIdentifiersSection,
