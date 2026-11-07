@@ -1,8 +1,18 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { assertHostNotRefused, isRefusedHost, REFUSED_HOST_MESSAGE } from "./refused-hosts.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  assertHostNotRefused,
+  assertNotWebflowSite,
+  cnameIsWebflow,
+  isRefusedHost,
+  isWebflowAddress,
+  REFUSED_HOST_MESSAGE,
+  responseIsWebflow,
+  WEBFLOW_CHECK_UNAVAILABLE_MESSAGE,
+  webflowDns,
+} from "./refused-hosts.js";
 import { SsrFBlockedError } from "./ssrf.js";
 
 describe("refused hosts", () => {
@@ -57,5 +67,64 @@ describe("refused hosts", () => {
     expect(() => assertHostNotRefused("site.webflow.io")).toThrow(SsrFBlockedError);
     expect(() => assertHostNotRefused("site.webflow.io")).toThrow(REFUSED_HOST_MESSAGE);
     expect(REFUSED_HOST_MESSAGE).toContain("service `webflow`");
+  });
+});
+
+// The shapes production's Webflow-built brands showed on 2026-11-06.
+const RECORDS: Record<string, { names: string[]; addresses: string[] }> = {
+  "acme.com": { names: [], addresses: ["198.202.211.1"] },
+  "www.acme.com": { names: ["cdn.webflow.com"], addresses: ["198.202.211.1", "2620:cb:2000::1"] },
+  "old.example": { names: ["proxy-ssl.webflow.com"], addresses: ["44.229.220.222"] },
+  "www.forward.example": { names: ["cdn.webflow.com"], addresses: ["198.202.211.1"] },
+  "developers.webflow.com": { names: [], addresses: ["100.49.212.38"] },
+};
+
+describe("sites Webflow serves on custom domains", () => {
+  beforeEach(() => {
+    vi.spyOn(webflowDns, "resolve").mockImplementation(
+      async (host: string) => RECORDS[host] ?? { names: [], addresses: [] },
+    );
+  });
+
+  it("knows Webflow's names, networks, hosting CNAMEs and response marks", () => {
+    expect(isRefusedHost("cdn.prod.website-files.com", "/nonexistent")).toBe(true);
+    expect(isWebflowAddress("198.202.211.7")).toBe(true);
+    expect(isWebflowAddress("75.2.70.75")).toBe(true);
+    expect(isWebflowAddress("198.202.212.1")).toBe(false);
+    expect(cnameIsWebflow("proxy-ssl-geo-2.webflow.com.")).toBe(true);
+    expect(cnameIsWebflow("webflow.com")).toBe(false);
+    expect(responseIsWebflow(new Headers({ "x-wf-region": "us-east-1" }))).toBe(true);
+    expect(responseIsWebflow(null, '<html data-wf-site="1">')).toBe(true);
+    expect(responseIsWebflow(new Headers({ server: "cloudflare" }), "<p>webflow</p>")).toBe(false);
+  });
+
+  it("refuses a custom domain by DNS, and one whose www twin is Webflow's", async () => {
+    for (const host of ["acme.com", "www.acme.com", "old.example", "forward.example"]) {
+      await expect(assertNotWebflowSite(host)).rejects.toThrow(REFUSED_HOST_MESSAGE);
+    }
+    await expect(assertNotWebflowSite("independent.example")).resolves.toBeUndefined();
+    await expect(assertNotWebflowSite("developers.webflow.com")).resolves.toBeUndefined();
+  });
+
+  it("refuses an unanswered lookup only for the address a tool was handed", async () => {
+    vi.spyOn(webflowDns, "resolve").mockRejectedValue(
+      Object.assign(new Error("timeout"), { code: "ETIMEOUT" }),
+    );
+    await expect(assertNotWebflowSite("down.example")).resolves.toBeUndefined();
+    await expect(assertNotWebflowSite("down.example", { failClosed: true })).rejects.toThrow(
+      WEBFLOW_CHECK_UNAVAILABLE_MESSAGE,
+    );
+  });
+});
+
+describe("the Webflow DNS check under a failing resolver", () => {
+  it("asks once a minute per host, not once per request", async () => {
+    const resolve = vi
+      .spyOn(webflowDns, "resolve")
+      .mockRejectedValue(Object.assign(new Error("timeout"), { code: "ETIMEOUT" }));
+    for (let i = 0; i < 3; i++) {
+      await expect(assertNotWebflowSite("slow.example")).resolves.toBeUndefined();
+    }
+    expect(resolve.mock.calls.map(([host]) => host)).toEqual(["slow.example", "www.slow.example"]);
   });
 });

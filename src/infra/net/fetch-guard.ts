@@ -4,7 +4,13 @@ import { captureHttpExchange } from "../../proxy-capture/runtime.js";
 import { buildTimeoutAbortSignal } from "../../utils/fetch-timeout.js";
 import { hasProxyEnvConfigured, shouldUseEnvHttpProxyForUrl } from "./proxy-env.js";
 import { retainSafeHeadersForCrossOriginRedirect as retainSafeRedirectHeaders } from "./redirect-headers.js";
-import { isRefusedHost, REFUSED_HOST_MESSAGE } from "./refused-hosts.js";
+import {
+  assertNotWebflowSite,
+  isRefusedHost,
+  isWebflowAddress,
+  REFUSED_HOST_MESSAGE,
+  responseIsWebflow,
+} from "./refused-hosts.js";
 import {
   fetchWithRuntimeDispatcher,
   isMockedFetch,
@@ -362,6 +368,9 @@ export async function fetchWithSsrFGuard(params: GuardedFetchOptions): Promise<G
 
     let dispatcher: Dispatcher | null = null;
     try {
+      // A site Webflow serves, by DNS, on every hop. An unanswered lookup is left
+      // to the address check below and the response check after the request.
+      await assertNotWebflowSite(parsedUrl.hostname);
       const usesTrustedExplicitProxyMode =
         mode === GUARDED_FETCH_MODE.TRUSTED_EXPLICIT_PROXY &&
         params.dispatcherPolicy?.mode === "explicit-proxy";
@@ -408,6 +417,9 @@ export async function fetchWithSsrFGuard(params: GuardedFetchOptions): Promise<G
           lookupFn: params.lookupFn,
           policy: params.policy,
         });
+        if (pinned.addresses.some(isWebflowAddress)) {
+          throw new SsrFBlockedError(REFUSED_HOST_MESSAGE);
+        }
         dispatcher = createPinnedDispatcher(
           pinned,
           params.dispatcherPolicy,
@@ -438,6 +450,12 @@ export async function fetchWithSsrFGuard(params: GuardedFetchOptions): Promise<G
       const response = shouldUseRuntimeFetch
         ? await fetchWithRuntimeDispatcher(parsedUrl.toString(), init)
         : await defaultFetch(parsedUrl.toString(), init);
+
+      // Behind a proxy, a Webflow site shows only in its response: discarded unread.
+      if (responseIsWebflow(response.headers)) {
+        void response.body?.cancel();
+        throw new SsrFBlockedError(REFUSED_HOST_MESSAGE);
+      }
 
       if (params.capture !== false) {
         captureHttpExchange({
