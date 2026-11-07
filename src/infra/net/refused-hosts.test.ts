@@ -116,3 +116,15 @@ describe("sites Webflow serves on custom domains", () => {
     );
   });
 });
+
+describe("the Webflow DNS check under a failing resolver", () => {
+  it("asks once a minute per host, not once per request", async () => {
+    const resolve = vi
+      .spyOn(webflowDns, "resolve")
+      .mockRejectedValue(Object.assign(new Error("timeout"), { code: "ETIMEOUT" }));
+    for (let i = 0; i < 3; i++) {
+      await expect(assertNotWebflowSite("slow.example")).resolves.toBeUndefined();
+    }
+    expect(resolve.mock.calls.map(([host]) => host)).toEqual(["slow.example", "www.slow.example"]);
+  });
+});

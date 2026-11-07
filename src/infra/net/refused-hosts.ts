@@ -32,12 +32,17 @@ export const WEBFLOW_NETWORKS = [
 ];
 const WEBFLOW_CNAME = /^(?:cdn|proxy-ssl(?:-geo(?:-\d+)?)?)\.webflow\.com$/;
 const WEBFLOW_HEADER_PREFIX = "x-wf-";
+// Bounded runs keep it linear on a hostile page.
 const WEBFLOW_HTML =
-  /data-wf-(?:site|page)=|<meta[^>]+content=["']Webflow["'][^>]+name=["']generator|<meta[^>]+name=["']generator["'][^>]+content=["']Webflow/i;
+  /data-wf-(?:site|page)=|<meta[^>]{0,400}content=["']Webflow["'][^>]{0,400}name=["']generator|<meta[^>]{0,400}name=["']generator["'][^>]{0,400}content=["']Webflow/i;
 const DEFAULT_ALLOWLIST_PATH = "/data/.openclaw/egress-allowlist.json";
-const DNS_TIMEOUT_MS = 3000;
+const DNS_TIMEOUT_MS = 2000;
 const FOUND_TTL_MS = 60 * 60 * 1000;
 const CLEAR_TTL_MS = 15 * 60 * 1000;
+// A lookup DNS could not answer is remembered this long, so a failing resolver costs
+// one timeout a minute per host, not one per request (every guarded fetch asks).
+const UNKNOWN_TTL_MS = 60 * 1000;
+const MAX_CNAME_HOPS = 5;
 const MAX_CACHED = 4096;
 const NO_RECORD = new Set(["ENODATA", "ENOTFOUND", "NOTFOUND", "NODATA", "EBADNAME", "BADNAME"]);
 
@@ -46,7 +51,7 @@ for (const network of WEBFLOW_NETWORKS) {
   const [address, prefix] = network.split("/");
   networks.addSubnet(address, Number(prefix), isIP(address) === 6 ? "ipv6" : "ipv4");
 }
-const hostedCache = new Map<string, { expires: number; found: boolean }>();
+const hostedCache = new Map<string, { expires: number; found: boolean | null }>();
 
 export const REFUSED_HOST_MESSAGE =
   "This site is built on Webflow, and Webflow content is read only through the Webflow " +
@@ -156,12 +161,23 @@ async function records(lookup: () => Promise<string[]>): Promise<string[]> {
 /** Every CNAME target and address a host resolves to. Exported for tests to replace. */
 export const webflowDns = {
   async resolve(host: string): Promise<{ names: string[]; addresses: string[] }> {
-    const resolver = new Resolver({ timeout: DNS_TIMEOUT_MS, tries: 2 });
-    const [names, v4, v6] = await Promise.all([
-      records(() => resolver.resolveCname(host)),
+    const resolver = new Resolver({ timeout: DNS_TIMEOUT_MS, tries: 1 });
+    const [v4, v6] = await Promise.all([
       records(() => resolver.resolve4(host)),
       records(() => resolver.resolve6(host)),
     ]);
+    // resolveCname answers one hop; a chain like x.example -> x.host.net ->
+    // proxy-ssl.webflow.com is followed to its end.
+    const names: string[] = [];
+    let current = host;
+    for (let hop = 0; hop < MAX_CNAME_HOPS; hop++) {
+      const [next] = await records(() => resolver.resolveCname(current));
+      if (!next || names.includes(next)) {
+        break;
+      }
+      names.push(next);
+      current = next;
+    }
     return { names, addresses: [...v4, ...v6] };
   },
 };
@@ -173,13 +189,19 @@ async function isHosted(host: string): Promise<boolean> {
   const now = Date.now();
   const cached = hostedCache.get(host);
   if (cached && cached.expires > now) {
+    if (cached.found === null) {
+      throw new Error(`DNS did not answer for ${host}`);
+    }
     return cached.found;
   }
-  const { names, addresses } = await webflowDns.resolve(host);
-  const found = names.some(cnameIsWebflow) || addresses.some(isWebflowAddress);
   if (hostedCache.size >= MAX_CACHED) {
     hostedCache.clear();
   }
+  const { names, addresses } = await webflowDns.resolve(host).catch((err: unknown) => {
+    hostedCache.set(host, { expires: now + UNKNOWN_TTL_MS, found: null });
+    throw err;
+  });
+  const found = names.some(cnameIsWebflow) || addresses.some(isWebflowAddress);
   hostedCache.set(host, { expires: now + (found ? FOUND_TTL_MS : CLEAR_TTL_MS), found });
   return found;
 }
