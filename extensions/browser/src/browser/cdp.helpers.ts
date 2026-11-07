@@ -370,6 +370,13 @@ export async function fetchCdpChecked(
         // Do not reflect upstream response text into the error surface (log/agent injection risk)
         throw new Error(`${resolveBrowserRateLimitMessage(url)} Do NOT retry the browser tool.`);
       }
+      if (res.status === 401 || res.status === 403) {
+        // A fault in this machine's connection, which a bare status would let the
+        // agent mistake for a site it is not allowed to visit.
+        throw new Error(
+          `HTTP ${res.status}: the browser endpoint refused this machine (its credentials or access policy), not the site`,
+        );
+      }
       throw new Error(`HTTP ${res.status}`);
     }
     return { response: res, release };
