@@ -2663,35 +2663,28 @@
       "delegation_safe_tools": [],
       "hosted_agent_tools": [
         {
-          "action": "integration_read",
+          "action": "list_mcp_tools",
           "approval_policy": "none",
           "idempotency_policy": "safe_retry",
           "side_effect": "none",
-          "tool_name": "magister_integration_read"
+          "tool_name": "magister_list_mcp_tools"
         },
         {
-          "action": "integration_change",
+          "action": "call_mcp_tool",
           "approval_policy": "exact_payload",
           "idempotency_policy": "idempotency_key",
           "side_effect": "external_write",
-          "tool_name": "magister_integration_change"
-        },
-        {
-          "action": "integration_delete",
-          "approval_policy": "exact_payload",
-          "idempotency_policy": "idempotency_key",
-          "side_effect": "delete",
-          "tool_name": "magister_integration_delete"
+          "tool_name": "magister_call_mcp_tool"
         }
       ],
-      "mcp_tool_actions": ["proxy:canva"],
+      "mcp_tool_actions": ["list_mcp_tools", "call_mcp_tool"],
       "minimum_native_action_registry_revision": "5a4f68cca5aa20eae02970d20de3d8614c5ac671237b80b356ca93cc0d18762b",
-      "proxy_services": ["canva"],
+      "proxy_services": [],
       "remediation": null,
       "rollout_service": null,
       "skill_name": "magister-canva",
       "status": "typed",
-      "transport_modes": ["json_v1"]
+      "transport_modes": ["native_json"]
     },
     {
       "capability_id": "creatify",
@@ -4476,6 +4469,6 @@
     }
   ],
   "native_action_registry_revision": "5a4f68cca5aa20eae02970d20de3d8614c5ac671237b80b356ca93cc0d18762b",
-  "registry_revision": "961af31885d3d5544b654e4ce0d399730e88c9f1a52b3d72e1dd8e801f956543",
+  "registry_revision": "07eec078ad78b9b117bc2712b3153b18bc24460b6ded352a3d4da96d7b2498df",
   "schema_version": 1
 }
