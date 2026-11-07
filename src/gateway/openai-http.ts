@@ -11,7 +11,7 @@ import {
 import { createDefaultDeps } from "../cli/deps.js";
 import { agentCommandFromIngress } from "../commands/agent.js";
 import type { GatewayHttpChatCompletionsConfig } from "../config/types.gateway.js";
-import { emitAgentEvent, onAgentEvent } from "../infra/agent-events.js";
+import { emitAgentEvent, onAgentEvent, rememberAgentRun } from "../infra/agent-events.js";
 import { isAbortError } from "../infra/unhandled-rejections.js";
 import { logWarn } from "../logger.js";
 import { estimateBase64DecodedBytes } from "../media/base64.js";
@@ -761,6 +761,7 @@ export async function handleOpenAiHttpRequest(
   }
 
   const runId = `chatcmpl_${randomUUID()}`;
+  rememberAgentRun(runId);
   const deps = createDefaultDeps();
   const abortController = new AbortController();
   const commandInput = buildAgentCommandInput({
