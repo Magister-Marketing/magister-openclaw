@@ -54,7 +54,7 @@ export const REFUSED_HOST_MESSAGE =
   "user asks and the page is public. If this brand's Webflow site is connected, read it " +
   "with service `webflow` (site pages, page DOM, CMS items). Otherwise tell the user " +
   "Magister can't read sites built on Webflow unless the site's owner connects it, and " +
-  "stop; do not try another way to read the page.";
+  "stop. Do not try, or offer, another way to get the page's content.";
 
 export const WEBFLOW_CHECK_UNAVAILABLE_MESSAGE =
   "Magister couldn't confirm this site isn't built on Webflow, whose sites are read only " +
