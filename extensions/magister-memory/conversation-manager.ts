@@ -166,10 +166,11 @@ export class ConversationCheckpointManager {
         agentId: ctx.agentId ?? "main",
       });
       if (state.recallFrozen) {
-        // Once a session carries recall it keeps it on every turn, whatever
-        // the trigger. The block is part of the cached system prompt; a turn
-        // that dropped it (approval continuation, cron on the same session)
-        // and the next user turn that restored it each re-wrote the prefix.
+        // A session keeps the recall its first user turn had (even none) on
+        // every turn, whatever the trigger. The block is part of the cached
+        // system prompt: dropping it (approval continuation, cron), restoring
+        // it, or adding another session's later checkpoint would each re-write
+        // the prefix. Later chats are read on demand (magister_read_chat_history).
         return state.frozenRecall;
       }
       if (!interactive) {
@@ -186,9 +187,6 @@ export class ConversationCheckpointManager {
         checkpoints,
         maxChars: this.config.maxHeaderChars,
       });
-      if (!frozenRecall) {
-        return undefined;
-      }
       state.recallFrozen = true;
       state.frozenRecall = frozenRecall;
       await writeConversationSessionState(workspaceDir, state);
