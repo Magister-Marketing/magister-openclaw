@@ -146,6 +146,15 @@ export const AgentDefaultsSchema = z
           .optional(),
         completedTurnsSessionKeys: z.array(z.string()).optional(),
         completedTurnsKeepReads: z.array(z.string()).optional(),
+        completedTurnsClearArgs: z.array(z.string()).optional(),
+        batch: z
+          .object({
+            triggerTokens: z.number().int().positive().optional(),
+            minFreedTokens: z.number().int().nonnegative().optional(),
+            placeholder: z.string().optional(),
+          })
+          .strict()
+          .optional(),
         keepLastAssistants: z.number().int().nonnegative().optional(),
         softTrimRatio: z.number().min(0).max(1).optional(),
         hardClearRatio: z.number().min(0).max(1).optional(),

@@ -69,6 +69,39 @@ describe("computeEffectiveSettings", () => {
     expect(computeEffectiveSettings({ mode: "always" })?.completedTurnsKeepReads).toEqual([]);
   });
 
+  it("reads the tools whose arguments the completed-turns rule clears", () => {
+    const s = computeEffectiveSettings({
+      mode: "always",
+      completedTurns: "clear",
+      completedTurnsClearArgs: ["write", "", 3 as unknown as string],
+    });
+    expect(s?.completedTurnsClearArgs).toEqual(["write"]);
+    expect(computeEffectiveSettings({ mode: "always" })?.completedTurnsClearArgs).toEqual([]);
+  });
+
+  it("reads the batch rule", () => {
+    const s = computeEffectiveSettings({
+      mode: "always",
+      batch: {
+        triggerTokens: 256_000.9,
+        minFreedTokens: 40_000,
+        placeholder: "  [cleared in this turn]  ",
+      },
+    });
+    expect(s?.batch).toEqual({
+      triggerTokens: 256_000,
+      minFreedTokens: 40_000,
+      placeholder: "[cleared in this turn]",
+    });
+  });
+
+  it("leaves the batch trigger to the window ratio when none is set", () => {
+    const s = computeEffectiveSettings({ mode: "always", batch: { triggerTokens: -5 } });
+    expect(s?.batch).toEqual(DEFAULT_CONTEXT_PRUNING_SETTINGS.batch);
+    // The defaults object itself is never handed out, so one session cannot edit another's.
+    expect(s?.batch).not.toBe(DEFAULT_CONTEXT_PRUNING_SETTINGS.batch);
+  });
+
   it("matches a chat's agent-qualified key against a bare prefix", () => {
     const s = computeEffectiveSettings({
       mode: "always",

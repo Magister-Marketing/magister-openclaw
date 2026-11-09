@@ -4955,6 +4955,31 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                       type: "string",
                     },
                   },
+                  completedTurnsClearArgs: {
+                    type: "array",
+                    items: {
+                      type: "string",
+                    },
+                  },
+                  batch: {
+                    type: "object",
+                    properties: {
+                      triggerTokens: {
+                        type: "integer",
+                        exclusiveMinimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      minFreedTokens: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      placeholder: {
+                        type: "string",
+                      },
+                    },
+                    additionalProperties: false,
+                  },
                   keepLastAssistants: {
                     type: "integer",
                     minimum: 0,

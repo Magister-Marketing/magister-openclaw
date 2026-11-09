@@ -9,7 +9,8 @@ export type ContextPruningToolMatch = {
  * - `cache-ttl`: prune only once the provider's prompt cache has expired (Anthropic/Google style
  *   caches), so a warm cache is never invalidated by a prune.
  * - `always`: prune on every request, for any provider. Meant for long tool-heavy sessions
- *   (workflow runs) where the context would otherwise carry every fetched page to the end.
+ *   (workflow runs) where the context would otherwise carry every fetched page to the end. Inside
+ *   the turn still in progress it prunes in batches (see `batch`), never one result per request.
  */
 export type ContextPruningMode = "off" | "cache-ttl" | "always";
 /**
@@ -38,6 +39,29 @@ export type ContextPruningConfig = {
    * skills, which the agent reuses turn after turn and would otherwise read again.
    */
   completedTurnsKeepReads?: string[];
+  /**
+   * Tool names whose long string arguments the completed-turns rule clears (for example `write`,
+   * whose `content` is the whole file). The call already ran and its file is on disk, yet the
+   * argument would otherwise ride along in every later request.
+   */
+  completedTurnsClearArgs?: string[];
+  /**
+   * `always` mode: how tool results inside the turn still in progress are pruned. A request whose
+   * prompt would pass `triggerTokens` prunes every older result of the turn in one batch, and the
+   * result is then sent unchanged until the next batch, so the prompt only grows at its end and a
+   * provider's prompt cache keeps hitting. The newest `keepLastAssistants` rounds are never touched.
+   */
+  batch?: {
+    /**
+     * Prompt size in tokens that starts a batch (default: `softTrimRatio` of the window). Set it
+     * just under the size where the model's price changes, when it has one.
+     */
+    triggerTokens?: number;
+    /** A batch that would free fewer tokens than this is skipped (default 20000). */
+    minFreedTokens?: number;
+    /** What replaces a result once a later batch clears it (default: `hardClear.placeholder`). */
+    placeholder?: string;
+  };
   keepLastAssistants?: number;
   softTrimRatio?: number;
   hardClearRatio?: number;
@@ -61,6 +85,12 @@ export type EffectiveContextPruningSettings = {
   completedTurns: ContextPruningCompletedTurns;
   completedTurnsSessionKeys: string[];
   completedTurnsKeepReads: string[];
+  completedTurnsClearArgs: string[];
+  batch: {
+    triggerTokens: number | null;
+    minFreedTokens: number;
+    placeholder: string | null;
+  };
   keepLastAssistants: number;
   softTrimRatio: number;
   hardClearRatio: number;
@@ -84,6 +114,12 @@ export const DEFAULT_CONTEXT_PRUNING_SETTINGS: EffectiveContextPruningSettings =
   completedTurns: "keep",
   completedTurnsSessionKeys: [],
   completedTurnsKeepReads: [],
+  completedTurnsClearArgs: [],
+  batch: {
+    triggerTokens: null,
+    minFreedTokens: 20_000,
+    placeholder: null,
+  },
   keepLastAssistants: 3,
   softTrimRatio: 0.3,
   hardClearRatio: 0.5,
@@ -149,6 +185,22 @@ export function computeEffectiveSettings(raw: unknown): EffectiveContextPruningS
     s.completedTurnsKeepReads = cfg.completedTurnsKeepReads.filter(
       (prefix): prefix is string => typeof prefix === "string" && prefix.length > 0,
     );
+  }
+  if (Array.isArray(cfg.completedTurnsClearArgs)) {
+    s.completedTurnsClearArgs = cfg.completedTurnsClearArgs.filter(
+      (name): name is string => typeof name === "string" && name.length > 0,
+    );
+  }
+  if (cfg.batch) {
+    const positiveTokens = (value: unknown): number | null =>
+      typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : null;
+    s.batch.triggerTokens = positiveTokens(cfg.batch.triggerTokens);
+    if (typeof cfg.batch.minFreedTokens === "number" && Number.isFinite(cfg.batch.minFreedTokens)) {
+      s.batch.minFreedTokens = Math.max(0, Math.floor(cfg.batch.minFreedTokens));
+    }
+    if (typeof cfg.batch.placeholder === "string" && cfg.batch.placeholder.trim()) {
+      s.batch.placeholder = cfg.batch.placeholder.trim();
+    }
   }
   if (typeof cfg.keepLastAssistants === "number" && Number.isFinite(cfg.keepLastAssistants)) {
     s.keepLastAssistants = Math.max(0, Math.floor(cfg.keepLastAssistants));

@@ -8,6 +8,8 @@ import { makeToolPrunablePredicate } from "./tools.js";
 
 const IMAGE_CHAR_ESTIMATE = 8_000;
 const PRUNED_CONTEXT_IMAGE_MARKER = "[image removed during context pruning]";
+/** A tool-call string argument longer than this is cleared once its turn has closed. */
+const CLEARED_ARG_MIN_CHARS = 2_000;
 
 function asText(text: string): TextContent {
   return { type: "text", text };
@@ -317,17 +319,78 @@ function readCallIdsUnder(
 function clearToolResultMessage(params: {
   msg: ToolResultMessage;
   settings: EffectiveContextPruningSettings;
+  placeholder?: string;
 }): ToolResultMessage | null {
   const { msg, settings } = params;
+  const placeholder = params.placeholder ?? settings.hardClear.placeholder;
   const parts = collectTextSegments(msg.content);
+  if (!hasImageBlocks(msg.content) && parts.length === 1 && parts[0] === placeholder) {
+    return null;
+  }
+  return { ...msg, content: [asText(placeholder)] };
+}
+
+/**
+ * The assistant message with the long string arguments of the named tools' calls replaced by a
+ * short note, or null when nothing was long. A `write` call carries the whole file as `content`:
+ * the call ran and the file is on disk, so the argument is only weight in every later request.
+ */
+function clearLongToolCallArgs(
+  message: AgentMessage,
+  toolNames: ReadonlySet<string>,
+): AgentMessage | null {
+  if (message.role !== "assistant") {
+    return null;
+  }
+  let changed = false;
+  const content = message.content.map((block) => {
+    if (
+      block?.type !== "toolCall" ||
+      !toolNames.has(block.name) ||
+      !block.arguments ||
+      typeof block.arguments !== "object"
+    ) {
+      return block;
+    }
+    const original: Record<string, unknown> = block.arguments;
+    let args: Record<string, unknown> | null = null;
+    for (const [key, value] of Object.entries(original)) {
+      if (typeof value !== "string" || value.length <= CLEARED_ARG_MIN_CHARS) {
+        continue;
+      }
+      args ??= { ...original };
+      args[key] =
+        `[${value.length} characters cleared from context: this call already ran. ` +
+        "Read the file it wrote if you need the content.]";
+    }
+    if (!args) {
+      return block;
+    }
+    changed = true;
+    return { ...block, arguments: args };
+  });
+  return changed ? ({ ...message, content } as AgentMessage) : null;
+}
+
+/**
+ * The prompt size the provider reported for the request this assistant message answered: system
+ * prompt, tools and every message, as it was actually sent. Null for a failed or stopped request
+ * and for a provider that reported nothing.
+ */
+function reportedPromptTokens(message: AgentMessage | undefined): number | null {
   if (
-    !hasImageBlocks(msg.content) &&
-    parts.length === 1 &&
-    parts[0] === settings.hardClear.placeholder
+    message?.role !== "assistant" ||
+    message.stopReason === "aborted" ||
+    message.stopReason === "error"
   ) {
     return null;
   }
-  return { ...msg, content: [asText(settings.hardClear.placeholder)] };
+  const usage = message.usage;
+  if (!usage) {
+    return null;
+  }
+  const total = (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
+  return Number.isFinite(total) && total > 0 ? total : null;
 }
 
 function softTrimToolResultMessage(params: {
@@ -367,6 +430,96 @@ ${tail}`;
 [Tool result trimmed: kept first ${headChars} chars and last ${tailChars} chars of ${rawLen} chars.]`;
 
   return { ...msg, content: [asText(trimmed + note)] };
+}
+
+/**
+ * Where the open turn's batches end, oldest first. `always` mode prunes the turn in progress in
+ * batches: a request whose prompt would pass the trigger prunes every result older than the
+ * protected tail at once, and that set then stays exactly as it is until the next batch. Between
+ * batches the prompt only grows at its end, so a provider's prompt cache keeps hitting; pruning
+ * one more result per request instead rewrites a message the provider has already seen on every
+ * request, and each rewrite re-bills most of the prompt at the uncached price (measured on a
+ * workflow run: 11 such requests were 43% of its cost).
+ *
+ * Nothing is remembered between requests, so the batches are derived from the transcript: every
+ * earlier request of the turn is replayed in order, each judged by the prompt size the provider
+ * reported for the request before it plus what was appended since. The transcript only grows, so
+ * replaying it always finds the same batches, and the same request is always sent the same way.
+ */
+function resolveBatchEnds(params: {
+  messages: AgentMessage[];
+  regionStart: number;
+  triggerTokens: number;
+  settings: EffectiveContextPruningSettings;
+  isEligible: (index: number) => boolean;
+  trimmedAt: (index: number) => AgentMessage;
+  clearedAt: (index: number) => AgentMessage;
+}): number[] {
+  const { messages, regionStart, settings } = params;
+  const minFreedChars = settings.batch.minFreedTokens * CHARS_PER_TOKEN_ESTIMATE;
+  const ends: number[] = [];
+  const assistants: number[] = [];
+
+  // `boundary` is the request whose input is messages[0, boundary).
+  const consider = (boundary: number) => {
+    const previous = assistants.at(-1);
+    if (previous === undefined) {
+      // The turn's first request: it has fetched nothing of its own yet.
+      return;
+    }
+    const reported = reportedPromptTokens(messages[previous]);
+    if (reported === null) {
+      return;
+    }
+    let appendedChars = 0;
+    for (let i = previous; i < boundary; i++) {
+      appendedChars += estimateMessageChars(messages[i]);
+    }
+    if (reported + appendedChars / CHARS_PER_TOKEN_ESTIMATE <= params.triggerTokens) {
+      return;
+    }
+
+    // The batch ends at the keepLastAssistants-th last assistant before this request; undefined
+    // while the turn has fewer.
+    const keep = settings.keepLastAssistants;
+    const end = keep <= 0 ? boundary : assistants.at(-keep);
+    const previousEnd = ends.at(-1) ?? regionStart;
+    if (end === undefined || end <= previousEnd) {
+      return;
+    }
+
+    // What this batch frees: its own results are trimmed, and the batch before it, trimmed until
+    // now, is cleared.
+    let freedChars = 0;
+    for (let i = previousEnd; i < end; i++) {
+      if (params.isEligible(i)) {
+        freedChars += estimateMessageChars(messages[i]) - estimateMessageChars(params.trimmedAt(i));
+      }
+    }
+    if (settings.hardClear.enabled && ends.length > 0) {
+      const beforePrevious = ends.length > 1 ? ends[ends.length - 2] : regionStart;
+      for (let i = beforePrevious; i < previousEnd; i++) {
+        if (params.isEligible(i)) {
+          freedChars +=
+            estimateMessageChars(params.trimmedAt(i)) - estimateMessageChars(params.clearedAt(i));
+        }
+      }
+    }
+    if (freedChars < minFreedChars) {
+      // Not worth a full-price request: let the prompt grow until a batch frees enough.
+      return;
+    }
+    ends.push(end);
+  };
+
+  for (let i = regionStart; i < messages.length; i++) {
+    if (messages[i]?.role === "assistant") {
+      consider(i);
+      assistants.push(i);
+    }
+  }
+  consider(messages.length);
+  return ends;
 }
 
 export function pruneContextMessages(params: {
@@ -413,13 +566,13 @@ export function pruneContextMessages(params: {
   let totalChars = totalCharsBefore;
   let next: AgentMessage[] | null = null;
 
-  const replaceAt = (i: number, updated: ToolResultMessage) => {
+  const replaceAt = (i: number, updated: AgentMessage) => {
     const before = estimateMessageChars((next ?? messages)[i]);
     if (!next) {
       next = messages.slice();
     }
-    next[i] = updated as unknown as AgentMessage;
-    totalChars += estimateMessageChars(updated as unknown as AgentMessage) - before;
+    next[i] = updated;
+    totalChars += estimateMessageChars(updated) - before;
   };
 
   // Completed turns: a tool result from a turn that closed with a reply has already fed that
@@ -428,16 +581,28 @@ export function pruneContextMessages(params: {
   // the step's own reply stays. A turn that ended without a reply keeps its results until a
   // later turn replies. Reads under completedTurnsKeepReads (skills) stay too: the agent reuses
   // them every turn, and clearing them made it read the same skills again on later chat turns.
+  // They stay through the open turn as well, whatever its batches prune.
+  const completedEnd =
+    settings.completedTurns === "keep"
+      ? pruneStartIndex
+      : findCompletedTurnsEnd(messages, pruneStartIndex);
+  const keptReads = readCallIdsUnder(
+    messages,
+    pruneStartIndex,
+    messages.length,
+    settings.completedTurnsKeepReads,
+  );
   if (settings.completedTurns !== "keep") {
-    const completedEnd = findCompletedTurnsEnd(messages, pruneStartIndex);
-    const keptReads = readCallIdsUnder(
-      messages,
-      pruneStartIndex,
-      completedEnd,
-      settings.completedTurnsKeepReads,
-    );
+    const clearArgsOf = new Set(settings.completedTurnsClearArgs);
     for (let i = pruneStartIndex; i < completedEnd; i++) {
       const msg = messages[i];
+      if (msg?.role === "assistant" && clearArgsOf.size > 0) {
+        const updated = clearLongToolCallArgs(msg, clearArgsOf);
+        if (updated) {
+          replaceAt(i, updated);
+        }
+        continue;
+      }
       if (!msg || msg.role !== "toolResult" || !isToolPrunable(msg.toolName)) {
         continue;
       }
@@ -450,11 +615,68 @@ export function pruneContextMessages(params: {
           ? clearToolResultMessage({ msg: current, settings })
           : softTrimToolResultMessage({ msg: current, settings });
       if (updated) {
-        replaceAt(i, updated);
+        replaceAt(i, updated as unknown as AgentMessage);
       }
     }
   }
 
+  if (settings.mode === "always") {
+    // The turn still in progress. With completedTurns "keep" no turn is ever finished for this
+    // rule, so the whole session is one region.
+    const afterCompletedTurns: AgentMessage[] = next ?? messages;
+    const isEligible = (i: number): boolean => {
+      const msg = afterCompletedTurns[i];
+      return (
+        msg?.role === "toolResult" && isToolPrunable(msg.toolName) && !keptReads.has(msg.toolCallId)
+      );
+    };
+    const triggerTokens =
+      settings.batch.triggerTokens ?? Math.floor(contextWindowTokens * settings.softTrimRatio);
+    const placeholder = settings.batch.placeholder ?? settings.hardClear.placeholder;
+    // Each result is rewritten at most once per form, however many batches are weighed.
+    const memo = (change: (msg: ToolResultMessage) => ToolResultMessage | null) => {
+      const done = new Map<number, AgentMessage>();
+      return (i: number): AgentMessage => {
+        let result = done.get(i);
+        if (!result) {
+          const msg = afterCompletedTurns[i];
+          result = (change(msg as unknown as ToolResultMessage) ?? msg) as AgentMessage;
+          done.set(i, result);
+        }
+        return result;
+      };
+    };
+    const trimmedAt = memo((msg) => softTrimToolResultMessage({ msg, settings }));
+    const clearedAt = memo((msg) => clearToolResultMessage({ msg, settings, placeholder }));
+    const ends = resolveBatchEnds({
+      messages: afterCompletedTurns,
+      regionStart: completedEnd,
+      triggerTokens,
+      settings,
+      isEligible,
+      trimmedAt,
+      clearedAt,
+    });
+    const lastEnd = ends.at(-1);
+    if (lastEnd === undefined) {
+      return afterCompletedTurns;
+    }
+    // The newest batch keeps a head and tail of each result; a later batch clears it.
+    const trimFrom = ends.length > 1 ? ends[ends.length - 2] : completedEnd;
+    for (let i = completedEnd; i < lastEnd; i++) {
+      if (!isEligible(i)) {
+        continue;
+      }
+      const updated = i < trimFrom && settings.hardClear.enabled ? clearedAt(i) : trimmedAt(i);
+      if (updated !== afterCompletedTurns[i]) {
+        replaceAt(i, updated);
+      }
+    }
+    return next ?? messages;
+  }
+
+  // cache-ttl: the provider's cache has already expired, so pruning by ratio on this request
+  // invalidates nothing.
   let ratio = totalChars / charWindow;
   if (ratio < settings.softTrimRatio) {
     return next ?? messages;
@@ -479,7 +701,7 @@ export function pruneContextMessages(params: {
     if (!updated) {
       continue;
     }
-    replaceAt(i, updated);
+    replaceAt(i, updated as unknown as AgentMessage);
   }
 
   const outputAfterSoftTrim = next ?? messages;
@@ -503,15 +725,8 @@ export function pruneContextMessages(params: {
     return outputAfterSoftTrim;
   }
 
-  // In cache-ttl mode the cache has already expired, so clearing one more old result per
-  // request costs nothing extra. In always mode the cache is warm, and a prefix that changes
-  // near its start on every request re-sends the whole context at the uncached price: measured
-  // on a workflow run, the cached share fell from 93% to 48% and the run cost more than with no
-  // pruning. So once the threshold is crossed, always mode clears every prunable result before
-  // the protected tail; the set only ever grows at its end, and the prefix stays cached.
-  const clearEverything = settings.mode === "always";
   for (const i of prunableToolIndexes) {
-    if (!clearEverything && ratio < settings.hardClearRatio) {
+    if (ratio < settings.hardClearRatio) {
       break;
     }
     const msg = (next ?? messages)[i];
@@ -525,7 +740,7 @@ export function pruneContextMessages(params: {
     if (!cleared) {
       continue;
     }
-    replaceAt(i, cleared);
+    replaceAt(i, cleared as unknown as AgentMessage);
     ratio = totalChars / charWindow;
   }
 

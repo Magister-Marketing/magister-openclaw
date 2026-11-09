@@ -2,7 +2,10 @@ import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import { pruneContextMessages } from "./pruner.js";
-import { DEFAULT_CONTEXT_PRUNING_SETTINGS } from "./settings.js";
+import {
+  DEFAULT_CONTEXT_PRUNING_SETTINGS,
+  type EffectiveContextPruningSettings,
+} from "./settings.js";
 
 type AssistantMessage = Extract<AgentMessage, { role: "assistant" }>;
 type AssistantContentBlock = AssistantMessage["content"][number];
@@ -93,6 +96,8 @@ function buildToolTrimSettings() {
     minPrunableToolChars: DEFAULT_CONTEXT_PRUNING_SETTINGS.minPrunableToolChars,
     tools: DEFAULT_CONTEXT_PRUNING_SETTINGS.tools,
     completedTurnsKeepReads: DEFAULT_CONTEXT_PRUNING_SETTINGS.completedTurnsKeepReads,
+    completedTurnsClearArgs: DEFAULT_CONTEXT_PRUNING_SETTINGS.completedTurnsClearArgs,
+    batch: structuredClone(DEFAULT_CONTEXT_PRUNING_SETTINGS.batch),
     softTrim: { maxChars: 200, headChars: 100, tailChars: 50 },
     hardClear: { ...DEFAULT_CONTEXT_PRUNING_SETTINGS.hardClear, enabled: false },
   };
@@ -694,7 +699,7 @@ describe("pruneContextMessages", () => {
     });
   });
 
-  describe("hard clear in always mode", () => {
+  describe("hard clear", () => {
     const BIG = "Q".repeat(3_000);
     // 5K window = 20K chars. Soft trim is switched off (nothing exceeds maxChars) so the
     // hard-clear line, 50% of the window, is what the five 3K results cross.
@@ -735,15 +740,286 @@ describe("pruneContextMessages", () => {
       // 15K of 20K chars: the first clear leaves 12K (still 60%), the second 9K, under 50%.
       expect(clearedCount(result)).toBe(2);
     });
+  });
 
-    it("always clears every prunable result before the tail, so the prefix stays stable", () => {
-      const result = pruneContextMessages({
+  describe("completedTurnsClearArgs", () => {
+    const FILE = "F".repeat(5_000);
+    const settings = {
+      ...buildToolTrimSettings(),
+      softTrimRatio: 1,
+      hardClearRatio: 1,
+      completedTurns: "clear" as const,
+      completedTurnsClearArgs: ["write"],
+    };
+    const call = (id: string, name: string, args: Record<string, unknown>) =>
+      ({ type: "toolCall", id, name, arguments: args }) as const;
+    const argsAt = (messages: AgentMessage[], index: number, block = 0) =>
+      (
+        (messages[index] as AssistantMessage).content[block] as {
+          arguments: Record<string, string>;
+        }
+      ).arguments;
+    const messages = () => [
+      makeUser("step 1"),
+      makeAssistant([
+        call("w1", "write", { path: "resources/report.md", content: FILE }),
+        call("e1", "exec", { command: FILE }),
+        call("w2", "write", { path: "resources/note.md", content: "short" }),
+      ]),
+      makeAssistant([{ type: "text", text: "step 1 report" }]),
+      makeUser("step 2"),
+      makeAssistant([call("w3", "write", { path: "resources/draft.md", content: FILE })]),
+    ];
+
+    it("clears the long arguments of the named tools once their turn has a reply", () => {
+      const pruned = pruneContextMessages({
         messages: messages(),
-        settings: { ...settings, mode: "always" as const },
-        ctx: CONTEXT_WINDOW_5K,
+        settings,
+        ctx: CONTEXT_WINDOW_1M,
       });
-      // keepLastAssistants is 1, so every result before the last assistant is prunable.
-      expect(clearedCount(result)).toBe(5);
+      const written = argsAt(pruned, 1, 0);
+      expect(written.path).toBe("resources/report.md");
+      expect(written.content).toContain("5000 characters cleared from context");
+      // Another tool's argument, a short argument, and the turn still in progress all stay.
+      expect(argsAt(pruned, 1, 1).command).toBe(FILE);
+      expect(argsAt(pruned, 1, 2).content).toBe("short");
+      expect(argsAt(pruned, 4).content).toBe(FILE);
+    });
+
+    it("leaves every argument alone when no tool is named", () => {
+      const input = messages();
+      const pruned = pruneContextMessages({
+        messages: input,
+        settings: { ...settings, completedTurnsClearArgs: [] },
+        ctx: CONTEXT_WINDOW_1M,
+      });
+      expect(pruned).toBe(input);
+    });
+
+    it("is idempotent, so the cleared call is sent the same way on every later request", () => {
+      const once = pruneContextMessages({ messages: messages(), settings, ctx: CONTEXT_WINDOW_1M });
+      const twice = pruneContextMessages({ messages: once, settings, ctx: CONTEXT_WINDOW_1M });
+      expect(twice).toEqual(once);
+    });
+  });
+
+  describe("always mode: batches in the turn still in progress", () => {
+    const PAGE = "P".repeat(8_000);
+    const SKILL = "S".repeat(8_000);
+    const SYSTEM_TOKENS = 5_000;
+    const settings: EffectiveContextPruningSettings = {
+      ...buildToolTrimSettings(),
+      mode: "always",
+      completedTurns: "clear",
+      completedTurnsKeepReads: ["/data/.openclaw/skills/"],
+      keepLastAssistants: 2,
+      softTrim: { maxChars: 400, headChars: 100, tailChars: 100 },
+      hardClear: { enabled: true, placeholder: "[cleared between turns]" },
+      // Each request adds two 2K-token pages. System prompt, skill and the two newest rounds
+      // are about 15K tokens that no batch touches, so a batch buys about six requests.
+      batch: {
+        triggerTokens: 40_000,
+        minFreedTokens: 8_000,
+        placeholder: "[cleared in this turn]",
+      },
+    };
+
+    const chars = (messages: AgentMessage[]) =>
+      messages.reduce((sum, message) => {
+        if (message.role === "user" && typeof message.content === "string") {
+          return sum + message.content.length;
+        }
+        if (message.role !== "assistant" && message.role !== "toolResult") {
+          return sum;
+        }
+        let inner = 0;
+        for (const block of message.content) {
+          if (block.type === "text") {
+            inner += block.text.length;
+          } else if (block.type === "toolCall") {
+            inner += JSON.stringify(block.arguments).length;
+          }
+        }
+        return sum + inner;
+      }, 0);
+    const assistant = (
+      calls: Array<{ id: string; name: string; path: string }>,
+      promptTokens: number,
+    ): AgentMessage => {
+      const message = makeAssistant(
+        calls.map((c) => ({
+          type: "toolCall",
+          id: c.id,
+          name: c.name,
+          arguments: { path: c.path },
+        })),
+      ) as AssistantMessage;
+      return {
+        ...message,
+        usage: { ...message.usage, input: 500, cacheRead: promptTokens - 500 },
+        stopReason: "toolUse",
+      };
+    };
+    const result = (id: string, toolName: string, text: string) =>
+      ({
+        role: "toolResult",
+        toolCallId: id,
+        toolName,
+        content: [{ type: "text", text }],
+        timestamp: 0,
+      }) as unknown as AgentMessage;
+    const textOf = (message: AgentMessage) =>
+      ((message as Extract<AgentMessage, { role: "toolResult" }>).content[0] as { text: string })
+        .text;
+
+    /**
+     * One turn as a provider sees it: every request is pruned from the whole transcript, and
+     * the prompt size of what was sent goes on the reply, as a provider reports it.
+     */
+    function runTurn(params: {
+      requests: number;
+      settings?: EffectiveContextPruningSettings;
+      ctx?: ExtensionContext;
+      reportUsage?: boolean;
+    }) {
+      const use = params.settings ?? settings;
+      const messages: AgentMessage[] = [makeUser("run the step")];
+      const sent: AgentMessage[][] = [];
+      const promptTokens: number[] = [];
+      for (let request = 0; request < params.requests; request++) {
+        const prompt = pruneContextMessages({
+          messages,
+          settings: use,
+          ctx: params.ctx ?? CONTEXT_WINDOW_1M,
+        });
+        // A copy: an unpruned prompt is the transcript array itself, which keeps growing.
+        sent.push([...prompt]);
+        const tokens = SYSTEM_TOKENS + Math.ceil(chars(prompt) / 4);
+        promptTokens.push(tokens);
+        const calls =
+          request === 0
+            ? [{ id: "skill", name: "read", path: "/data/.openclaw/skills/seo/SKILL.md" }]
+            : [
+                { id: `r${request}a`, name: "web_fetch", path: `https://example.com/${request}/a` },
+                { id: `r${request}b`, name: "web_fetch", path: `https://example.com/${request}/b` },
+              ];
+        messages.push(assistant(calls, params.reportUsage === false ? 0 : tokens));
+        for (const c of calls) {
+          messages.push(result(c.id, c.name, c.name === "read" ? SKILL : PAGE));
+        }
+      }
+      return { messages, sent, promptTokens };
+    }
+    /** The requests that changed a message an earlier request had already sent. */
+    const rewrites = (sent: AgentMessage[][]) =>
+      sent
+        .map((prompt, request) => ({ prompt, request }))
+        .filter(({ prompt, request }) => {
+          if (request === 0) {
+            return false;
+          }
+          const before = sent[request - 1];
+          return before.some(
+            (message, index) => JSON.stringify(message) !== JSON.stringify(prompt[index]),
+          );
+        })
+        .map(({ request }) => request);
+
+    it("sends every request as the one before it plus new messages, except at a batch", () => {
+      const { sent, promptTokens } = runTurn({ requests: 30 });
+      const batches = rewrites(sent);
+      // 30 requests: a handful of batches several requests apart, never one per request.
+      expect(batches.length).toBeGreaterThanOrEqual(2);
+      expect(batches.length).toBeLessThanOrEqual(6);
+      for (let i = 1; i < batches.length; i++) {
+        expect(batches[i] - batches[i - 1]).toBeGreaterThanOrEqual(4);
+      }
+      // And the batches hold the prompt at the trigger, give or take one request's results.
+      expect(Math.max(...promptTokens)).toBeLessThanOrEqual(40_000 + 4_500);
+    });
+
+    it("finds the same batches from the transcript alone, whenever it is asked", () => {
+      const { messages, sent } = runTurn({ requests: 30 });
+      const boundaries = messages
+        .map((message, index) => ({ message, index }))
+        .filter(({ message }) => message.role === "assistant")
+        .map(({ index }) => index);
+      // A fresh call per request, as a machine builds a fresh pruner per run.
+      boundaries.forEach((boundary, request) => {
+        const replayed = pruneContextMessages({
+          messages: messages.slice(0, boundary),
+          settings,
+          ctx: CONTEXT_WINDOW_1M,
+        });
+        expect(replayed).toEqual(sent[request]);
+      });
+    });
+
+    it("trims the newest batch, clears the ones before it, and leaves the newest rounds whole", () => {
+      const { sent } = runTurn({ requests: 30 });
+      const last = sent.at(-1) as AgentMessage[];
+      const fetched = last.filter(
+        (message) => message.role === "toolResult" && message.toolName === "web_fetch",
+      );
+      const texts = fetched.map(textOf);
+      expect(texts[0]).toBe("[cleared in this turn]");
+      expect(texts.some((text) => text.includes("[Tool result trimmed:"))).toBe(true);
+      // keepLastAssistants is 2: the last two rounds of two pages each are untouched.
+      expect(texts.slice(-4)).toEqual([PAGE, PAGE, PAGE, PAGE]);
+      // Cleared results come first, then trimmed ones, then whole ones: nothing interleaves.
+      const kind = (text: string) =>
+        text === "[cleared in this turn]" ? 0 : text.includes("[Tool result trimmed:") ? 1 : 2;
+      const kinds = texts.map(kind);
+      expect(kinds).toEqual([...kinds].toSorted((a, b) => a - b));
+    });
+
+    it("keeps a skill read whole through every batch", () => {
+      const { sent } = runTurn({ requests: 30 });
+      for (const prompt of sent.slice(1)) {
+        const skill = prompt.find(
+          (message) => message.role === "toolResult" && message.toolCallId === "skill",
+        ) as AgentMessage;
+        expect(textOf(skill)).toBe(SKILL);
+      }
+    });
+
+    it("skips a batch that would free too little to be worth a full-price request", () => {
+      const { sent } = runTurn({
+        requests: 12,
+        settings: { ...settings, batch: { ...settings.batch, minFreedTokens: 1_000_000 } },
+      });
+      expect(rewrites(sent)).toEqual([]);
+    });
+
+    it("falls back to softTrimRatio of the window when no trigger is set", () => {
+      const byRatio = { ...settings, batch: { ...settings.batch, triggerTokens: null } };
+      // softTrimRatio is 0.5: 40K tokens of an 80K window, the same trigger as above.
+      const small = { model: { contextWindow: 80_000 } } as unknown as ExtensionContext;
+      expect(rewrites(runTurn({ requests: 12, settings: byRatio, ctx: small }).sent)).not.toEqual(
+        [],
+      );
+      // Of a 1M window it is 500K tokens, which twelve requests never reach.
+      expect(rewrites(runTurn({ requests: 12, settings: byRatio }).sent)).toEqual([]);
+    });
+
+    it("starts no batch from a reply that reported no prompt size", () => {
+      const { sent } = runTurn({ requests: 12, reportUsage: false });
+      expect(rewrites(sent)).toEqual([]);
+    });
+
+    it("never prunes a turn's first request, whatever earlier turns left behind", () => {
+      const earlier = runTurn({ requests: 6 }).messages;
+      const messages = [
+        ...earlier,
+        makeAssistant([{ type: "text", text: "step 1 report" }]),
+        makeUser("step 2"),
+      ];
+      const pruned = pruneContextMessages({ messages, settings, ctx: CONTEXT_WINDOW_1M });
+      // The finished turn is cleared by the completed-turns rule, with its own placeholder.
+      const fetched = pruned.filter(
+        (message) => message.role === "toolResult" && message.toolName === "web_fetch",
+      );
+      expect(fetched.map(textOf)).toEqual(fetched.map(() => "[cleared between turns]"));
     });
   });
 });
