@@ -1,6 +1,11 @@
 import { Type } from "typebox";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { assertHostNotRefused } from "../../infra/net/refused-hosts.js";
+import {
+  assertHostNotRefused,
+  assertNotWebflowSite,
+  REFUSED_HOST_MESSAGE,
+  responseIsWebflow,
+} from "../../infra/net/refused-hosts.js";
 import { SsrFBlockedError, type LookupFn, type SsrFPolicy } from "../../infra/net/ssrf.js";
 import { logDebug } from "../../logger.js";
 import type { RuntimeWebFetchMetadata } from "../../secrets/runtime-web-tools.types.js";
@@ -436,8 +441,9 @@ async function runWebFetch(params: WebFetchRuntimeParams): Promise<Record<string
     throw new Error("Invalid URL: must be http or https");
   }
   // Ahead of the cache: a page read before the brand connected Webflow is not
-  // served afterwards. The guarded fetch repeats this on every redirect hop.
-  assertHostNotRefused(parsedUrl.hostname);
+  // served afterwards. The guarded fetch repeats this on every redirect hop. The
+  // address the tool was handed refuses when DNS cannot say whether Webflow serves it.
+  await assertNotWebflowSite(parsedUrl.hostname, { failClosed: true });
   const cached = readCache(FETCH_CACHE, cacheKey);
   if (cached) {
     // The page it redirected to may have become refused since it was cached.
@@ -519,6 +525,10 @@ async function runWebFetch(params: WebFetchRuntimeParams): Promise<Record<string
     const normalizedContentType = normalizeContentType(contentType) ?? "application/octet-stream";
     const bodyResult = await readResponseText(res, { maxBytes: params.maxResponseBytes });
     const body = bodyResult.text;
+    // Behind a proxy, a Webflow site may show only in its page: discarded unread.
+    if (responseIsWebflow(null, body)) {
+      throw new SsrFBlockedError(REFUSED_HOST_MESSAGE);
+    }
     const responseTruncatedWarning = bodyResult.truncated
       ? `Response body truncated after ${params.maxResponseBytes} bytes.`
       : undefined;
