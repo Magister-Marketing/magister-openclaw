@@ -620,7 +620,7 @@ Prunes **old tool results** from in-memory context before sending to the LLM. Do
   agents: {
     defaults: {
       contextPruning: {
-        mode: "cache-ttl", // off | cache-ttl
+        mode: "cache-ttl", // off | cache-ttl | always
         ttl: "1h", // duration (ms/s/m/h), default unit: minutes
         keepLastAssistants: 3,
         softTrimRatio: 0.3,
@@ -650,6 +650,43 @@ Notes:
 - Image blocks are never trimmed/cleared.
 - Ratios are character-based (approximate), not exact token counts.
 - If fewer than `keepLastAssistants` assistant messages exist, pruning is skipped.
+
+</Accordion>
+
+<Accordion title="always mode behavior">
+
+`mode: "always"` prunes on every request, for any provider. It is meant for long tool-heavy sessions, where the context would otherwise carry every fetched page to the end. It does not use the ratios above.
+
+```json5
+{
+  agents: {
+    defaults: {
+      contextPruning: {
+        mode: "always",
+        completedTurns: "clear", // keep (default) | trim | clear
+        completedTurnsSessionKeys: ["workflow_run:"], // empty: every session
+        completedTurnsKeepReads: ["/data/skills/"],
+        completedTurnsClearArgs: ["write"],
+        batch: {
+          triggerTokens: 256000, // default: softTrimRatio of the context window
+          minFreedTokens: 20000,
+          placeholder: "[Tool output from earlier in this turn was cleared.]",
+        },
+      },
+    },
+  },
+}
+```
+
+- `completedTurns`: what happens to the tool results of a turn that closed with an assistant reply, once the next user message arrives. `clear` replaces them with `hardClear.placeholder`; `trim` soft-trims them. The reply itself always stays.
+- `completedTurnsSessionKeys`: session key prefixes the completed-turns rule applies to, matched without the `agent:<id>:` qualifier.
+- `completedTurnsKeepReads`: path prefixes whose `read` results are never pruned, in finished turns or the turn in progress (reference files the agent reuses).
+- `completedTurnsClearArgs`: tool names whose string arguments longer than 2,000 characters are replaced by a short note once their turn has a reply. A `write` call's `content` is the whole file, which is already on disk. No effect while `completedTurns` is `keep`, the default.
+- `batch`: how the turn still in progress is pruned. A request whose prompt would pass `triggerTokens` soft-trims every tool result older than the newest `keepLastAssistants` rounds in one batch. Those results are then sent unchanged until the next batch, which clears them with `batch.placeholder` (default: `hardClear.placeholder`) and trims the newer ones.
+  - Between batches the prompt only grows at its end, so a provider's prompt cache keeps hitting. Pruning one result per request rewrites a message the provider has already seen on every request.
+  - The prompt size is the one the provider reported for the previous request, plus an estimate of what was appended since. A reply that reported no usage starts no batch.
+  - A batch that would free fewer than `minFreedTokens` (default 20000) is skipped.
+  - Set `triggerTokens` just under the prompt size where the model's price changes, when it has one.
 
 </Accordion>
 

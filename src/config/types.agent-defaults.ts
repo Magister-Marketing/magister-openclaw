@@ -56,7 +56,10 @@ export type AgentContextPruningConfig = {
   completedTurnsSessionKeys?: string[];
   /** Path prefixes whose `read` results the completed-turns rule keeps (skills reused every turn). */
   completedTurnsKeepReads?: string[];
-  /** Tool names whose long string arguments are cleared once their turn closed (`write` content). */
+  /**
+   * Tool names whose long string arguments are cleared once their turn closed (`write` content).
+   * No effect while `completedTurns` is `keep`, the default.
+   */
   completedTurnsClearArgs?: string[];
   /** `always` mode: prune the open turn's older tool results in batches, not one per request. */
   batch?: {

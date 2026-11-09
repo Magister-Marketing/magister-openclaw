@@ -42,7 +42,8 @@ export type ContextPruningConfig = {
   /**
    * Tool names whose long string arguments the completed-turns rule clears (for example `write`,
    * whose `content` is the whole file). The call already ran and its file is on disk, yet the
-   * argument would otherwise ride along in every later request.
+   * argument would otherwise ride along in every later request. No effect while
+   * `completedTurns` is `keep`, the default.
    */
   completedTurnsClearArgs?: string[];
   /**
