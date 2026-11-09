@@ -8473,17 +8473,20 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                         mode: {
                           type: "string",
                           enum: ["off", "shadow", "repair"],
+                          title: "Agent Draft Verification Mode",
                           description:
                             "Per-agent off, shadow, or repair override of tools.draftVerification.mode.",
                         },
                         pastedData: {
                           type: "string",
                           enum: ["off", "shadow", "repair"],
+                          title: "Agent Draft Verification Pasted-Data Mode",
                           description:
                             "Per-agent off, shadow, or repair override of tools.draftVerification.pastedData.",
                         },
                       },
                       additionalProperties: false,
+                      title: "Agent Draft Verification",
                       description: "Per-agent draft verification override.",
                     },
                     sandbox: {
@@ -18480,17 +18483,20 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
               mode: {
                 type: "string",
                 enum: ["off", "shadow", "repair"],
+                title: "Draft Verification Mode",
                 description:
                   "off preserves delivery; shadow records deterministic checks without a model call; repair buffers text and allows one tool-free correction only when the turn used no tools.",
               },
               pastedData: {
                 type: "string",
                 enum: ["off", "shadow", "repair"],
+                title: "Draft Verification Pasted-Data Mode",
                 description:
                   "Mode for turns that carry a pasted-data file, where every figure the reply states must appear in a tool output or the request; repair there buffers the final answer of a tool-using turn and allows one tool-free correction. Default: tools.draftVerification.mode.",
               },
             },
             additionalProperties: false,
+            title: "Draft Verification",
             description:
               "Bounded request-grounded draft checks for Pi; disabled by default. Unsupported requirements remain unknown.",
           },
@@ -25680,6 +25686,36 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
       help: "Global tool denylist that blocks listed tools even when profile or provider rules would allow them. Use deny rules for emergency lockouts and long-term defense-in-depth.",
       tags: ["access", "tools"],
     },
+    "tools.draftVerification": {
+      label: "Draft Verification",
+      help: "Bounded request-grounded draft checks for Pi; disabled by default. Unsupported requirements remain unknown.",
+      tags: ["tools"],
+    },
+    "tools.draftVerification.mode": {
+      label: "Draft Verification Mode",
+      help: "off preserves delivery; shadow records deterministic checks without a model call; repair buffers text and allows one tool-free correction only when the turn used no tools.",
+      tags: ["tools"],
+    },
+    "tools.draftVerification.pastedData": {
+      label: "Draft Verification Pasted-Data Mode",
+      help: "Mode for turns that carry a pasted-data file, where every figure the reply states must appear in a tool output or the request; repair there buffers the final answer of a tool-using turn and allows one tool-free correction. Default: tools.draftVerification.mode.",
+      tags: ["tools"],
+    },
+    "agents.list.*.tools.draftVerification": {
+      label: "Agent Draft Verification",
+      help: "Per-agent draft verification override.",
+      tags: ["advanced"],
+    },
+    "agents.list.*.tools.draftVerification.mode": {
+      label: "Agent Draft Verification Mode",
+      help: "Per-agent off, shadow, or repair override of tools.draftVerification.mode.",
+      tags: ["advanced"],
+    },
+    "agents.list.*.tools.draftVerification.pastedData": {
+      label: "Agent Draft Verification Pasted-Data Mode",
+      help: "Per-agent off, shadow, or repair override of tools.draftVerification.pastedData.",
+      tags: ["advanced"],
+    },
     "tools.web": {
       label: "Web Tools",
       help: "Web-tool policy grouping for search/fetch providers, limits, and fallback behavior tuning. Keep enabled settings aligned with API key availability and outbound networking policy.",
@@ -29412,30 +29448,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     "plugins.entries.*.config": {
       label: "Plugin Config",
       help: "Plugin-defined configuration payload interpreted by that plugin's own schema and validation rules. Use only documented fields from the plugin to prevent ignored or invalid settings.",
-      tags: ["advanced"],
-    },
-    "tools.draftVerification": {
-      help: "Bounded request-grounded draft checks for Pi; disabled by default. Unsupported requirements remain unknown.",
-      tags: ["tools"],
-    },
-    "tools.draftVerification.mode": {
-      help: "off preserves delivery; shadow records deterministic checks without a model call; repair buffers text and allows one tool-free correction only when the turn used no tools.",
-      tags: ["tools"],
-    },
-    "tools.draftVerification.pastedData": {
-      help: "Mode for turns that carry a pasted-data file, where every figure the reply states must appear in a tool output or the request; repair there buffers the final answer of a tool-using turn and allows one tool-free correction. Default: tools.draftVerification.mode.",
-      tags: ["tools"],
-    },
-    "agents.list.*.tools.draftVerification": {
-      help: "Per-agent draft verification override.",
-      tags: ["advanced"],
-    },
-    "agents.list.*.tools.draftVerification.mode": {
-      help: "Per-agent off, shadow, or repair override of tools.draftVerification.mode.",
-      tags: ["advanced"],
-    },
-    "agents.list.*.tools.draftVerification.pastedData": {
-      help: "Per-agent off, shadow, or repair override of tools.draftVerification.pastedData.",
       tags: ["advanced"],
     },
     "models.providers.*.headers.*": {
