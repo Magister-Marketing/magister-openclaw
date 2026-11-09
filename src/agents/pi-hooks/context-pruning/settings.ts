@@ -50,17 +50,23 @@ export type ContextPruningConfig = {
    * `always` mode: how tool results inside the turn still in progress are pruned. A request whose
    * prompt would pass `triggerTokens` prunes every older result of the turn in one batch, and the
    * result is then sent unchanged until the next batch, so the prompt only grows at its end and a
-   * provider's prompt cache keeps hitting. The newest `keepLastAssistants` rounds are never touched.
+   * provider's prompt cache keeps hitting. The newest `keepLastAssistants` rounds are never touched,
+   * and neither is a result short enough that the soft trim leaves it whole.
    */
   batch?: {
     /**
-     * Prompt size in tokens that starts a batch (default: `softTrimRatio` of the window). Set it
-     * just under the size where the model's price changes, when it has one.
+     * Prompt size in tokens that starts a batch (default: `softTrimRatio` of the window, which
+     * is also its ceiling, so a small model is pruned before it fills). Set it just under the
+     * size where the model's price changes, when it has one.
      */
     triggerTokens?: number;
-    /** A batch that would free fewer tokens than this is skipped (default 20000). */
+    /**
+     * A batch that would free fewer tokens than this is skipped (default 20000). It is also how
+     * far under its expected size an answered request's reported prompt must be to count as a
+     * batch when the turn is read back from the session file.
+     */
     minFreedTokens?: number;
-    /** What replaces a result once a later batch clears it (default: `hardClear.placeholder`). */
+    /** What replaces a trimmed result once a later batch clears it (default: `hardClear.placeholder`). */
     placeholder?: string;
   };
   keepLastAssistants?: number;

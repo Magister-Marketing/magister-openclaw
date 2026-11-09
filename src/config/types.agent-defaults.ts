@@ -63,11 +63,11 @@ export type AgentContextPruningConfig = {
   completedTurnsClearArgs?: string[];
   /** `always` mode: prune the open turn's older tool results in batches, not one per request. */
   batch?: {
-    /** Prompt size in tokens that starts a batch (default: `softTrimRatio` of the window). */
+    /** Prompt size in tokens that starts a batch (default and ceiling: `softTrimRatio` of the window). */
     triggerTokens?: number;
     /** A batch that would free fewer tokens than this is skipped (default 20000). */
     minFreedTokens?: number;
-    /** What replaces a result once a later batch clears it. */
+    /** What replaces a trimmed result once a later batch clears it. */
     placeholder?: string;
   };
   keepLastAssistants?: number;

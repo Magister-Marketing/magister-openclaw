@@ -655,7 +655,7 @@ Notes:
 
 <Accordion title="always mode behavior">
 
-`mode: "always"` prunes on every request, for any provider. It is meant for long tool-heavy sessions, where the context would otherwise carry every fetched page to the end. It does not use the ratios above.
+`mode: "always"` prunes on every request, for any provider. It is meant for long tool-heavy sessions, where the context would otherwise carry every fetched page to the end. Of the ratios above it uses only `softTrimRatio`, as the default and the ceiling of `batch.triggerTokens`. Finished turns are pruned from the first request after them, however short the session.
 
 ```json5
 {
@@ -682,11 +682,13 @@ Notes:
 - `completedTurnsSessionKeys`: session key prefixes the completed-turns rule applies to, matched without the `agent:<id>:` qualifier.
 - `completedTurnsKeepReads`: path prefixes whose `read` results are never pruned, in finished turns or the turn in progress (reference files the agent reuses).
 - `completedTurnsClearArgs`: tool names whose string arguments longer than 2,000 characters are replaced by a short note once their turn has a reply. A `write` call's `content` is the whole file, which is already on disk. No effect while `completedTurns` is `keep`, the default.
-- `batch`: how the turn still in progress is pruned. A request whose prompt would pass `triggerTokens` soft-trims every tool result older than the newest `keepLastAssistants` rounds in one batch. Those results are then sent unchanged until the next batch, which clears them with `batch.placeholder` (default: `hardClear.placeholder`) and trims the newer ones.
+- `batch`: how the turn still in progress is pruned. A request whose prompt would pass `triggerTokens` soft-trims every tool result older than the newest `keepLastAssistants` rounds in one batch. Those results are then sent unchanged until the next batch, which replaces what the last one trimmed with `batch.placeholder` (default: `hardClear.placeholder`) and trims the newer ones. A result short enough that the trim left it whole (`softTrim.maxChars`) stays whole for the rest of the turn: it is often the only record that a call with a side effect went through.
   - Between batches the prompt only grows at its end, so a provider's prompt cache keeps hitting. Pruning one result per request rewrites a message the provider has already seen on every request.
-  - The prompt size is the one the provider reported for the previous request, plus an estimate of what was appended since. A reply that reported no usage starts no batch.
+  - The prompt size is the one the provider reported for the previous request, plus an estimate of what was appended since. A reply that reported no usage starts no batch, and a reply that failed or was stopped is not counted.
+  - Nothing is stored between requests: earlier batches are found again from the transcript. For a request already answered, a reported prompt at least `minFreedTokens` smaller than expected also marks a batch, so a later run of the same turn finds the batches of the first even where the session file differs from memory (an oversized result is cut on the way to the file).
+  - A turn whose results are all short is not pruned by batches; compaction remains the limit.
   - A batch that would free fewer than `minFreedTokens` (default 20000) is skipped.
-  - Set `triggerTokens` just under the prompt size where the model's price changes, when it has one.
+  - Set `triggerTokens` just under the prompt size where the model's price changes, when it has one. It is never applied above `softTrimRatio` of the context window, so a model with a small window is still pruned before it fills.
 
 </Accordion>
 

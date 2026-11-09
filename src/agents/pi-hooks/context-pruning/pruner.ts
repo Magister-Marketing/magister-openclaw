@@ -248,16 +248,24 @@ function findFirstUserIndex(messages: AgentMessage[]): number | null {
 }
 
 /**
+ * A reply to a request that failed or was stopped. The provider is never sent it again, a retry
+ * drops it from the running agent's memory while the session file keeps it, and it reports no
+ * prompt size, so nothing here counts it.
+ */
+function isFailedReply(message: AgentMessage | undefined): boolean {
+  return (
+    message?.role === "assistant" &&
+    (message.stopReason === "aborted" || message.stopReason === "error")
+  );
+}
+
+/**
  * Whether a message closes its turn with a reply: an assistant message with text that neither
  * failed nor was stopped. A turn that ended any other way (Stop pressed mid-turn, a model error,
  * an approval card with nothing said after it) has no reply holding what its tools found.
  */
 function isClosingReply(message: AgentMessage | undefined): boolean {
-  if (
-    message?.role !== "assistant" ||
-    message.stopReason === "aborted" ||
-    message.stopReason === "error"
-  ) {
+  if (message?.role !== "assistant" || isFailedReply(message)) {
     return false;
   }
   return message.content.some(
@@ -378,11 +386,7 @@ function clearLongToolCallArgs(
  * and for a provider that reported nothing.
  */
 function reportedPromptTokens(message: AgentMessage | undefined): number | null {
-  if (
-    message?.role !== "assistant" ||
-    message.stopReason === "aborted" ||
-    message.stopReason === "error"
-  ) {
+  if (message?.role !== "assistant" || isFailedReply(message)) {
     return null;
   }
   const usage = message.usage;
@@ -443,8 +447,20 @@ ${tail}`;
  *
  * Nothing is remembered between requests, so the batches are derived from the transcript: every
  * earlier request of the turn is replayed in order, each judged by the prompt size the provider
- * reported for the request before it plus what was appended since. The transcript only grows, so
- * replaying it always finds the same batches, and the same request is always sent the same way.
+ * reported for the request before it plus what was appended since. Within one run the transcript
+ * only grows, so the replay finds the batches the run made and every request is sent the same way.
+ *
+ * A later run of the same turn (an approval answered, "continue" after Stop, a retried step) reads
+ * the transcript back from the session file, where it can differ: a result over the size cap is
+ * cut only on the way to the file. Replayed on that, the size rule can miss a batch the first run
+ * made, and everything that batch pruned would go out whole again. So an answered request has a
+ * second witness, the prompt size its own reply reported: a prompt that came out well under
+ * "the one before plus what was appended" was pruned, whatever the replayed sizes say.
+ *
+ * That witness can be wrong: the same cut makes the first request after a reload smaller too. A
+ * batch read from it by mistake is applied one request late, which shrinks that request in turn,
+ * so the witness is not heard for the request right after a batch. A mistake therefore costs one
+ * rewrite and stops; it cannot become one more pruned round on every request.
  */
 function resolveBatchEnds(params: {
   messages: AgentMessage[];
@@ -457,39 +473,54 @@ function resolveBatchEnds(params: {
 }): number[] {
   const { messages, regionStart, settings } = params;
   const minFreedChars = settings.batch.minFreedTokens * CHARS_PER_TOKEN_ESTIMATE;
+  // A batch frees at least minFreedTokens by the estimate, and usually several times that.
+  const reportedDropTokens = Math.max(1, settings.batch.minFreedTokens);
   const ends: number[] = [];
   const assistants: number[] = [];
 
-  // `boundary` is the request whose input is messages[0, boundary).
-  const consider = (boundary: number) => {
+  // `boundary` is the request whose input is messages[0, boundary); `reply` is what answered it,
+  // undefined for the request about to be sent. True when the request starts a batch.
+  const startsBatch = (
+    boundary: number,
+    reply: AgentMessage | undefined,
+    afterBatch: boolean,
+  ): boolean => {
     const previous = assistants.at(-1);
     if (previous === undefined) {
       // The turn's first request: it has fetched nothing of its own yet.
-      return;
+      return false;
     }
     const reported = reportedPromptTokens(messages[previous]);
     if (reported === null) {
-      return;
+      return false;
     }
-    let appendedChars = 0;
-    for (let i = previous; i < boundary; i++) {
-      appendedChars += estimateMessageChars(messages[i]);
-    }
-    if (reported + appendedChars / CHARS_PER_TOKEN_ESTIMATE <= params.triggerTokens) {
-      return;
-    }
-
     // The batch ends at the keepLastAssistants-th last assistant before this request; undefined
     // while the turn has fewer.
     const keep = settings.keepLastAssistants;
     const end = keep <= 0 ? boundary : assistants.at(-keep);
     const previousEnd = ends.at(-1) ?? regionStart;
     if (end === undefined || end <= previousEnd) {
-      return;
+      return false;
     }
 
-    // What this batch frees: its own results are trimmed, and the batch before it, trimmed until
-    // now, is cleared.
+    let appendedChars = 0;
+    for (let i = previous; i < boundary; i++) {
+      if (!isFailedReply(messages[i])) {
+        appendedChars += estimateMessageChars(messages[i]);
+      }
+    }
+    const expected = reported + appendedChars / CHARS_PER_TOKEN_ESTIMATE;
+    const answered = reportedPromptTokens(reply);
+    if (!afterBatch && answered !== null && answered < expected - reportedDropTokens) {
+      ends.push(end);
+      return true;
+    }
+    if (expected <= params.triggerTokens) {
+      return false;
+    }
+
+    // What this batch frees: its own results are trimmed, and what the batch before it trimmed
+    // is cleared.
     let freedChars = 0;
     for (let i = previousEnd; i < end; i++) {
       if (params.isEligible(i)) {
@@ -507,18 +538,21 @@ function resolveBatchEnds(params: {
     }
     if (freedChars < minFreedChars) {
       // Not worth a full-price request: let the prompt grow until a batch frees enough.
-      return;
+      return false;
     }
     ends.push(end);
+    return true;
   };
 
+  let afterBatch = false;
   for (let i = regionStart; i < messages.length; i++) {
-    if (messages[i]?.role === "assistant") {
-      consider(i);
+    const message = messages[i];
+    if (message?.role === "assistant" && !isFailedReply(message)) {
+      afterBatch = startsBatch(i, message, afterBatch);
       assistants.push(i);
     }
   }
-  consider(messages.length);
+  startsBatch(messages.length, undefined, afterBatch);
   return ends;
 }
 
@@ -546,8 +580,12 @@ export function pruneContextMessages(params: {
     return messages;
   }
 
+  // cache-ttl protects the session's newest replies and does nothing until there are that many.
+  // `always` protects the newest rounds of the open turn instead, so a short session still gets
+  // its finished turns pruned on the first request after them, not one request late.
+  const always = settings.mode === "always";
   const cutoffIndex = findAssistantCutoffIndex(messages, settings.keepLastAssistants);
-  if (cutoffIndex === null) {
+  if (cutoffIndex === null && !always) {
     return messages;
   }
 
@@ -558,12 +596,12 @@ export function pruneContextMessages(params: {
   const pruneStartIndex = firstUserIndex === null ? messages.length : firstUserIndex;
 
   const isToolPrunable = params.isToolPrunable ?? makeToolPrunablePredicate(settings.tools);
-  const estimatedMessages = params.dropThinkingBlocksForEstimate
-    ? dropThinkingBlocks(messages)
-    : messages;
-
-  const totalCharsBefore = estimateContextChars(estimatedMessages);
-  let totalChars = totalCharsBefore;
+  // Only the cache-ttl ratios read the running total.
+  let totalChars = always
+    ? 0
+    : estimateContextChars(
+        params.dropThinkingBlocksForEstimate ? dropThinkingBlocks(messages) : messages,
+      );
   let next: AgentMessage[] | null = null;
 
   const replaceAt = (i: number, updated: AgentMessage) => {
@@ -589,7 +627,7 @@ export function pruneContextMessages(params: {
   const keptReads = readCallIdsUnder(
     messages,
     pruneStartIndex,
-    messages.length,
+    always ? messages.length : completedEnd,
     settings.completedTurnsKeepReads,
   );
   if (settings.completedTurns !== "keep") {
@@ -620,7 +658,7 @@ export function pruneContextMessages(params: {
     }
   }
 
-  if (settings.mode === "always") {
+  if (always) {
     // The turn still in progress. With completedTurns "keep" no turn is ever finished for this
     // rule, so the whole session is one region.
     const afterCompletedTurns: AgentMessage[] = next ?? messages;
@@ -630,8 +668,10 @@ export function pruneContextMessages(params: {
         msg?.role === "toolResult" && isToolPrunable(msg.toolName) && !keptReads.has(msg.toolCallId)
       );
     };
-    const triggerTokens =
-      settings.batch.triggerTokens ?? Math.floor(contextWindowTokens * settings.softTrimRatio);
+    // Never above softTrimRatio of the window: a trigger set for a large model would otherwise
+    // sit past the end of a small one, which would then never be pruned.
+    const windowTrigger = Math.floor(contextWindowTokens * settings.softTrimRatio);
+    const triggerTokens = Math.min(settings.batch.triggerTokens ?? windowTrigger, windowTrigger);
     const placeholder = settings.batch.placeholder ?? settings.hardClear.placeholder;
     // Each result is rewritten at most once per form, however many batches are weighed.
     const memo = (change: (msg: ToolResultMessage) => ToolResultMessage | null) => {
@@ -647,7 +687,12 @@ export function pruneContextMessages(params: {
       };
     };
     const trimmedAt = memo((msg) => softTrimToolResultMessage({ msg, settings }));
-    const clearedAt = memo((msg) => clearToolResultMessage({ msg, settings, placeholder }));
+    // A later batch clears what an earlier one trimmed. A result the trim left whole stays whole:
+    // it is short, often the only record that a call with a side effect went through, and the
+    // turn has no reply yet that says so.
+    const clearTrimmed = memo((msg) => clearToolResultMessage({ msg, settings, placeholder }));
+    const clearedAt = (i: number): AgentMessage =>
+      trimmedAt(i) === afterCompletedTurns[i] ? afterCompletedTurns[i] : clearTrimmed(i);
     const ends = resolveBatchEnds({
       messages: afterCompletedTurns,
       regionStart: completedEnd,
@@ -684,7 +729,7 @@ export function pruneContextMessages(params: {
 
   const prunableToolIndexes: number[] = [];
 
-  for (let i = pruneStartIndex; i < cutoffIndex; i++) {
+  for (let i = pruneStartIndex; i < (cutoffIndex ?? 0); i++) {
     const msg = (next ?? messages)[i];
     if (!msg || msg.role !== "toolResult") {
       continue;

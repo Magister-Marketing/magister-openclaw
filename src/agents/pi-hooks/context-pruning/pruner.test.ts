@@ -796,10 +796,21 @@ describe("pruneContextMessages", () => {
       expect(pruned).toBe(input);
     });
 
-    it("is idempotent, so the cleared call is sent the same way on every later request", () => {
-      const once = pruneContextMessages({ messages: messages(), settings, ctx: CONTEXT_WINDOW_1M });
-      const twice = pruneContextMessages({ messages: once, settings, ctx: CONTEXT_WINDOW_1M });
-      expect(twice).toEqual(once);
+    it("sends a cleared call the same way once the session has moved on", () => {
+      const now = pruneContextMessages({ messages: messages(), settings, ctx: CONTEXT_WINDOW_1M });
+      const later = pruneContextMessages({
+        messages: [
+          ...messages(),
+          makeAssistant([{ type: "text", text: "step 2 report" }]),
+          makeUser("step 3"),
+        ],
+        settings,
+        ctx: CONTEXT_WINDOW_1M,
+      });
+      // Step 1's three messages are the prefix every later request starts with.
+      expect(later.slice(0, 3)).toEqual(now.slice(0, 3));
+      // And step 2's own write is cleared now that step 2 has a reply.
+      expect(argsAt(later, 4).content).toContain("5000 characters cleared from context");
     });
   });
 
@@ -881,14 +892,25 @@ describe("pruneContextMessages", () => {
       settings?: EffectiveContextPruningSettings;
       ctx?: ExtensionContext;
       reportUsage?: boolean;
+      /** This request's first page is 40,000 chars in memory and cut to 8,000 in the file. */
+      oversizedAt?: number;
+      /** This request fails once: the retry drops the failed reply from memory, the file keeps it. */
+      failedAt?: number;
+      /** Every request also makes a call with a side effect, answered by a short confirmation. */
+      confirm?: boolean;
+      /** From this request on the turn is read back from the file, as a later run would. */
+      reloadAt?: number;
     }) {
       const use = params.settings ?? settings;
       const messages: AgentMessage[] = [makeUser("run the step")];
+      /** The same turn as the session file holds it, which is what a later run reads back. */
+      const file: AgentMessage[] = [messages[0]];
       const sent: AgentMessage[][] = [];
       const promptTokens: number[] = [];
       for (let request = 0; request < params.requests; request++) {
+        const reloaded = params.reloadAt !== undefined && request >= params.reloadAt;
         const prompt = pruneContextMessages({
-          messages,
+          messages: reloaded ? file : messages,
           settings: use,
           ctx: params.ctx ?? CONTEXT_WINDOW_1M,
         });
@@ -902,14 +924,48 @@ describe("pruneContextMessages", () => {
             : [
                 { id: `r${request}a`, name: "web_fetch", path: `https://example.com/${request}/a` },
                 { id: `r${request}b`, name: "web_fetch", path: `https://example.com/${request}/b` },
+                ...(params.confirm ? [{ id: `r${request}s`, name: "send", path: "a@b.c" }] : []),
               ];
-        messages.push(assistant(calls, params.reportUsage === false ? 0 : tokens));
+        if (request === params.failedAt) {
+          file.push({ ...(makeAssistant([]) as AssistantMessage), stopReason: "error" });
+        }
+        const reply = assistant(calls, params.reportUsage === false ? 0 : tokens);
+        messages.push(reply);
+        file.push(reply);
         for (const c of calls) {
-          messages.push(result(c.id, c.name, c.name === "read" ? SKILL : PAGE));
+          const text =
+            c.name === "read" ? SKILL : c.name === "send" ? `{"ok":true,"id":"${c.id}"}` : PAGE;
+          const whole =
+            request === params.oversizedAt && c.id.endsWith("a") ? "B".repeat(40_000) : text;
+          messages.push(result(c.id, c.name, whole));
+          file.push(result(c.id, c.name, whole.slice(0, 8_000)));
         }
       }
-      return { messages, sent, promptTokens };
+      return { messages, file, sent, promptTokens };
     }
+    /** Each fetched page of a prompt: 0 cleared, 1 trimmed, 2 whole. */
+    const fetchedKinds = (prompt: AgentMessage[]) =>
+      prompt
+        .filter((message) => message.role === "toolResult" && message.toolName === "web_fetch")
+        .map(textOf)
+        .map((text) =>
+          text === "[cleared in this turn]" ? 0 : text.includes("[Tool result trimmed:") ? 1 : 2,
+        );
+    /** What a later run would send for each request, reading the turn back from the file. */
+    const readBack = (file: AgentMessage[]) =>
+      file
+        .map((message, index) => ({ message, index }))
+        .filter(
+          ({ message }) =>
+            message.role === "assistant" && (message as AssistantMessage).stopReason !== "error",
+        )
+        .map(({ index }) =>
+          pruneContextMessages({
+            messages: file.slice(0, index),
+            settings,
+            ctx: CONTEXT_WINDOW_1M,
+          }),
+        );
     /** The requests that changed a message an earlier request had already sent. */
     const rewrites = (sent: AgentMessage[][]) =>
       sent
@@ -938,21 +994,67 @@ describe("pruneContextMessages", () => {
       expect(Math.max(...promptTokens)).toBeLessThanOrEqual(40_000 + 4_500);
     });
 
-    it("finds the same batches from the transcript alone, whenever it is asked", () => {
-      const { messages, sent } = runTurn({ requests: 30 });
-      const boundaries = messages
-        .map((message, index) => ({ message, index }))
-        .filter(({ message }) => message.role === "assistant")
-        .map(({ index }) => index);
-      // A fresh call per request, as a machine builds a fresh pruner per run.
-      boundaries.forEach((boundary, request) => {
-        const replayed = pruneContextMessages({
-          messages: messages.slice(0, boundary),
-          settings,
-          ctx: CONTEXT_WINDOW_1M,
-        });
-        expect(replayed).toEqual(sent[request]);
-      });
+    it("finds a batch again when a later run reads back a result the file cut short", () => {
+      // Request 7 fetches a page five times the usual size. In memory it pushes request 8 over
+      // the trigger; cut to the file's cap it would not have, so the sizes alone miss the batch.
+      const { file, sent } = runTurn({ requests: 16, oversizedAt: 7 });
+      expect(rewrites(sent)[0]).toBe(8);
+      const later = readBack(file);
+      for (let request = 9; request < sent.length; request++) {
+        expect(fetchedKinds(later[request])).toEqual(fetchedKinds(sent[request]));
+      }
+      expect(fetchedKinds(later[9])).toContain(1);
+    });
+
+    it("takes a prompt that shrank for another reason for one batch at most", () => {
+      // Request 6 fetches an oversized page and no batch follows. The run is reloaded at
+      // request 8, where the file's cut makes the prompt 8K tokens smaller than its size says:
+      // twice what counts as a batch here.
+      const roomy = {
+        ...settings,
+        batch: { ...settings.batch, triggerTokens: 80_000, minFreedTokens: 4_000 },
+      };
+      const { sent } = runTurn({ requests: 14, settings: roomy, oversizedAt: 6, reloadAt: 8 });
+      // Request 8 resends the cut page, and request 9 takes that drop for a batch. Then it
+      // stops: every later request is the one before it plus new messages.
+      expect(rewrites(sent)).toEqual([8, 9]);
+    });
+
+    it("counts no failed reply, which a retry drops from memory and the file keeps", () => {
+      // Request 9 fails once, right before the first batch: counted, the failed reply would
+      // stand in for one of the two newest rounds and move where the batch ends.
+      const { messages, file, sent } = runTurn({ requests: 16, failedAt: 9 });
+      expect(file.length).toBe(messages.length + 1);
+      const later = readBack(file);
+      for (let request = 0; request < sent.length; request++) {
+        expect(fetchedKinds(later[request])).toEqual(fetchedKinds(sent[request]));
+      }
+      expect(fetchedKinds(sent.at(-1) as AgentMessage[])).toContain(1);
+    });
+
+    it("leaves a short result whole through every batch", () => {
+      const { sent } = runTurn({ requests: 30, confirm: true });
+      const last = sent.at(-1) as AgentMessage[];
+      // The second batch has cleared the first one's pages...
+      expect(fetchedKinds(last)).toContain(0);
+      // ...and every confirmation of a call that changed something is still what the tool said.
+      const confirmations = last.filter(
+        (message) => message.role === "toolResult" && message.toolName === "send",
+      );
+      expect(confirmations.length).toBe(28);
+      for (const message of confirmations) {
+        expect(textOf(message)).toMatch(/^\{"ok":true,"id":"r\d+s"\}$/);
+      }
+    });
+
+    it("never waits for a trigger that sits past the end of the model's window", () => {
+      const tooHigh = { ...settings, batch: { ...settings.batch, triggerTokens: 1_000_000 } };
+      // softTrimRatio is 0.5: an 80K window prunes from 40K, whatever the configured trigger.
+      const small = { model: { contextWindow: 80_000 } } as unknown as ExtensionContext;
+      expect(rewrites(runTurn({ requests: 12, settings: tooHigh, ctx: small }).sent)).not.toEqual(
+        [],
+      );
+      expect(rewrites(runTurn({ requests: 12, settings: tooHigh }).sent)).toEqual([]);
     });
 
     it("trims the newest batch, clears the ones before it, and leaves the newest rounds whole", () => {
@@ -967,9 +1069,7 @@ describe("pruneContextMessages", () => {
       // keepLastAssistants is 2: the last two rounds of two pages each are untouched.
       expect(texts.slice(-4)).toEqual([PAGE, PAGE, PAGE, PAGE]);
       // Cleared results come first, then trimmed ones, then whole ones: nothing interleaves.
-      const kind = (text: string) =>
-        text === "[cleared in this turn]" ? 0 : text.includes("[Tool result trimmed:") ? 1 : 2;
-      const kinds = texts.map(kind);
+      const kinds = fetchedKinds(last);
       expect(kinds).toEqual([...kinds].toSorted((a, b) => a - b));
     });
 
@@ -1007,19 +1107,47 @@ describe("pruneContextMessages", () => {
       expect(rewrites(sent)).toEqual([]);
     });
 
-    it("never prunes a turn's first request, whatever earlier turns left behind", () => {
+    it("leaves a finished turn to the completed-turns rule and starts the next turn clean", () => {
       const earlier = runTurn({ requests: 6 }).messages;
+      const next = runTurn({ requests: 3 }).messages.slice(1);
       const messages = [
         ...earlier,
         makeAssistant([{ type: "text", text: "step 1 report" }]),
         makeUser("step 2"),
+        ...next,
       ];
       const pruned = pruneContextMessages({ messages, settings, ctx: CONTEXT_WINDOW_1M });
-      // The finished turn is cleared by the completed-turns rule, with its own placeholder.
-      const fetched = pruned.filter(
-        (message) => message.role === "toolResult" && message.toolName === "web_fetch",
+      const fetched = pruned
+        .filter((message) => message.role === "toolResult" && message.toolName === "web_fetch")
+        .map(textOf);
+      // Step 1's ten pages carry the between-turns placeholder; step 2's four are whole, and
+      // step 1's size does not count toward step 2's trigger.
+      expect(fetched).toEqual([
+        ...Array.from({ length: 10 }, () => "[cleared between turns]"),
+        PAGE,
+        PAGE,
+        PAGE,
+        PAGE,
+      ]);
+    });
+
+    it("prunes a finished turn on the first request after it, however short the session", () => {
+      // Two replies in the whole session, fewer than keepLastAssistants.
+      const messages = [
+        makeUser("step 1"),
+        assistant([{ id: "p1", name: "web_fetch", path: "https://example.com/1" }], 6_000),
+        result("p1", "web_fetch", PAGE),
+        makeAssistant([{ type: "text", text: "step 1 report" }]),
+        makeUser("step 2"),
+      ];
+      const short = { ...settings, keepLastAssistants: 3 };
+      const pruned = pruneContextMessages({ messages, settings: short, ctx: CONTEXT_WINDOW_1M });
+      expect(textOf(pruned[2])).toBe("[cleared between turns]");
+      // cache-ttl still does nothing until the session has that many replies.
+      const ttl = { ...short, mode: "cache-ttl" as const };
+      expect(pruneContextMessages({ messages, settings: ttl, ctx: CONTEXT_WINDOW_1M })).toBe(
+        messages,
       );
-      expect(fetched.map(textOf)).toEqual(fetched.map(() => "[cleared between turns]"));
     });
   });
 });
