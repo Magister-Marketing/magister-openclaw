@@ -5470,7 +5470,7 @@
             "type": "array"
           },
           "countries": {
-            "description": "redditads only: ISO 3166-1 alpha-2 codes; with none, the ad targets US.",
+            "description": "redditads and openaiads only: ISO 3166-1 alpha-2 codes; with none, the ad targets US.",
             "items": {
               "maxLength": 2,
               "type": "string"
@@ -5488,6 +5488,7 @@
             "type": "array"
           },
           "end_date": {
+            "description": "lifetime budgets only: when the campaign stops (ISO 8601). Leave it null for a daily budget, which runs until paused and ignores it.",
             "maxLength": 64,
             "minLength": 1,
             "type": "string"
@@ -5561,6 +5562,7 @@
               "pinterestads",
               "xads",
               "redditads",
+              "openaiads",
               "googleads"
             ],
             "type": "string"
@@ -6314,6 +6316,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "5a4f68cca5aa20eae02970d20de3d8614c5ac671237b80b356ca93cc0d18762b",
+  "registry_revision": "38eae8f874a7b42568990b34786f1bb53d724a4751b48b23034996e35ffcbccb",
   "schema_version": 1
 }
