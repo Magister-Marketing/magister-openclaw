@@ -358,9 +358,10 @@ export class LibraryRuntime {
         throw new Error(
           "publication_pending: Library context is not ready; retry after publication completes",
         );
+      const cache = await this.store.reconcile(state.project_id, state.epoch, state.sequence);
+      // Recorded only once the whole admission succeeded, local catch-up included.
       if (refreshSources && turn.fromGateway && turn.turnId)
         this.gatewayBarrier = { turnId: turn.turnId, key: barrierKey(state) };
-      const cache = await this.store.reconcile(state.project_id, state.epoch, state.sequence);
       this.active = true;
       return { mode: "active", state, cache };
     });
