@@ -1,6 +1,6 @@
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { admitWorkspaceFiles, writeLegacyWorkspaceFile } from "openclaw/plugin-sdk/core";
+import { workspaceFilesAuthoritative, writeLegacyWorkspaceFile } from "openclaw/plugin-sdk/core";
 import { withContextLock } from "./context-lock.js";
 import { atomicWriteFile, isRecord, readUtf8IfExists } from "./file-utils.js";
 import { callRuntimeGateway, RuntimeGatewayError } from "./gateway-runtime.js";
@@ -110,7 +110,10 @@ export async function retireLegacyMemoryFile(
   // Revocation still tries the clear when the Library admits this workspace,
   // through its legacy-write gate as the old sync did. That gate refuses in the
   // Library's active and recovery modes, where the cloud copy is authoritative.
-  if (!revoked && (await admitWorkspaceFiles(workspaceDir))) {
+  // A local check, not a turn admission: this runs inside the run, after run
+  // setup already admitted the Library, and a second admission cost the turn a
+  // state read, a /context-ready and another state read (2026-11-10 canary).
+  if (!revoked && (await workspaceFilesAuthoritative(workspaceDir))) {
     return;
   }
   if (!revoked && (await readUtf8IfExists(join(workspaceDir, IMPORT_STAMP))) === undefined) {

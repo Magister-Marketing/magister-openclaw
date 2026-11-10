@@ -4,6 +4,7 @@ import {
   readWorkspaceFileSnapshot,
   registerWorkspaceFileAuthority,
   WorkspaceFileAuthorityError,
+  workspaceFilesAuthoritative,
 } from "./workspace-file-authority.js";
 
 it("fails closed on snapshot admission but preserves context callback failures", async () => {
@@ -59,4 +60,28 @@ describe("workspace patch authority planning", () => {
     ]);
     expect(reader).toHaveBeenCalledExactlyOnceWith("resources/a.md");
   });
+});
+
+it("answers ownership locally when the authority can, else through admission", async () => {
+  await expect(workspaceFilesAuthoritative("/workspace")).resolves.toBe(false);
+  const admit = vi.fn(async () => true);
+  const local = registerWorkspaceFileAuthority({
+    version: 1,
+    wrap: (tool) => tool,
+    admit,
+    authoritative: async () => false,
+  });
+  try {
+    await expect(workspaceFilesAuthoritative("/workspace")).resolves.toBe(false);
+    expect(admit).not.toHaveBeenCalled();
+  } finally {
+    local();
+  }
+  const older = registerWorkspaceFileAuthority({ version: 1, wrap: (tool) => tool, admit });
+  try {
+    await expect(workspaceFilesAuthoritative("/workspace")).resolves.toBe(true);
+    expect(admit).toHaveBeenCalledTimes(1);
+  } finally {
+    older();
+  }
 });

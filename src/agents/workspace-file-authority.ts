@@ -21,14 +21,31 @@ export type WorkspaceFileAuthorityContext = {
 export type WorkspaceFileAuthority = {
   version: 1;
   wrap: (tool: AnyAgentTool, context: WorkspaceFileAuthorityContext) => AnyAgentTool;
-  admit: (workspaceDir: string) => Promise<boolean>;
+  /** `turnId`: the Gateway's turn, whose own admission may already have
+   * crossed the storage barrier this run would otherwise cross again. */
+  admit: (workspaceDir: string, options?: { turnId?: string }) => Promise<boolean>;
+  /** Whether the authority owns this workspace's files, read locally with no
+   * network and no turn admission (a hook that only needs to know). */
+  authoritative?: (workspaceDir: string) => Promise<boolean>;
   readSnapshot?: <T>(workspaceDir: string, read: () => Promise<T>) => Promise<T>;
   legacyWrite?: (workspaceDir: string, write: () => Promise<void>) => Promise<void>;
 };
 
 /** Awaited outside best-effort plugin hooks: storage admission must fail closed. */
-export async function admitWorkspaceFiles(workspaceDir: string): Promise<boolean> {
-  return (await authority?.admit(workspaceDir)) ?? false;
+export async function admitWorkspaceFiles(
+  workspaceDir: string,
+  options?: { turnId?: string },
+): Promise<boolean> {
+  return (await authority?.admit(workspaceDir, options)) ?? false;
+}
+
+/** Whether the storage authority owns this workspace's files, without a turn
+ * admission: the run's own admission (run setup) already crossed it this turn. */
+export async function workspaceFilesAuthoritative(workspaceDir: string): Promise<boolean> {
+  if (!authority) return false;
+  return authority.authoritative
+    ? authority.authoritative(workspaceDir)
+    : authority.admit(workspaceDir);
 }
 
 /** Source plugins keep old local projections only while that authority owns them. */

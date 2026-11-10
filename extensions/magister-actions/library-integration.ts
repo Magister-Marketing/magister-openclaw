@@ -23,7 +23,10 @@ export function registerHostedLibraryAuthority(): void {
     version: 1,
     wrap: (tool, context) =>
       hostedLibraryRuntime(context.workspaceDir)?.wrap(tool, context) ?? tool,
-    admit: async (workspace) => (await hostedLibraryRuntime(workspace)?.admit()) ?? false,
+    admit: async (workspace, options) =>
+      (await hostedLibraryRuntime(workspace)?.admit({ turnId: options?.turnId })) ?? false,
+    authoritative: async (workspace) =>
+      (await hostedLibraryRuntime(workspace)?.activated()) ?? false,
     legacyWrite: async (workspace, write) => {
       const runtime = hostedLibraryRuntime(workspace);
       return runtime ? runtime.writeLegacyProjection(write) : write();
@@ -33,6 +36,34 @@ export function registerHostedLibraryAuthority(): void {
       return runtime ? runtime.readSnapshot(read) : read();
     },
   });
+}
+
+/** The Gateway's turn id from the reconcile body (`turn_id`). Bounded and
+ * optional: no body, a bad one, or an older Gateway is no turn, which only
+ * means run setup crosses the barrier again, as it always did. */
+async function reconcileTurnId(req: IncomingMessage): Promise<string | undefined> {
+  if (req.readableEnded) return undefined;
+  const body = await new Promise<string>((resolve) => {
+    let text = "";
+    const done = (value: string) => {
+      clearTimeout(timer);
+      req.removeAllListeners("data");
+      resolve(value);
+    };
+    const timer = setTimeout(() => done(""), 1_000);
+    req.on("data", (chunk: Buffer) => {
+      text += chunk.toString("utf8");
+      if (text.length > 4_096) done("");
+    });
+    req.on("end", () => done(text));
+    req.on("error", () => done(""));
+  });
+  try {
+    const turnId = (JSON.parse(body) as { turn_id?: unknown }).turn_id;
+    return typeof turnId === "string" && /^[A-Za-z0-9_-]{1,64}$/u.test(turnId) ? turnId : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function handleLibraryReconcile(
@@ -48,7 +79,8 @@ export async function handleLibraryReconcile(
   }
   try {
     const runtime = hostedLibraryRuntime();
-    const mode = (await runtime?.admissionMode({ fromGateway: true })) ?? "legacy";
+    const turnId = await reconcileTurnId(req);
+    const mode = (await runtime?.admissionMode({ fromGateway: true, turnId })) ?? "legacy";
     const active = mode === "active";
     const cache = active ? await runtime?.store.cache() : undefined;
     res.statusCode = 200;

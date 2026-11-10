@@ -256,6 +256,79 @@ afterEach(async () => {
   await fs.rm(workspace, { recursive: true, force: true });
 });
 
+describe("the Gateway's turn barrier", () => {
+  function contextReadyCalls() {
+    const calls: string[] = [];
+    const original = gateway.request;
+    gateway.request = (async (
+      method: "GET" | "POST",
+      endpoint: string,
+      values?: Record<string, unknown>,
+    ) => {
+      calls.push(endpoint);
+      return original(method, endpoint, values);
+    }) as typeof gateway.request;
+    return () => calls.filter((endpoint) => endpoint === "/context-ready").length;
+  }
+
+  it("lets run setup reuse the barrier the Gateway crossed for the same turn", async () => {
+    const count = contextReadyCalls();
+    await expect(runtime.admit({ fromGateway: true, turnId: "turn-1" })).resolves.toBe(true);
+    await expect(runtime.admit({ turnId: "turn-1" })).resolves.toBe(true);
+    expect(count()).toBe(1);
+  });
+
+  it("crosses it again for another turn, after a commit, or with no turn", async () => {
+    const count = contextReadyCalls();
+    await runtime.admit({ fromGateway: true, turnId: "turn-1" });
+    await runtime.admit({ turnId: "turn-2" }); // another turn
+    expect(count()).toBe(2);
+    gateway.put("resources/new.md", "a commit moves the sequence");
+    await runtime.admit({ turnId: "turn-1" }); // same turn, the Library moved
+    expect(count()).toBe(3);
+    await runtime.admit({ fromGateway: true, turnId: "turn-3" });
+    await runtime.admit(); // a run the Gateway did not admit (cron, workflow)
+    expect(count()).toBe(5);
+  });
+
+  it("records no barrier when the Gateway sends no turn id", async () => {
+    const count = contextReadyCalls();
+    await runtime.admit({ fromGateway: true });
+    await runtime.admit({ turnId: "turn-1" });
+    expect(count()).toBe(2);
+  });
+
+  it("records no barrier while publication is pending", async () => {
+    const count = contextReadyCalls();
+    gateway.state.coverage.complete = false;
+    await expect(runtime.admit({ fromGateway: true, turnId: "turn-1" })).rejects.toThrow(
+      "publication_pending",
+    );
+    gateway.state.coverage.complete = true;
+    await expect(runtime.admit({ turnId: "turn-1" })).resolves.toBe(true);
+    expect(count()).toBe(2);
+  });
+});
+
+describe("activated", () => {
+  it("reads the activation marker, with no Library call", async () => {
+    // beforeEach admitted an active brand, which wrote the marker.
+    const calls: string[] = [];
+    const original = gateway.request;
+    gateway.request = (async (
+      method: "GET" | "POST",
+      endpoint: string,
+      values?: Record<string, unknown>,
+    ) => {
+      calls.push(endpoint);
+      return original(method, endpoint, values);
+    }) as typeof gateway.request;
+    await expect(runtime.activated()).resolves.toBe(true);
+    await expect((await freshVolume()).activated()).resolves.toBe(false);
+    expect(calls).toEqual([]);
+  });
+});
+
 describe("hosted Library tool authority", () => {
   it("fences direct legacy projections against cutover and keeps unknown outcomes open", async () => {
     const writeProjection = vi.fn(async () => {});

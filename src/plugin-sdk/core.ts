@@ -2,6 +2,7 @@ import type { ResolvedConfiguredAcpBinding } from "../acp/persistent-bindings.ty
 export {
   registerWorkspaceFileAuthority,
   admitWorkspaceFiles,
+  workspaceFilesAuthoritative,
   writeLegacyWorkspaceFile,
 } from "../agents/workspace-file-authority.js";
 export type {

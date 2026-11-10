@@ -141,6 +141,7 @@ function buildAgentCommandInput(params: {
   runId: string;
   messageChannel: string;
   eagerSchemaTools?: string[];
+  libraryTurnId?: string;
   senderIsOwner: boolean;
   abortSignal?: AbortSignal;
 }) {
@@ -154,6 +155,7 @@ function buildAgentCommandInput(params: {
     deliver: false as const,
     messageChannel: params.messageChannel,
     eagerSchemaTools: params.eagerSchemaTools,
+    libraryTurnId: params.libraryTurnId,
     bestEffortDeliver: false as const,
     senderIsOwner: params.senderIsOwner,
     allowModelOverride: true as const,
@@ -715,14 +717,15 @@ export async function handleOpenAiHttpRequest(
   const model = typeof payload.model === "string" ? payload.model : "openclaw";
   const user = typeof payload.user === "string" ? payload.user : undefined;
 
-  const { agentId, sessionKey, messageChannel, eagerSchemaTools } = resolveGatewayRequestContext({
-    req,
-    model,
-    user,
-    sessionPrefix: "openai",
-    defaultMessageChannel: "webchat",
-    useMessageChannelHeader: true,
-  });
+  const { agentId, sessionKey, messageChannel, eagerSchemaTools, libraryTurnId } =
+    resolveGatewayRequestContext({
+      req,
+      model,
+      user,
+      sessionPrefix: "openai",
+      defaultMessageChannel: "webchat",
+      useMessageChannelHeader: true,
+    });
   const { modelOverride, errorMessage: modelError } = await resolveOpenAiCompatModelOverride({
     req,
     agentId,
@@ -775,6 +778,7 @@ export async function handleOpenAiHttpRequest(
     runId,
     messageChannel,
     eagerSchemaTools,
+    libraryTurnId,
     abortSignal: abortController.signal,
     senderIsOwner,
   });

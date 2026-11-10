@@ -47,6 +47,8 @@ export async function resolveHookModelSelection(params: {
   modelId: string;
   hookRunner?: HookRunnerLike | null;
   hookContext: HookContext;
+  /** The Gateway's turn id, when it admitted the Library for this turn. */
+  libraryTurnId?: string;
 }) {
   let provider = params.provider;
   let modelId = params.modelId;
@@ -54,7 +56,7 @@ export async function resolveHookModelSelection(params: {
   let legacyBeforeAgentStartResult: PluginHookBeforeAgentStartResult | undefined;
   const hookRunner = params.hookRunner;
 
-  await admitWorkspaceFiles(params.hookContext.workspaceDir);
+  await admitWorkspaceFiles(params.hookContext.workspaceDir, { turnId: params.libraryTurnId });
 
   // Run before_model_resolve hooks early so plugins can override the
   // provider/model before resolveModel().
