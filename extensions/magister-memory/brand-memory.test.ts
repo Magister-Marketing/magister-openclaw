@@ -237,6 +237,33 @@ describe("before_model_resolve hook", () => {
     );
   });
 
+  it("asks the Library whether it owns the files locally, never with a second turn admission", async () => {
+    stubBrandMemoryGateway(["Tone: plain"]);
+    await mkdir(join(dir, ".magister", "state"), { recursive: true });
+    await writeFile(join(dir, ".magister", "state", "brand-memory-import"), "{}\n");
+    await writeFile(join(dir, "MEMORY.md"), "Tone: plain (Library copy)", "utf8");
+    // Run setup already admitted the Library this turn: another admission
+    // would cost a state read, a /context-ready and a state read again.
+    const admit = vi.fn(async () => {
+      throw new Error("a hook must not admit the Library again");
+    });
+    const unregister = registerWorkspaceFileAuthority({
+      version: 1,
+      wrap: (tool) => tool,
+      admit,
+      authoritative: async () => true,
+    });
+    try {
+      const { run } = registerHook();
+      await run("same");
+      expect(admit).not.toHaveBeenCalled();
+      // The Library owns the files: a stamped copy is left alone, not retired.
+      expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("Tone: plain (Library copy)");
+    } finally {
+      unregister();
+    }
+  });
+
   it("empties a stamped MEMORY.md even when the refresh fails", async () => {
     const gateway = stubBrandMemoryGateway(["Tone: plain"]);
     gateway.failing.add("/api/runtime/marketing-context");

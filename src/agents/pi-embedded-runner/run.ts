@@ -511,6 +511,7 @@ export async function runEmbeddedPiAgent(
         modelId,
         hookRunner,
         hookContext: hookCtx,
+        libraryTurnId: params.libraryTurnId,
       });
       provider = hookSelection.provider;
       modelId = hookSelection.modelId;
