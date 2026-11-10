@@ -37,6 +37,11 @@ export type LegacyWriteOutcome = "completed" | "no_effect" | "unknown";
 type Admission =
   | { mode: "active"; state: LibraryState; cache: LibraryCache }
   | { mode: "recovery"; state: LibraryState; cache?: LibraryCache };
+/** Who is admitting the turn: the Gateway's reconcile call, or run setup of
+ * the Gateway's turn `turnId`. */
+type TurnAdmission = { fromGateway?: boolean; turnId?: string };
+/** The Library barrier a turn admission crosses: this project, epoch and sequence. */
+const barrierKey = (state: LibraryState) => `${state.project_id}:${state.epoch}:${state.sequence}`;
 const recoveryError = () =>
   new Error(
     "temporarily_unavailable: Library recovery is in progress; Library files are unavailable until it finishes. Other tools keep working.",
@@ -142,6 +147,9 @@ export class LibraryRuntime {
   discoveryTimeoutMs = 3_000;
   discoveryBackoffMs = 60_000;
   private discoveryPausedUntil = 0;
+  /** The barrier the Gateway's admission crossed for its turn: run setup of the
+   * same turn reuses it while the Library is still at that epoch and sequence. */
+  private gatewayBarrier: { turnId: string; key: string } | undefined;
   /** Recovery's cloud path list is reused this long; a failure is never cached. */
   recoveryListingTtlMs = 30_000;
   private recoveryListing:
@@ -174,6 +182,11 @@ export class LibraryRuntime {
         return name === "activation" ? "active" : "shadow";
     }
     return undefined;
+  }
+  /** An activated volume: the Library owns its files (active or recovery) and
+   * can never fall back to legacy storage. A local marker read, no network. */
+  async activated(): Promise<boolean> {
+    return libraryActivated(this.workspace);
   }
   /** One bounded state read for a brand that is not enrolled yet. */
   private async discover(): Promise<boolean> {
@@ -295,7 +308,10 @@ export class LibraryRuntime {
   }
   /** undefined: legacy storage (never enrolled, legacy, or shadow). Only turn
    * admission discovers; a never-enrolled brand's tool calls cost nothing. */
-  private async admitted(refreshSources = false): Promise<Admission | undefined> {
+  private async admitted(
+    refreshSources = false,
+    turn: TurnAdmission = {},
+  ): Promise<Admission | undefined> {
     if (!(await this.enrollment()) && !(refreshSources && (await this.discover()))) {
       this.active = false;
       return undefined;
@@ -320,7 +336,15 @@ export class LibraryRuntime {
         this.active = false;
         return undefined;
       }
-      if (refreshSources) {
+      // Run setup of a turn the Gateway already admitted: that admission
+      // published the required context for this turn. Reused only for the same
+      // turn and while the Library has not moved; anything else crosses it again.
+      const crossed =
+        !turn.fromGateway &&
+        !!turn.turnId &&
+        this.gatewayBarrier?.turnId === turn.turnId &&
+        this.gatewayBarrier.key === barrierKey(state);
+      if (refreshSources && !crossed) {
         await this.bridge.request("POST", "/context-ready", { project_id: state.project_id });
         state = await this.state();
         if (!state || state.mode !== "active")
@@ -335,23 +359,24 @@ export class LibraryRuntime {
           "publication_pending: Library context is not ready; retry after publication completes",
         );
       const cache = await this.store.reconcile(state.project_id, state.epoch, state.sequence);
+      // Recorded only once the whole admission succeeded, local catch-up included.
+      if (refreshSources && turn.fromGateway && turn.turnId)
+        this.gatewayBarrier = { turnId: turn.turnId, key: barrierKey(state) };
       this.active = true;
       return { mode: "active", state, cache };
     });
   }
   /** Turn admission. Recovery admits the turn without Library authority: only
    * Library file tools answer temporarily_unavailable. */
-  async admit(options: { fromGateway?: boolean } = {}): Promise<boolean> {
+  async admit(options: TurnAdmission = {}): Promise<boolean> {
     return (await this.admissionMode(options)) === "active";
   }
   /** The mode turn admission settled on, which the Gateway's reconcile call
    * checks: it admits a recovery turn only on an explicit "recovery". */
-  async admissionMode(
-    options: { fromGateway?: boolean } = {},
-  ): Promise<"active" | "recovery" | "legacy"> {
+  async admissionMode(options: TurnAdmission = {}): Promise<"active" | "recovery" | "legacy"> {
     // The Gateway calling us is proof it is reachable: skip any discovery backoff.
     if (options.fromGateway) this.discoveryPausedUntil = 0;
-    return (await this.admitted(true))?.mode ?? "legacy";
+    return (await this.admitted(true, options))?.mode ?? "legacy";
   }
   private async activeAdmission(): Promise<
     { state: LibraryState; cache: LibraryCache } | undefined

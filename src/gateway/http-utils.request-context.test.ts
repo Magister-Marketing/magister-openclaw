@@ -54,6 +54,22 @@ describe("resolveGatewayRequestContext", () => {
     expect(without.eagerSchemaTools).toEqual([]);
   });
 
+  it("reads a well-formed x-magister-turn-id into libraryTurnId", () => {
+    const context = (headers: Record<string, string>) =>
+      resolveGatewayRequestContext({
+        req: createReq(headers),
+        model: "openclaw",
+        sessionPrefix: "openai",
+        defaultMessageChannel: "webchat",
+      }).libraryTurnId;
+    expect(context({ "x-magister-turn-id": "6f1c0e3a-1b2c-4d5e-8f90-123456789abc" })).toBe(
+      "6f1c0e3a-1b2c-4d5e-8f90-123456789abc",
+    );
+    expect(context({})).toBeUndefined();
+    expect(context({ "x-magister-turn-id": "not a turn; id" })).toBeUndefined();
+    expect(context({ "x-magister-turn-id": "x".repeat(65) })).toBeUndefined();
+  });
+
   it("uses default messageChannel when header support is disabled", () => {
     const result = resolveGatewayRequestContext({
       req: createReq({ "x-openclaw-message-channel": "custom-channel" }),
