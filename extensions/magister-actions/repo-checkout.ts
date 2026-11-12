@@ -1268,9 +1268,6 @@ const CLOCK_SKEW_MS = 60_000;
  *  bounds how many are in flight, and a checkout holds at most
  *  `MAX_CHECKOUT_FILES`. */
 const STAT_BATCH = 64;
-/** A file-tool write is the last change to a file when the file is no newer
- *  than the call's end, give or take this. */
-const WRITE_MATCH_MS = 1_000;
 /** File-tool writes remembered, oldest forgotten first. */
 const MAX_FILE_WRITES = 5_000;
 
@@ -1395,31 +1392,54 @@ function pastTime(value: unknown, now: number): number {
   return Number.isFinite(at) && at <= now + CLOCK_SKEW_MS ? at : Number.NEGATIVE_INFINITY;
 }
 
-type FileWrite = { session: string; at: number };
+/** A file-tool write as it left the file: what the file must still look like
+ *  for the write to be the last change to it. `after` is null for a file the
+ *  call deleted. */
+type FileWrite = {
+  session: string;
+  at: number;
+  after: { mtimeMs: number; size: number } | null;
+};
 
 /** The last file-tool write to each file under the repository root, by
  *  absolute path, with the chat that made it. In-process like `repoCalls`:
  *  after a restart an edit names no chat and counts for the holder. */
 const fileWrites = new Map<string, FileWrite>();
 
-/** The files a write, edit or apply_patch call names by absolute path. A
- *  relative path resolves against the workspace, never a checkout. */
-function fileToolPaths(toolName: string, params: Record<string, unknown>): string[] {
+function stringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
+/** The files a successful write, edit or apply_patch call changed: the path
+ *  a write or edit names, and the files apply_patch reports changing — never
+ *  every file a patch names, since it may change fewer. Absolute paths only:
+ *  a relative path resolves against the workspace, never a checkout, and
+ *  apply_patch reports a file outside its workspace by its absolute path. */
+function fileToolChanges(
+  toolName: string,
+  params: Record<string, unknown>,
+  result: unknown,
+): Array<{ file: string; deleted: boolean }> {
   if (toolName === "write" || toolName === "edit") {
     const file = params.path ?? params.file_path;
-    return typeof file === "string" ? [file] : [];
+    return typeof file === "string" ? [{ file, deleted: false }] : [];
   }
-  if (toolName === "apply_patch" && typeof params.input === "string") {
-    const files: string[] = [];
-    for (const line of params.input.split("\n")) {
-      const named = /^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/.exec(line.trim());
-      if (named?.[1]) {
-        files.push(named[1].trim());
-      }
-    }
-    return files;
+  if (toolName !== "apply_patch" || !result || typeof result !== "object") {
+    return [];
   }
-  return [];
+  const details = (result as { details?: unknown }).details;
+  const summary =
+    details && typeof details === "object" ? (details as { summary?: unknown }).summary : null;
+  if (!summary || typeof summary !== "object") {
+    return [];
+  }
+  const { added, modified, deleted } = summary as Record<string, unknown>;
+  return [
+    ...[...stringList(added), ...stringList(modified)].map((file) => ({ file, deleted: false })),
+    ...stringList(deleted).map((file) => ({ file, deleted: true })),
+  ];
 }
 
 /**
@@ -1429,18 +1449,33 @@ function fileToolPaths(toolName: string, params: Record<string, unknown>): strin
  * apart from another chat's; without it every uncommitted edit counts for the
  * holder, and a chat that edits before checking out would have its own work
  * credited to the chat that held the checkout last.
+ *
+ * Only a call that succeeded is recorded, only for the files it changed, and
+ * with the file's time and size just after it: a credit is a claim that this
+ * chat's edit is the one in the file, and a failed or partial call, or a
+ * later write by anyone, would make that claim false and let this chat's
+ * freeze sweep another chat's live edit.
  */
 export function recordFileToolWrite(
-  event: { toolName: string; params: Record<string, unknown> },
+  event: {
+    toolName: string;
+    params: Record<string, unknown>;
+    result?: unknown;
+    error?: string;
+  },
   context: { sessionKey?: string },
 ): void {
-  if (!context.sessionKey) {
+  if (!context.sessionKey || event.error) {
     return;
   }
   const root = `${repoRoot()}${path.sep}`;
   const session = repoSessionTag(context.sessionKey);
   const at = Date.now();
-  for (const file of fileToolPaths(event.toolName, event.params ?? {})) {
+  for (const { file, deleted } of fileToolChanges(
+    event.toolName,
+    event.params ?? {},
+    event.result,
+  )) {
     if (!path.isAbsolute(file)) {
       continue;
     }
@@ -1448,12 +1483,33 @@ export function recordFileToolWrite(
     if (!resolved.startsWith(root)) {
       continue;
     }
+    let after: FileWrite["after"] = null;
+    try {
+      const stats = fs.lstatSync(resolved);
+      after = { mtimeMs: stats.mtimeMs, size: stats.size };
+    } catch {
+      after = null;
+    }
     fileWrites.delete(resolved);
-    fileWrites.set(resolved, { session, at });
+    // A write whose file is gone, or a deletion whose file is back, cannot be
+    // shown to be what the file holds now: no credit, and no stale one either.
+    if (deleted !== (after === null)) {
+      continue;
+    }
+    fileWrites.set(resolved, { session, at, after });
     if (fileWrites.size > MAX_FILE_WRITES) {
       fileWrites.delete(fileWrites.keys().next().value as string);
     }
   }
+}
+
+/** Whether `write` is still the last change to a file now in `current`
+ *  (null when absent): the same time and size, or still deleted. */
+function stillTheLastWrite(write: FileWrite, current: fs.Stats | null): boolean {
+  if (!write.after || !current) {
+    return !write.after && !current;
+  }
+  return write.after.mtimeMs === current.mtimeMs && write.after.size === current.size;
 }
 
 /** Signs of work in the tree. `unattributed` is the newest that names no
@@ -1492,10 +1548,10 @@ async function treeActivity(
     );
     batch.forEach((file, index) => {
       const write = fileWrites.get(path.join(repoDir, file));
-      const modified = stats[index]?.mtimeMs;
+      const current = stats[index] ?? null;
       // A deleted file has no time of its own; its recorded deletion does.
-      const at = pastTime(modified ?? write?.at, now);
-      if (write && (modified === undefined || modified <= write.at + WRITE_MATCH_MS)) {
+      const at = pastTime(current?.mtimeMs ?? write?.at, now);
+      if (write && stillTheLastWrite(write, current)) {
         writers.set(file, write.session);
         chats.set(write.session, Math.max(chats.get(write.session) ?? at, at));
       } else {

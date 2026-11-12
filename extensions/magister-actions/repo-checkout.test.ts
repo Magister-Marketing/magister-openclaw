@@ -1400,36 +1400,93 @@ describe("two chats sharing one checkout", () => {
     );
   });
 
-  it("reads the files an apply_patch names, and not a file someone rewrote since", async () => {
+  /** Chat A pushed everything and is done; the checkout is clean. */
+  async function chatAFinished(): Promise<string> {
     const { repoDir } = bareUpstreamAndCheckout();
     await checkoutRepository(request({ session: "chat-a" }));
     fs.writeFileSync(path.join(repoDir, "README.md"), "chat A\n");
     const frozen = await prepareRepoCommit(prepare({ session: "chat-a" }));
     await pushRepoBranch(push({ commit_sha: frozen.commit_sha, session: "chat-a" }));
+    return repoDir;
+  }
 
+  /** What apply_patch hands the hook: the files it reports changing. */
+  function patchResult(changed: { added?: string[]; modified?: string[]; deleted?: string[] }) {
+    return {
+      content: [{ type: "text", text: "Success." }],
+      details: { summary: { added: [], modified: [], deleted: [], ...changed } },
+    };
+  }
+
+  it("credits an apply_patch with the files it reports changing, not every file it names", async () => {
+    const repoDir = await chatAFinished();
     const sessionKey = "agent:marketing:webchat:00000000-0000-4000-8000-00000000000d";
-    const file = path.join(repoDir, "notes.md");
-    fs.writeFileSync(file, "chat B\n");
+    const added = path.join(repoDir, "notes.md");
+    const named = path.join(repoDir, "README.md");
+    fs.writeFileSync(added, "chat B\n");
+    // README.md is named in the patch but the patch did not change it; a
+    // different chat's live edit is what is there now.
+    fs.writeFileSync(named, "chat C, editing right now\n");
     recordFileToolWrite(
       {
         toolName: "apply_patch",
-        params: { input: `*** Begin Patch\n*** Add File: ${file}\n+chat B\n*** End Patch` },
+        params: {
+          input: `*** Begin Patch\n*** Add File: ${added}\n+chat B\n*** Update File: ${named}\n@@\n-chat A\n+chat B\n*** End Patch`,
+        },
+        result: patchResult({ added: [added] }),
       },
       { sessionKey },
     );
-    // Written again after the recorded call by something that left no record.
-    const later = new Date(Date.now() + 30_000);
-    fs.utimesSync(file, later, later);
 
     await expect(
       prepareRepoCommit(prepare({ message: "B", session: repoSessionTag(sessionKey) })),
     ).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/another chat/i) });
+    expect(git(repoDir, "rev-list", "--count", "HEAD").trim()).toBe("2");
+  });
 
-    // Back to a time no later than the recorded call: the edit is B's again.
-    const before = new Date(Date.now() - 5_000);
-    fs.utimesSync(file, before, before);
+  it("credits nothing to a file-tool call that failed", async () => {
+    const repoDir = await chatAFinished();
+    const sessionKey = "agent:marketing:webchat:00000000-0000-4000-8000-00000000000e";
+    const file = path.join(repoDir, "b.md");
+    // Another chat's live edit is what is in the file; chat B's write failed.
+    fs.writeFileSync(file, "chat C, editing right now\n");
+    recordFileToolWrite(
+      {
+        toolName: "write",
+        params: { path: file, content: "chat B\n" },
+        error: "EACCES: permission denied",
+      },
+      { sessionKey },
+    );
+
     await expect(
       prepareRepoCommit(prepare({ message: "B", session: repoSessionTag(sessionKey) })),
+    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/another chat/i) });
+    expect(git(repoDir, "rev-list", "--count", "HEAD").trim()).toBe("2");
+  });
+
+  it("drops the credit once anyone writes the file again", async () => {
+    const repoDir = await chatAFinished();
+    const chatB = "agent:marketing:webchat:00000000-0000-4000-8000-00000000000f";
+    const chatC = "agent:marketing:webchat:00000000-0000-4000-8000-0000000000c0";
+    const file = path.join(repoDir, "b.md");
+    fs.writeFileSync(file, "chat B\n");
+    recordFileToolWrite({ toolName: "write", params: { path: file } }, { sessionKey: chatB });
+    // Moments later something with no record rewrites it.
+    fs.writeFileSync(file, "chat C, a longer live edit\n");
+
+    await expect(
+      prepareRepoCommit(prepare({ message: "B", session: repoSessionTag(chatB) })),
+    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/another chat/i) });
+
+    // A recorded write by chat C makes it chat C's, and only C's.
+    fs.writeFileSync(file, "chat C, through the file tool\n");
+    recordFileToolWrite({ toolName: "edit", params: { path: file } }, { sessionKey: chatC });
+    await expect(
+      prepareRepoCommit(prepare({ message: "B", session: repoSessionTag(chatB) })),
+    ).rejects.toMatchObject({ statusCode: 409 });
+    await expect(
+      prepareRepoCommit(prepare({ message: "C", session: repoSessionTag(chatC) })),
     ).resolves.toMatchObject({ status: "prepared" });
   });
 
