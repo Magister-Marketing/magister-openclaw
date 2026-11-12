@@ -66,18 +66,37 @@ export const WEBFLOW_CHECK_UNAVAILABLE_MESSAGE =
   "through the Webflow connection, because DNS did not answer. Try again in a minute; do " +
   "not try another way to read the page.";
 
-function brandHosts(path: string): readonly string[] {
+function readAllowlist(path: string): Record<string, unknown> | null {
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-    const listed = (parsed as { refused_hosts?: unknown } | null)?.refused_hosts;
-    return Array.isArray(listed)
-      ? listed.filter((host): host is string => typeof host === "string" && host.length > 0)
-      : [];
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
   } catch {
     // No machine file (a lane being set up, a test, the desktop app): the name and
     // DNS rules still hold, and the Gateway refuses the brand's hosts on what it serves.
-    return [];
+    return null;
   }
+}
+
+function brandHosts(path: string): readonly string[] {
+  const listed = readAllowlist(path)?.refused_hosts;
+  return Array.isArray(listed)
+    ? listed.filter((host): host is string => typeof host === "string" && host.length > 0)
+    : [];
+}
+
+/**
+ * Whether every site Webflow serves is refused, by DNS and response marks (Webflow's
+ * 2026-11-06 ruling), or only the names above and the hosts brands authorized
+ * (`refused_hosts`). The Gateway turns it off by writing
+ * `"refuse_all_hosted_sites": false` (its `WEBFLOW_REFUSE_ALL_HOSTED_SITES` switch,
+ * off since 2026-11-12), with every brand-authorized host in `refused_hosts`. Anything
+ * else, a missing file or key included, keeps the ruling: an older Gateway never
+ * leaves a machine reading less carefully.
+ */
+export function allHostedSitesRefused(
+  allowlistPath: string = process.env.MAGISTER_EGRESS_ALLOWLIST || DEFAULT_ALLOWLIST_PATH,
+): boolean {
+  return readAllowlist(allowlistPath)?.refuse_all_hosted_sites !== false;
 }
 
 function bare(hostname: string): string {
@@ -117,6 +136,9 @@ export function assertHostNotRefused(hostname: string): void {
 }
 
 export function isWebflowAddress(address: string): boolean {
+  if (!allHostedSitesRefused()) {
+    return false;
+  }
   const value = bare(address);
   const family = isIP(value);
   return family !== 0 && networks.check(value, family === 6 ? "ipv6" : "ipv4");
@@ -131,6 +153,9 @@ export function responseIsWebflow(
   headers: Pick<Headers, "get"> | null | undefined,
   html?: string | null,
 ): boolean {
+  if (!allHostedSitesRefused()) {
+    return false;
+  }
   const names: string[] = [];
   const all = headers as Partial<Headers> | null | undefined;
   if (typeof all?.forEach === "function") {
@@ -226,7 +251,7 @@ export async function assertNotWebflowSite(
 ): Promise<void> {
   assertHostNotRefused(hostname);
   const host = bare(hostname);
-  if (!host) {
+  if (!host || !allHostedSitesRefused()) {
     return;
   }
   const verdicts = await Promise.all(
