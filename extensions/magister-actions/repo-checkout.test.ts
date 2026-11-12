@@ -43,6 +43,7 @@ import {
   prepareRepoCommit,
   pushRepoBranch,
   resolveRepoDir,
+  recordFileToolWrite,
   repoSessionTag,
   reviewUrls,
   scrubToken,
@@ -1305,23 +1306,131 @@ describe("two chats sharing one checkout", () => {
     );
   });
 
-  it("keeps the hold when there are more changed paths than it will check", async () => {
-    const { repoDir } = upstreamAndCheckout();
-    await checkoutRepository(request({ session: "chat-a" }));
+  /** More changed paths than one commit may hold, all edited long ago. */
+  function manyOldChanges(repoDir: string): void {
     const old = new Date(Date.now() - CHECKOUT_HOLD_MS - 60_000);
     for (let index = 0; index <= MAX_PREPARED_FILES; index += 1) {
       const file = path.join(repoDir, `a${String(index).padStart(4, "0")}.md`);
       fs.writeFileSync(file, "x\n");
       fs.utimesSync(file, old, old);
     }
+  }
+
+  it("reads every changed path, however many, so one fresh edit among them keeps the hold", async () => {
+    const { repoDir } = upstreamAndCheckout();
+    await checkoutRepository(request({ session: "chat-a" }));
+    manyOldChanges(repoDir);
     goQuiet(repoDir);
-    // A fresh edit that sorts after every path the check would read.
+    // A fresh edit that sorts after every other changed path.
     fs.writeFileSync(path.join(repoDir, "zz.md"), "chat A, editing now\n");
 
     await expect(
       checkoutRepository(request({ discard_local_changes: true, session: "chat-b" })),
     ).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/another chat/i) });
     expect(fs.existsSync(path.join(repoDir, "zz.md"))).toBe(true);
+  });
+
+  it("lets the user drop a quiet chat's work however many paths it changed", async () => {
+    // Treating "too many to read" as "working now" kept the hold for ever,
+    // refusing even the consented discard.
+    const { repoDir } = upstreamAndCheckout();
+    await checkoutRepository(request({ session: "chat-a" }));
+    manyOldChanges(repoDir);
+    goQuiet(repoDir);
+
+    await expect(
+      checkoutRepository(request({ discard_local_changes: true, session: "chat-b" })),
+    ).resolves.toMatchObject({ repo: "acme/site" });
+    expect(fs.existsSync(path.join(repoDir, "a0000.md"))).toBe(false);
+  });
+
+  it("never says changes it cannot attribute are the other chat's, nor sends them there", async () => {
+    // Chat B edited without checking out first, so nothing says the edit is
+    // B's. Telling the user to commit or discard it from chat A would make A
+    // sweep in or destroy B's work: the very thing this guards against.
+    const { repoDir } = upstreamAndCheckout();
+    await checkoutRepository(request({ session: "chat-a" }));
+    fs.writeFileSync(path.join(repoDir, "b.md"), "chat B, editing without a checkout\n");
+
+    const refusals: CheckoutError[] = [];
+    await prepareRepoCommit(prepare({ message: "B", session: "chat-b" })).catch((error: unknown) =>
+      refusals.push(error as CheckoutError),
+    );
+    // And once chat A has been quiet for the whole hold.
+    goQuiet(repoDir);
+    const old = new Date(Date.now() - CHECKOUT_HOLD_MS - 60_000);
+    fs.utimesSync(path.join(repoDir, "b.md"), old, old);
+    await prepareRepoCommit(prepare({ message: "B", session: "chat-b" })).catch((error: unknown) =>
+      refusals.push(error as CheckoutError),
+    );
+
+    expect(refusals).toHaveLength(2);
+    for (const refusal of refusals) {
+      expect(refusal.message).toMatch(/another chat/i);
+      const said = `${refusal.message} ${refusal.userAction ?? ""}`;
+      expect(said).not.toMatch(
+        /that chat's|left uncommitted|discard it there|prepare and push it/i,
+      );
+    }
+    expect(fs.existsSync(path.join(repoDir, "b.md"))).toBe(true);
+  });
+
+  it("credits a file-tool edit to the chat that made it, not to the holder", async () => {
+    // Chat A pushed its work and is done; chat B edits without checking out.
+    const { repoDir } = bareUpstreamAndCheckout();
+    await checkoutRepository(request({ session: "chat-a" }));
+    fs.writeFileSync(path.join(repoDir, "README.md"), "chat A\n");
+    const frozen = await prepareRepoCommit(prepare({ session: "chat-a" }));
+    await pushRepoBranch(push({ commit_sha: frozen.commit_sha, session: "chat-a" }));
+
+    const sessionKey = "agent:marketing:webchat:00000000-0000-4000-8000-00000000000c";
+    const file = path.join(repoDir, "b.md");
+    fs.writeFileSync(file, "chat B\n");
+    recordFileToolWrite(
+      { toolName: "write", params: { path: file, content: "chat B\n" } },
+      { sessionKey },
+    );
+
+    const receipt = await prepareRepoCommit(
+      prepare({ message: "B", session: repoSessionTag(sessionKey) }),
+    );
+    expect(receipt.changed_files.map((entry) => entry.path)).toContain("b.md");
+    expect((readMarkerFile(repoDir).holder as { session?: string }).session).toBe(
+      repoSessionTag(sessionKey),
+    );
+  });
+
+  it("reads the files an apply_patch names, and not a file someone rewrote since", async () => {
+    const { repoDir } = bareUpstreamAndCheckout();
+    await checkoutRepository(request({ session: "chat-a" }));
+    fs.writeFileSync(path.join(repoDir, "README.md"), "chat A\n");
+    const frozen = await prepareRepoCommit(prepare({ session: "chat-a" }));
+    await pushRepoBranch(push({ commit_sha: frozen.commit_sha, session: "chat-a" }));
+
+    const sessionKey = "agent:marketing:webchat:00000000-0000-4000-8000-00000000000d";
+    const file = path.join(repoDir, "notes.md");
+    fs.writeFileSync(file, "chat B\n");
+    recordFileToolWrite(
+      {
+        toolName: "apply_patch",
+        params: { input: `*** Begin Patch\n*** Add File: ${file}\n+chat B\n*** End Patch` },
+      },
+      { sessionKey },
+    );
+    // Written again after the recorded call by something that left no record.
+    const later = new Date(Date.now() + 30_000);
+    fs.utimesSync(file, later, later);
+
+    await expect(
+      prepareRepoCommit(prepare({ message: "B", session: repoSessionTag(sessionKey) })),
+    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/another chat/i) });
+
+    // Back to a time no later than the recorded call: the edit is B's again.
+    const before = new Date(Date.now() - 5_000);
+    fs.utimesSync(file, before, before);
+    await expect(
+      prepareRepoCommit(prepare({ message: "B", session: repoSessionTag(sessionKey) })),
+    ).resolves.toMatchObject({ status: "prepared" });
   });
 
   it("keeps a quiet chat's checkout from passing to another chat's install", async () => {
