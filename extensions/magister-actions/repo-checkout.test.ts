@@ -9,7 +9,7 @@ import {
   resetDiagnosticEventsForTest,
   type DiagnosticEventPayload,
 } from "openclaw/plugin-sdk/diagnostic-runtime";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMagisterActionTool, nativeActionContract } from "./index.js";
 import {
   CHECKOUT_HOLD_MS,
@@ -862,13 +862,28 @@ describe("refreshing a checkout that holds frozen work", () => {
     });
   });
 
-  it("never discards a prepared commit it cannot show the caller prepared", async () => {
-    // Neither request says which chat it came from: a commit from before
-    // commits were attributed, or a call the host could not place. The
-    // explicit flag is consent to lose the caller's own work, not anyone's.
+  it("lets an explicit discard reach a commit no chat is recorded for, as it always has", async () => {
+    // Every commit already on a machine when chat attribution shipped has no
+    // chat, and so does one from a call the host could not place. Refusing
+    // those would leave them undiscardable by anyone, their own chat included.
+    const { repoDir } = bareUpstreamAndCheckout();
+    const base = git(repoDir, "rev-parse", "HEAD").trim();
+    fs.writeFileSync(path.join(repoDir, "README.md"), "edited\n");
+    await prepareRepoCommit(prepare());
+
+    await checkoutRepository(request({ discard_local_changes: true, session: "chat-b" }));
+    expect(git(repoDir, "rev-parse", "HEAD").trim()).toBe(base);
+
+    fs.writeFileSync(path.join(repoDir, "README.md"), "edited again\n");
+    await prepareRepoCommit(prepare());
+    await checkoutRepository(request({ discard_local_changes: true }));
+    expect(git(repoDir, "rev-parse", "HEAD").trim()).toBe(base);
+  });
+
+  it("keeps a caller it cannot place from discarding a working chat's commit", async () => {
     const { repoDir } = bareUpstreamAndCheckout();
     fs.writeFileSync(path.join(repoDir, "README.md"), "edited\n");
-    const prepared = await prepareRepoCommit(prepare());
+    const prepared = await prepareRepoCommit(prepare({ session: "chat-a" }));
 
     await expect(
       checkoutRepository(request({ discard_local_changes: true })),
@@ -1072,6 +1087,302 @@ describe("two chats sharing one checkout", () => {
     }
     const prepared = readMarkerFile(repoDir).prepared as Array<{ session?: string }>;
     expect(prepared.at(-1)?.session).toBeUndefined();
+  });
+
+  /** Age every trace a chat's repository steps left in the marker past the hold. */
+  function goQuiet(repoDir: string): void {
+    const marker = readMarkerFile(repoDir);
+    const old = new Date(Date.now() - CHECKOUT_HOLD_MS - 60_000).toISOString();
+    for (const commit of (marker.prepared ?? []) as Array<Record<string, unknown>>) {
+      commit.prepared_at = old;
+    }
+    if (marker.holder) {
+      (marker.holder as Record<string, unknown>).at = old;
+    }
+    writeMarkerFile(repoDir, marker);
+  }
+
+  it("counts a commit as pushed once a later commit stacked on it is pushed", async () => {
+    const { origin, repoDir } = bareUpstreamAndCheckout();
+    await checkoutRepository(request({ session: "chat-a" }));
+    fs.writeFileSync(path.join(repoDir, "README.md"), "v1\n");
+    const first = await prepareRepoCommit(prepare({ message: "v1", session: "chat-a" }));
+    fs.writeFileSync(path.join(repoDir, "README.md"), "v2\n");
+    const second = await prepareRepoCommit(prepare({ message: "v2", session: "chat-a" }));
+    await pushRepoBranch(push({ commit_sha: second.commit_sha, session: "chat-a" }));
+
+    // A push sends the commit and its ancestors, so the branch carries both.
+    expect(() =>
+      git(origin, "merge-base", "--is-ancestor", first.commit_sha, "magister/readme"),
+    ).not.toThrow();
+    // Nothing is left unpushed, so chat A has finished and chat B may start.
+    await expect(checkoutRepository(request({ session: "chat-b" }))).resolves.toMatchObject({
+      repo: "acme/site",
+    });
+  });
+
+  it("counts an earlier push to a branch as pushed after the branch moves on", async () => {
+    const { repoDir } = bareUpstreamAndCheckout();
+    await checkoutRepository(request({ session: "chat-a" }));
+    fs.writeFileSync(path.join(repoDir, "README.md"), "v1\n");
+    const first = await prepareRepoCommit(prepare({ message: "v1", session: "chat-a" }));
+    await pushRepoBranch(push({ commit_sha: first.commit_sha, session: "chat-a" }));
+    fs.writeFileSync(path.join(repoDir, "README.md"), "v2\n");
+    const second = await prepareRepoCommit(prepare({ message: "v2", session: "chat-a" }));
+    await pushRepoBranch(
+      push({
+        commit_sha: second.commit_sha,
+        expected_remote_sha: first.commit_sha,
+        session: "chat-a",
+      }),
+    );
+
+    // The marker keeps one entry per branch, which now names only the second.
+    await expect(checkoutRepository(request({ session: "chat-a" }))).resolves.toMatchObject({
+      repo: "acme/site",
+    });
+  });
+
+  it("lets another chat discard a quiet chat's unpushed work once the user agrees", async () => {
+    // A workflow run gets a new chat every run, a commit the Gateway refuses
+    // never hands its SHA back, and an abandoned chat never returns: without
+    // this, such a commit locked every other chat out until the 24-hour sweep.
+    const { repoDir } = bareUpstreamAndCheckout();
+    const base = git(repoDir, "rev-parse", "HEAD").trim();
+    await checkoutRepository(request({ session: "chat-a" }));
+    fs.writeFileSync(path.join(repoDir, "README.md"), "abandoned\n");
+    await prepareRepoCommit(prepare({ session: "chat-a" }));
+    goQuiet(repoDir);
+
+    const refusal = await checkoutRepository(request({ session: "chat-b" })).then(
+      () => null,
+      (error: unknown) => error as CheckoutError,
+    );
+    expect(refusal).toMatchObject({
+      statusCode: 409,
+      message: expect.stringMatching(/another chat/i),
+    });
+    expect(refusal?.userAction).toContain("discard_local_changes=true");
+
+    await expect(
+      checkoutRepository(request({ discard_local_changes: true, session: "chat-b" })),
+    ).resolves.toMatchObject({ status: "refreshed" });
+    expect(git(repoDir, "rev-parse", "HEAD").trim()).toBe(base);
+  });
+
+  it("keeps the hold while the holder runs sandbox commands", async () => {
+    const { repoDir } = upstreamAndCheckout();
+    await checkoutRepository(request({ session: "chat-a" }));
+    goQuiet(repoDir);
+    fs.writeFileSync(
+      workLayer(repoDir).runsLog,
+      `${JSON.stringify({
+        at: new Date(Date.now() - 60_000).toISOString(),
+        cwd: ".",
+        command: "npm test",
+        exit_code: 0,
+        duration_ms: 5_000,
+      })}\n`,
+    );
+
+    await expect(checkoutRepository(request({ session: "chat-b" }))).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringMatching(/another chat/i),
+    });
+  });
+
+  it("keeps the hold while the holder's dependency install is recent", async () => {
+    const { repoDir } = upstreamAndCheckout();
+    await checkoutRepository(request({ session: "chat-a" }));
+    goQuiet(repoDir);
+    const recent = new Date(Date.now() - 60_000).toISOString();
+    writeMarkerFile(repoDir, {
+      ...readMarkerFile(repoDir),
+      deps: {
+        manager: "npm",
+        lockfile: "package-lock.json",
+        sha256: "x",
+        state: "installed",
+        started_at: recent,
+        finished_at: recent,
+      },
+    });
+
+    await expect(checkoutRepository(request({ session: "chat-b" }))).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringMatching(/another chat/i),
+    });
+  });
+
+  it("keeps the hold while the holder is editing files, so another chat's freeze cannot sweep them", async () => {
+    const { repoDir } = upstreamAndCheckout();
+    await checkoutRepository(request({ session: "chat-a" }));
+    goQuiet(repoDir);
+    // Thirty-odd minutes of editing without a repository step: incident step 1.
+    fs.writeFileSync(path.join(repoDir, "README.md"), "chat A, still editing\n");
+
+    await expect(
+      prepareRepoCommit(prepare({ message: "Chat B", session: "chat-b" })),
+    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/another chat/i) });
+    expect(git(repoDir, "rev-list", "--count", "HEAD").trim()).toBe("1");
+
+    // Once the edits are old too, the hold is over.
+    const old = new Date(Date.now() - CHECKOUT_HOLD_MS - 60_000);
+    fs.utimesSync(path.join(repoDir, "README.md"), old, old);
+    await expect(
+      checkoutRepository(request({ discard_local_changes: true, session: "chat-b" })),
+    ).resolves.toMatchObject({ repo: "acme/site" });
+  });
+
+  it("keeps another chat's dependency install out while the holder works", async () => {
+    const { repoDir, root } = upstreamAndCheckout();
+    fakeLauncher(root);
+    await checkoutRepository(request({ session: "chat-a" }));
+    fs.writeFileSync(path.join(repoDir, "package-lock.json"), '{"lockfileVersion":3}');
+
+    try {
+      // It would take the repository lock for up to ten minutes.
+      await expect(
+        installRepoDependencies({ ...install(), session: "chat-b" } as Parameters<
+          typeof installRepoDependencies
+        >[0]),
+      ).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/another chat/i) });
+      await awaitRepositoryIdle("github", "acme/site");
+
+      await expect(
+        installRepoDependencies({ ...install(), session: "chat-a" } as Parameters<
+          typeof installRepoDependencies
+        >[0]),
+      ).resolves.toMatchObject({ status: "installing" });
+    } finally {
+      await awaitRepositoryIdle("github", "acme/site");
+    }
+  });
+
+  it("does not let a hold stamped in the future last for ever", async () => {
+    const { repoDir } = upstreamAndCheckout();
+    await checkoutRepository(request({ session: "chat-a" }));
+    const marker = readMarkerFile(repoDir);
+    writeMarkerFile(repoDir, {
+      ...marker,
+      holder: {
+        ...(marker.holder as object),
+        at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      },
+    });
+
+    await expect(checkoutRepository(request({ session: "chat-b" }))).resolves.toMatchObject({
+      repo: "acme/site",
+    });
+  });
+
+  it("recognises a discard the model spelled as a string, as the Gateway does", async () => {
+    const { repoDir } = upstreamAndCheckout();
+    const sessionKey = "agent:main:webchat:00000000-0000-4000-8000-00000000000b";
+    const release = trackRepoCall(
+      "checkout_repo",
+      { repo: "acme/site", discard_local_changes: "true" },
+      sessionKey,
+    );
+    try {
+      await checkoutRepository(request({ discard_local_changes: true }));
+    } finally {
+      release();
+    }
+    expect((readMarkerFile(repoDir).holder as { session?: string } | undefined)?.session).toBe(
+      repoSessionTag(sessionKey),
+    );
+  });
+
+  it("reports a request it cannot place with a chat, once, by route and reason", async () => {
+    const { repoDir } = bareUpstreamAndCheckout();
+    resetDiagnosticEventsForTest();
+    const events: DiagnosticEventPayload[] = [];
+    const stop = onInternalDiagnosticEvent((event) => {
+      events.push(event);
+    });
+    try {
+      fs.writeFileSync(path.join(repoDir, "README.md"), "edited\n");
+      await prepareRepoCommit(prepare({ message: "Nobody waiting" }));
+      fs.writeFileSync(path.join(repoDir, "second.md"), "more\n");
+      const releaseA = trackRepoCall(
+        "prepare_repo_commit",
+        { repo: "acme/site", message: "Same" },
+        "a",
+      );
+      const releaseB = trackRepoCall(
+        "prepare_repo_commit",
+        { repo: "acme/site", message: "Same" },
+        "b",
+      );
+      try {
+        await prepareRepoCommit(prepare({ message: "Same" }));
+      } finally {
+        releaseA();
+        releaseB();
+      }
+      // A request whose chat is known says nothing.
+      fs.writeFileSync(path.join(repoDir, "third.md"), "more\n");
+      await prepareRepoCommit(prepare({ message: "Known", session: "chat-a" }));
+    } finally {
+      stop();
+    }
+
+    expect(
+      events
+        .filter((event) => event.type === "plugin.caller.unattributed")
+        .map((event) => ({ toolName: event.toolName, reasonCode: event.reasonCode })),
+    ).toEqual([
+      { toolName: "magister_repo_prepare", reasonCode: "no_call" },
+      { toolName: "magister_repo_prepare", reasonCode: "ambiguous" },
+    ]);
+  });
+});
+
+describe("the checkout's record", () => {
+  it("survives a write that fails part way, so prepared commits are never forgotten", async () => {
+    const { repoDir } = bareUpstreamAndCheckout();
+    fs.writeFileSync(path.join(repoDir, "README.md"), "edited\n");
+    const frozen = await prepareRepoCommit(prepare({ session: "chat-a" }));
+
+    // The volume filled after the file was opened for writing: 1 GB volumes.
+    const realWriteFile = fs.promises.writeFile.bind(fs.promises);
+    const spy = vi
+      .spyOn(fs.promises, "writeFile")
+      .mockImplementation(async (file, data, options) => {
+        if (typeof file === "string" && file.includes("magister-checkout.json")) {
+          await realWriteFile(file, "");
+          throw Object.assign(new Error("no space left on device"), { code: "ENOSPC" });
+        }
+        return realWriteFile(file, data, options);
+      });
+    try {
+      fs.writeFileSync(path.join(repoDir, "second.md"), "more\n");
+      await expect(
+        prepareRepoCommit(prepare({ message: "second", session: "chat-a" })),
+      ).rejects.toBeDefined();
+    } finally {
+      spy.mockRestore();
+    }
+
+    const prepared = readMarkerFile(repoDir).prepared as Array<{ sha: string }>;
+    expect(prepared.map((commit) => commit.sha)).toContain(frozen.commit_sha);
+    // So a later refresh still refuses rather than moving HEAD over it.
+    await expect(checkoutRepository(request({ session: "chat-a" }))).rejects.toMatchObject({
+      statusCode: 409,
+    });
+  });
+
+  it("refuses rather than calling a checkout clean when git cannot read it", async () => {
+    const { repoDir } = upstreamAndCheckout();
+    fs.writeFileSync(path.join(repoDir, "README.md"), "local edit\n");
+    fs.writeFileSync(path.join(repoDir, ".git", "index"), "not an index");
+
+    await expect(checkoutRepository(request())).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringMatching(/could not read/i),
+    });
+    expect(fs.readFileSync(path.join(repoDir, "README.md"), "utf8")).toBe("local edit\n");
   });
 });
 
@@ -1810,6 +2121,10 @@ function readMarkerFile(repoDir: string): Record<string, unknown> {
   return JSON.parse(
     fs.readFileSync(path.join(repoDir, ".git", "magister-checkout.json"), "utf8"),
   ) as Record<string, unknown>;
+}
+
+function writeMarkerFile(repoDir: string, marker: Record<string, unknown>): void {
+  fs.writeFileSync(path.join(repoDir, ".git", "magister-checkout.json"), JSON.stringify(marker));
 }
 
 async function settled<T>(poll: () => Promise<T>, done: (value: T) => boolean): Promise<T> {

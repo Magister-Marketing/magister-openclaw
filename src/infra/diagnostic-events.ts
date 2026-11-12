@@ -93,6 +93,16 @@ export type DiagnosticPluginCleanupFailedEvent = DiagnosticBaseEvent & {
   reasonCode: string;
 };
 
+/** A plugin route served a request it could not attribute to the session that
+ *  made it, so it applied its rules for an unknown caller. */
+export type DiagnosticPluginCallerUnattributedEvent = DiagnosticBaseEvent & {
+  type: "plugin.caller.unattributed";
+  pluginId: string;
+  toolName?: string;
+  /** Why: no waiting call matched, or calls from several sessions did. */
+  reasonCode: "no_call" | "ambiguous";
+};
+
 export type DiagnosticMessageQueuedEvent = DiagnosticBaseEvent & {
   type: "message.queued";
   sessionKey?: string;
@@ -556,6 +566,7 @@ export type DiagnosticEventPayload =
   | DiagnosticWebhookDeliveryDeadLetteredEvent
   | DiagnosticHttpRequestErrorEvent
   | DiagnosticPluginCleanupFailedEvent
+  | DiagnosticPluginCallerUnattributedEvent
   | DiagnosticMessageQueuedEvent
   | DiagnosticMessageProcessedEvent
   | DiagnosticMessageDeliveryStartedEvent
