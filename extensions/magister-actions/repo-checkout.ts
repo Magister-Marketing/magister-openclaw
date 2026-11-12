@@ -1244,7 +1244,11 @@ function unpushedCommits(marker: CheckoutMarker | null): PreparedCommit[] {
 // repository step, a sandbox command, a dependency install or an uncommitted
 // file edit within `CHECKOUT_HOLD_MS`; none of the last three names a chat,
 // so they count for the holder. A holder that pushed everything and left the
-// tree clean has finished and frees the checkout at once.
+// tree clean has finished and frees the checkout at once. A holder that went
+// quiet with work still here keeps the checkout until the user agrees to drop
+// that work (an explicit discard): another chat's freeze or install would
+// build on it and take the hold, and the quiet chat's return would then count
+// as the other chat's work.
 //
 // A commit another chat prepared and has not pushed is never stacked on, and
 // is destroyed only by an explicit discard once that chat has stopped working
@@ -1258,8 +1262,9 @@ function unpushedCommits(marker: CheckoutMarker | null): PreparedCommit[] {
 export const CHECKOUT_HOLD_MS = 30 * 60 * 1000;
 /** A recorded time further ahead of the clock than this is not believed. */
 const CLOCK_SKEW_MS = 60_000;
-/** Uncommitted paths whose edit times are read as signs of work. */
-const MAX_ACTIVITY_PATHS = 200;
+/** Uncommitted paths whose edit times are read as signs of work: as many as
+ *  one commit may hold, since a tree with more cannot be frozen anyway. */
+const MAX_ACTIVITY_PATHS = MAX_PREPARED_FILES;
 
 type RepoAction =
   | "checkout_repo"
@@ -1391,14 +1396,20 @@ async function treeActivity(
   changed: string[],
   now: number,
 ): Promise<number> {
+  // More changes than are read cannot be shown to be old, so the newest is
+  // taken to be now: the hold is kept rather than guessed away.
+  if (changed.length > MAX_ACTIVITY_PATHS) {
+    return now;
+  }
   let newest = Math.max(
     pastTime(marker?.deps?.started_at, now),
     pastTime(marker?.deps?.finished_at, now),
   );
+  // The supervisor stamps `at` when a command ends, so it already is the end.
   for (const record of await readRunRecords(repoDir)) {
-    newest = Math.max(newest, pastTime(Date.parse(record.at) + record.duration_ms, now));
+    newest = Math.max(newest, pastTime(record.at, now));
   }
-  for (const file of changed.slice(0, MAX_ACTIVITY_PATHS)) {
+  for (const file of changed) {
     const stats = await fs.promises.lstat(path.join(repoDir, file)).catch(() => null);
     if (stats) {
       newest = Math.max(newest, pastTime(stats.mtimeMs, now));
@@ -1430,7 +1441,11 @@ type OtherChats = {
   commitsLive: boolean;
   /** Another chat holding the checkout and still at work in it. */
   holder: CheckoutHolder | null;
-  /** When that holder was last seen at work. */
+  /** Another chat holding the checkout that has stopped working there but
+   *  left uncommitted or unpushed work. Taking the checkout from it needs the
+   *  user's consent: building on that work would credit its return to us. */
+  idle: CheckoutHolder | null;
+  /** When the holder, working or idle, was last seen at work. */
   seen: number;
 };
 
@@ -1452,18 +1467,24 @@ async function otherChats(
     session !== undefined && typeof holder?.session === "string" && holder.session !== session
       ? holder
       : null;
+  const none = { holder: null, idle: null, seen: Number.NEGATIVE_INFINITY };
   if (commits.length === 0 && !other) {
-    return { commits, commitsLive: false, holder: null, seen: Number.NEGATIVE_INFINITY };
+    return { commits, commitsLive: false, ...none };
   }
   const tree = await treeActivity(repoDir, marker, changed, now);
   const working = (chat: string) => now - lastSeen(marker, chat, tree, now) < CHECKOUT_HOLD_MS;
   const commitsLive = commits.some((commit) => working(commit.session as string));
-  // A holder that pushed everything and left nothing uncommitted has finished.
-  const finished = other?.op === "push" && unpushed.length === 0 && changed.length === 0;
-  if (!other || finished || !working(other.session)) {
-    return { commits, commitsLive, holder: null, seen: Number.NEGATIVE_INFINITY };
+  // Nothing uncommitted or unpushed: whatever the holder did is finished or
+  // safely on the remote, so after a push the checkout is free at once.
+  const settled = unpushed.length === 0 && changed.length === 0;
+  if (!other || (other.op === "push" && settled)) {
+    return { commits, commitsLive, ...none };
   }
-  return { commits, commitsLive, holder: other, seen: lastSeen(marker, other.session, tree, now) };
+  const seen = lastSeen(marker, other.session, tree, now);
+  if (working(other.session)) {
+    return { commits, commitsLive, holder: other, idle: null, seen };
+  }
+  return { commits, commitsLive, holder: null, idle: settled ? null : other, seen };
 }
 
 function shortShas(commits: PreparedCommit[]): string {
@@ -1511,12 +1532,27 @@ function anotherChatsCommitsError(
   );
 }
 
-function anotherChatWorkingError(full: string, seen: number, clean: boolean): CheckoutError {
+function since(seen: number): string {
+  if (!Number.isFinite(seen)) {
+    return "a while ago";
+  }
   const minutes = Math.max(0, Math.round((Date.now() - seen) / 60_000));
+  return minutes < 1 ? "less than a minute ago" : `${minutes} minute(s) ago`;
+}
+
+/** Another chat stopped working here but left work behind, and this chat's
+ *  freeze or install would build on it. */
+function anotherChatsLeftWorkError(full: string, seen: number, step: string): CheckoutError {
   return new CheckoutError(
-    `Another chat in this project is working in the checkout of ${full}; it last worked there ${
-      minutes < 1 ? "less than a minute" : `${minutes} minute(s)`
-    } ago.`,
+    `Another chat in this project left uncommitted or unpushed work in the checkout of ${full}; it last worked there ${since(seen)}.`,
+    409,
+    `${SHARED_CHECKOUT} ${step} here would build on that chat's work. Ask the user whether that chat will finish it, or whether to drop it. Only if they choose to drop it, set aside anything this chat still needs from the checkout, then retry checkout_repo with discard_local_changes=true, which discards every uncommitted edit and that chat's unpushed commits, and take the checkout over.`,
+  );
+}
+
+function anotherChatWorkingError(full: string, seen: number, clean: boolean): CheckoutError {
+  return new CheckoutError(
+    `Another chat in this project is working in the checkout of ${full}; it last worked there ${since(seen)}.`,
     409,
     clean
       ? `${SHARED_CHECKOUT} Tell the user, and wait for that chat to finish. If the user confirms it has, retry checkout_repo with discard_local_changes=true to take the checkout over: it holds no uncommitted or unpushed work.`
@@ -2049,15 +2085,17 @@ async function headSha(repoDir: string): Promise<string> {
   return result.code === 0 ? result.stdout.trim() : "";
 }
 
-/** The paths `git status` reports as changed, untracked ones included.
+/** The paths `git status` reports as changed, every untracked file listed by
+ *  itself: a new folder is otherwise one entry whose time a file rewritten in
+ *  place inside it never changes.
  *
  *  A status git cannot produce is refused, never read as a clean tree: a
  *  refresh over a tree misread as clean would overwrite uncommitted work. */
 async function changedPaths(repoDir: string): Promise<string[]> {
-  const result = await runGit(["status", "--porcelain=v1", "-z", "--no-renames"], {
-    cwd: repoDir,
-    timeoutMs: GIT_COMMAND_TIMEOUT_MS,
-  });
+  const result = await runGit(
+    ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"],
+    { cwd: repoDir, timeoutMs: GIT_COMMAND_TIMEOUT_MS },
+  );
   if (result.code !== 0) {
     throw new CheckoutError(
       "Could not read the state of this checkout, so nothing was changed.",
@@ -2492,6 +2530,9 @@ async function freezeCheckout(
         others.seen,
         unpushed.length === 0 && changed.length === 0,
       );
+    }
+    if (others.idle) {
+      throw anotherChatsLeftWorkError(full, others.seen, "A commit");
     }
   }
   // A marker written before this field existed, or a checkout nothing has
@@ -3293,6 +3334,11 @@ async function performInstall(request: InstallRequest): Promise<InstallReceipt> 
         others.seen,
         unpushedCommits(marker).length === 0 && changed.length === 0,
       );
+    }
+    // An install takes the hold below, which is only right when nobody's
+    // work is left here; otherwise that chat's return would count as ours.
+    if (others.idle) {
+      throw anotherChatsLeftWorkError(full, others.seen, "Installing dependencies");
     }
   }
   const manager = await detectPackageManager(repoDir);
