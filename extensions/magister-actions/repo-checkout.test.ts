@@ -10,7 +10,7 @@ import {
   type DiagnosticEventPayload,
 } from "openclaw/plugin-sdk/diagnostic-runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createMagisterActionTool, nativeActionContract } from "./index.js";
+import magisterActions, { createMagisterActionTool, nativeActionContract } from "./index.js";
 import {
   CHECKOUT_HOLD_MS,
   CHECKOUT_TTL_MS,
@@ -43,7 +43,6 @@ import {
   prepareRepoCommit,
   pushRepoBranch,
   resolveRepoDir,
-  recordFileToolWrite,
   repoSessionTag,
   reviewUrls,
   scrubToken,
@@ -1375,119 +1374,106 @@ describe("two chats sharing one checkout", () => {
     expect(fs.existsSync(path.join(repoDir, "b.md"))).toBe(true);
   });
 
-  it("credits a file-tool edit to the chat that made it, not to the holder", async () => {
-    // Chat A pushed its work and is done; chat B edits without checking out.
-    const { repoDir } = bareUpstreamAndCheckout();
-    await checkoutRepository(request({ session: "chat-a" }));
-    fs.writeFileSync(path.join(repoDir, "README.md"), "chat A\n");
-    const frozen = await prepareRepoCommit(prepare({ session: "chat-a" }));
-    await pushRepoBranch(push({ commit_sha: frozen.commit_sha, session: "chat-a" }));
+  type ToolHook = (event: unknown, context: unknown) => unknown;
+  let toolHooks: ToolHook[] | undefined;
 
-    const sessionKey = "agent:marketing:webchat:00000000-0000-4000-8000-00000000000c";
-    const file = path.join(repoDir, "b.md");
-    fs.writeFileSync(file, "chat B\n");
-    recordFileToolWrite(
-      { toolName: "write", params: { path: file, content: "chat B\n" } },
-      { sessionKey },
-    );
-
-    const receipt = await prepareRepoCommit(
-      prepare({ message: "B", session: repoSessionTag(sessionKey) }),
-    );
-    expect(receipt.changed_files.map((entry) => entry.path)).toContain("b.md");
-    expect((readMarkerFile(repoDir).holder as { session?: string }).session).toBe(
-      repoSessionTag(sessionKey),
-    );
-  });
-
-  /** Chat A pushed everything and is done; the checkout is clean. */
-  async function chatAFinished(): Promise<string> {
-    const { repoDir } = bareUpstreamAndCheckout();
-    await checkoutRepository(request({ session: "chat-a" }));
-    fs.writeFileSync(path.join(repoDir, "README.md"), "chat A\n");
-    const frozen = await prepareRepoCommit(prepare({ session: "chat-a" }));
-    await pushRepoBranch(push({ commit_sha: frozen.commit_sha, session: "chat-a" }));
-    return repoDir;
-  }
-
-  /** What apply_patch hands the hook: the files it reports changing. */
-  function patchResult(changed: { added?: string[]; modified?: string[]; deleted?: string[] }) {
-    return {
-      content: [{ type: "text", text: "Success." }],
-      details: { summary: { added: [], modified: [], deleted: [], ...changed } },
-    };
-  }
-
-  it("credits an apply_patch with the files it reports changing, not every file it names", async () => {
-    const repoDir = await chatAFinished();
-    const sessionKey = "agent:marketing:webchat:00000000-0000-4000-8000-00000000000d";
-    const added = path.join(repoDir, "notes.md");
-    const named = path.join(repoDir, "README.md");
-    fs.writeFileSync(added, "chat B\n");
-    // README.md is named in the patch but the patch did not change it; a
-    // different chat's live edit is what is there now.
-    fs.writeFileSync(named, "chat C, editing right now\n");
-    recordFileToolWrite(
-      {
-        toolName: "apply_patch",
-        params: {
-          input: `*** Begin Patch\n*** Add File: ${added}\n+chat B\n*** Update File: ${named}\n@@\n-chat A\n+chat B\n*** End Patch`,
+  /** The plugin's `after_tool_call` hooks, from registering it once with a
+   *  stand-in host. */
+  function afterToolCallHooks(): ToolHook[] {
+    if (!toolHooks) {
+      const hooks: ToolHook[] = [];
+      magisterActions.register({
+        pluginConfig: {},
+        on: (name: string, handler: ToolHook) => {
+          if (name === "after_tool_call") {
+            hooks.push(handler);
+          }
         },
-        result: patchResult({ added: [added] }),
-      },
-      { sessionKey },
+        registerHttpRoute: () => undefined,
+        registerTool: () => undefined,
+      } as unknown as Parameters<typeof magisterActions.register>[0]);
+      toolHooks = hooks;
+    }
+    return toolHooks;
+  }
+
+  /** A file-tool write as the runtime makes one: the file changes, then every
+   *  `after_tool_call` hook the plugin installed hears of it. */
+  async function toolWrite(file: string, content: string, sessionKey: string): Promise<void> {
+    fs.writeFileSync(file, content);
+    for (const hook of afterToolCallHooks()) {
+      await hook(
+        { toolName: "write", params: { path: file, content }, result: { content: [] } },
+        { sessionKey, toolName: "write" },
+      );
+    }
+  }
+
+  const chatA = "agent:marketing:webchat:00000000-0000-4000-8000-0000000000a1";
+  const chatB = "agent:marketing:webchat:00000000-0000-4000-8000-0000000000b1";
+  const chatC = "agent:marketing:webchat:00000000-0000-4000-8000-0000000000c1";
+
+  it("keeps a chat's freeze from taking a file another chat is still editing (R1)", async () => {
+    // Crediting a whole file to its last writer made chat B's one-line tweak
+    // "settle" the file, and B's commit took chat A's live paragraph.
+    const { repoDir } = bareUpstreamAndCheckout();
+    const page = path.join(repoDir, "page.md");
+    await checkoutRepository(request({ session: repoSessionTag(chatA) }));
+    await toolWrite(page, "intro\n", chatA);
+    const first = await prepareRepoCommit(
+      prepare({ message: "A1", session: repoSessionTag(chatA) }),
     );
-
-    await expect(
-      prepareRepoCommit(prepare({ message: "B", session: repoSessionTag(sessionKey) })),
-    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/another chat/i) });
-    expect(git(repoDir, "rev-list", "--count", "HEAD").trim()).toBe("2");
-  });
-
-  it("credits nothing to a file-tool call that failed", async () => {
-    const repoDir = await chatAFinished();
-    const sessionKey = "agent:marketing:webchat:00000000-0000-4000-8000-00000000000e";
-    const file = path.join(repoDir, "b.md");
-    // Another chat's live edit is what is in the file; chat B's write failed.
-    fs.writeFileSync(file, "chat C, editing right now\n");
-    recordFileToolWrite(
-      {
-        toolName: "write",
-        params: { path: file, content: "chat B\n" },
-        error: "EACCES: permission denied",
-      },
-      { sessionKey },
-    );
-
-    await expect(
-      prepareRepoCommit(prepare({ message: "B", session: repoSessionTag(sessionKey) })),
-    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/another chat/i) });
-    expect(git(repoDir, "rev-list", "--count", "HEAD").trim()).toBe("2");
-  });
-
-  it("drops the credit once anyone writes the file again", async () => {
-    const repoDir = await chatAFinished();
-    const chatB = "agent:marketing:webchat:00000000-0000-4000-8000-00000000000f";
-    const chatC = "agent:marketing:webchat:00000000-0000-4000-8000-0000000000c0";
-    const file = path.join(repoDir, "b.md");
-    fs.writeFileSync(file, "chat B\n");
-    recordFileToolWrite({ toolName: "write", params: { path: file } }, { sessionKey: chatB });
-    // Moments later something with no record rewrites it.
-    fs.writeFileSync(file, "chat C, a longer live edit\n");
+    await pushRepoBranch(push({ commit_sha: first.commit_sha, session: repoSessionTag(chatA) }));
+    await toolWrite(page, "intro\nA: live, unpushed paragraph\n", chatA);
+    await toolWrite(page, "intro (B's tweak)\nA: live, unpushed paragraph\n", chatB);
 
     await expect(
       prepareRepoCommit(prepare({ message: "B", session: repoSessionTag(chatB) })),
     ).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/another chat/i) });
+    expect(git(repoDir, "rev-list", "--count", "HEAD").trim()).toBe("2");
+  });
 
-    // A recorded write by chat C makes it chat C's, and only C's.
-    fs.writeFileSync(file, "chat C, through the file tool\n");
-    recordFileToolWrite({ toolName: "edit", params: { path: file } }, { sessionKey: chatC });
+  it("keeps the holder's own freeze open while another chat touched its file (R2)", async () => {
+    const { repoDir } = upstreamAndCheckout();
+    const page = path.join(repoDir, "page.md");
+    await checkoutRepository(request({ session: repoSessionTag(chatA) }));
+    const marker = readMarkerFile(repoDir);
+    (marker.holder as Record<string, unknown>).at = new Date(
+      Date.now() - 35 * 60_000,
+    ).toISOString();
+    writeMarkerFile(repoDir, marker);
+    await toolWrite(page, "intro\nA: live paragraph\n", chatA);
+    await toolWrite(page, "intro (B)\nA: live paragraph\n", chatB);
+
+    await expect(
+      prepareRepoCommit(prepare({ message: "B", session: repoSessionTag(chatB) })),
+    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/another chat/i) });
+    // Chat A, the holder, still freezes its own work.
+    await expect(
+      prepareRepoCommit(prepare({ message: "A", session: repoSessionTag(chatA) })),
+    ).resolves.toMatchObject({ status: "prepared" });
+  });
+
+  it("keeps a third chat's fresh edit from a consented discard while the holder is quiet (R3)", async () => {
+    const { repoDir } = upstreamAndCheckout();
+    await checkoutRepository(request({ session: repoSessionTag(chatA) }));
+    const leftover = path.join(repoDir, "README.md");
+    await toolWrite(leftover, "A's old leftover\n", chatA);
+    const old = new Date(Date.now() - 40 * 60_000);
+    fs.utimesSync(leftover, old, old);
+    const marker = readMarkerFile(repoDir);
+    (marker.holder as Record<string, unknown>).at = old.toISOString();
+    writeMarkerFile(repoDir, marker);
+    const live = path.join(repoDir, "c.md");
+    await toolWrite(live, "C: live work, written seconds ago\n", chatC);
+
     await expect(
       prepareRepoCommit(prepare({ message: "B", session: repoSessionTag(chatB) })),
     ).rejects.toMatchObject({ statusCode: 409 });
     await expect(
-      prepareRepoCommit(prepare({ message: "C", session: repoSessionTag(chatC) })),
-    ).resolves.toMatchObject({ status: "prepared" });
+      checkoutRepository(request({ discard_local_changes: true, session: repoSessionTag(chatB) })),
+    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/another chat/i) });
+    expect(fs.existsSync(live)).toBe(true);
   });
 
   it("keeps a quiet chat's checkout from passing to another chat's install", async () => {

@@ -1242,11 +1242,13 @@ function unpushedCommits(marker: CheckoutMarker | null): PreparedCommit[] {
 // installed *holds* the checkout, and while it is still at work there no
 // other chat may check out, freeze, discard or install. "At work" means a
 // repository step, a sandbox command, a dependency install or an uncommitted
-// file edit within `CHECKOUT_HOLD_MS`. An edit a file tool made is credited
-// to the chat that made it (`recordFileToolWrite`); commands, installs and
-// any edit no recorded write accounts for name no chat, so they count for the
-// holder, and a refusal over them never claims to know whose they are. A holder that pushed everything and left the
-// tree clean has finished and frees the checkout at once. A holder that went
+// file edit within `CHECKOUT_HOLD_MS`. Only the first of these names a chat,
+// so the rest count for the holder, and a refusal over them never claims to
+// know whose they are. (Crediting each edited file to the chat whose file
+// tool wrote it last was tried and removed: a file two chats edit belongs to
+// neither, and a credit let one chat's freeze take the other's lines.) A
+// holder that pushed everything and left the tree clean has finished and
+// frees the checkout at once. A holder that went
 // quiet with work still here keeps the checkout until the user agrees to drop
 // that work (an explicit discard): another chat's freeze or install would
 // build on it and take the hold, and the quiet chat's return would then count
@@ -1268,8 +1270,6 @@ const CLOCK_SKEW_MS = 60_000;
  *  bounds how many are in flight, and a checkout holds at most
  *  `MAX_CHECKOUT_FILES`. */
 const STAT_BATCH = 64;
-/** File-tool writes remembered, oldest forgotten first. */
-const MAX_FILE_WRITES = 5_000;
 
 type RepoAction =
   | "checkout_repo"
@@ -1392,193 +1392,50 @@ function pastTime(value: unknown, now: number): number {
   return Number.isFinite(at) && at <= now + CLOCK_SKEW_MS ? at : Number.NEGATIVE_INFINITY;
 }
 
-/** A file-tool write as it left the file: what the file must still look like
- *  for the write to be the last change to it. `after` is null for a file the
- *  call deleted. */
-type FileWrite = {
-  session: string;
-  at: number;
-  after: { mtimeMs: number; size: number } | null;
-};
-
-/** The last file-tool write to each file under the repository root, by
- *  absolute path, with the chat that made it. In-process like `repoCalls`:
- *  after a restart an edit names no chat and counts for the holder. */
-const fileWrites = new Map<string, FileWrite>();
-
-function stringList(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === "string")
-    : [];
-}
-
-/** The files a successful write, edit or apply_patch call changed: the path
- *  a write or edit names, and the files apply_patch reports changing — never
- *  every file a patch names, since it may change fewer. Absolute paths only:
- *  a relative path resolves against the workspace, never a checkout, and
- *  apply_patch reports a file outside its workspace by its absolute path. */
-function fileToolChanges(
-  toolName: string,
-  params: Record<string, unknown>,
-  result: unknown,
-): Array<{ file: string; deleted: boolean }> {
-  if (toolName === "write" || toolName === "edit") {
-    const file = params.path ?? params.file_path;
-    return typeof file === "string" ? [{ file, deleted: false }] : [];
-  }
-  if (toolName !== "apply_patch" || !result || typeof result !== "object") {
-    return [];
-  }
-  const details = (result as { details?: unknown }).details;
-  const summary =
-    details && typeof details === "object" ? (details as { summary?: unknown }).summary : null;
-  if (!summary || typeof summary !== "object") {
-    return [];
-  }
-  const { added, modified, deleted } = summary as Record<string, unknown>;
-  return [
-    ...[...stringList(added), ...stringList(modified)].map((file) => ({ file, deleted: false })),
-    ...stringList(deleted).map((file) => ({ file, deleted: true })),
-  ];
-}
-
-/**
- * Remember which chat a file tool wrote a checkout's files for: the
- * `after_tool_call` hook. The file tools run in this process and write a
- * checkout's real tree directly, so this is where an edit can still be told
- * apart from another chat's; without it every uncommitted edit counts for the
- * holder, and a chat that edits before checking out would have its own work
- * credited to the chat that held the checkout last.
- *
- * Only a call that succeeded is recorded, only for the files it changed, and
- * with the file's time and size just after it: a credit is a claim that this
- * chat's edit is the one in the file, and a failed or partial call, or a
- * later write by anyone, would make that claim false and let this chat's
- * freeze sweep another chat's live edit.
- */
-export function recordFileToolWrite(
-  event: {
-    toolName: string;
-    params: Record<string, unknown>;
-    result?: unknown;
-    error?: string;
-  },
-  context: { sessionKey?: string },
-): void {
-  if (!context.sessionKey || event.error) {
-    return;
-  }
-  const root = `${repoRoot()}${path.sep}`;
-  const session = repoSessionTag(context.sessionKey);
-  const at = Date.now();
-  for (const { file, deleted } of fileToolChanges(
-    event.toolName,
-    event.params ?? {},
-    event.result,
-  )) {
-    if (!path.isAbsolute(file)) {
-      continue;
-    }
-    const resolved = path.resolve(file);
-    if (!resolved.startsWith(root)) {
-      continue;
-    }
-    let after: FileWrite["after"] = null;
-    try {
-      const stats = fs.lstatSync(resolved);
-      after = { mtimeMs: stats.mtimeMs, size: stats.size };
-    } catch {
-      after = null;
-    }
-    fileWrites.delete(resolved);
-    // A write whose file is gone, or a deletion whose file is back, cannot be
-    // shown to be what the file holds now: no credit, and no stale one either.
-    if (deleted !== (after === null)) {
-      continue;
-    }
-    fileWrites.set(resolved, { session, at, after });
-    if (fileWrites.size > MAX_FILE_WRITES) {
-      fileWrites.delete(fileWrites.keys().next().value as string);
-    }
-  }
-}
-
-/** Whether `write` is still the last change to a file now in `current`
- *  (null when absent): the same time and size, or still deleted. */
-function stillTheLastWrite(write: FileWrite, current: fs.Stats | null): boolean {
-  if (!write.after || !current) {
-    return !write.after && !current;
-  }
-  return write.after.mtimeMs === current.mtimeMs && write.after.size === current.size;
-}
-
-/** Signs of work in the tree. `unattributed` is the newest that names no
- *  chat: a sandbox command ending, an install starting or ending, an edit no
- *  recorded file-tool write accounts for. `chats` is each chat's newest
- *  recorded edit, and `writers` the chat behind each changed path that has
- *  one. */
-type TreeActivity = {
-  unattributed: number;
-  chats: Map<string, number>;
-  writers: Map<string, string>;
-};
-
+/** The newest sign of work in the tree, none of which names a chat: a
+ *  sandbox command ending, a dependency install starting or ending, a file
+ *  edited and not yet committed. */
 async function treeActivity(
   repoDir: string,
   marker: CheckoutMarker | null,
   changed: string[],
   now: number,
-): Promise<TreeActivity> {
-  let unattributed = Math.max(
+): Promise<number> {
+  let newest = Math.max(
     pastTime(marker?.deps?.started_at, now),
     pastTime(marker?.deps?.finished_at, now),
   );
   // The supervisor stamps `at` when a command ends, so it already is the end.
   for (const record of await readRunRecords(repoDir)) {
-    unattributed = Math.max(unattributed, pastTime(record.at, now));
+    newest = Math.max(newest, pastTime(record.at, now));
   }
-  const chats = new Map<string, number>();
-  const writers = new Map<string, string>();
   // Every changed path is read: one left unread could be the fresh edit that
-  // shows its chat is still at work.
+  // shows the holder is still at work.
   for (let start = 0; start < changed.length; start += STAT_BATCH) {
     const batch = changed.slice(start, start + STAT_BATCH);
     const stats = await Promise.all(
       batch.map((file) => fs.promises.lstat(path.join(repoDir, file)).catch(() => null)),
     );
-    batch.forEach((file, index) => {
-      const write = fileWrites.get(path.join(repoDir, file));
-      const current = stats[index] ?? null;
-      // A deleted file has no time of its own; its recorded deletion does.
-      const at = pastTime(current?.mtimeMs ?? write?.at, now);
-      if (write && stillTheLastWrite(write, current)) {
-        writers.set(file, write.session);
-        chats.set(write.session, Math.max(chats.get(write.session) ?? at, at));
-      } else {
-        unattributed = Math.max(unattributed, at);
+    for (const stat of stats) {
+      if (stat) {
+        newest = Math.max(newest, pastTime(stat.mtimeMs, now));
       }
-    });
+    }
   }
-  return { unattributed, chats, writers };
+  return newest;
 }
 
-/** When `chat` last worked here: its own repository steps and recorded
- *  edits and, while it holds the checkout, every sign of work that names no
- *  chat. */
-function lastSeen(
-  marker: CheckoutMarker | null,
-  chat: string,
-  tree: TreeActivity,
-  now: number,
-): number {
-  let seen = tree.chats.get(chat) ?? Number.NEGATIVE_INFINITY;
+/** When `chat` last worked here: its own repository steps and, while it holds
+ *  the checkout, every sign of work in the tree. */
+function lastSeen(marker: CheckoutMarker | null, chat: string, tree: number, now: number): number {
+  let seen = Number.NEGATIVE_INFINITY;
   for (const commit of marker?.prepared ?? []) {
     if (commit.session === chat) {
       seen = Math.max(seen, pastTime(commit.prepared_at, now));
     }
   }
   if (marker?.holder?.session === chat) {
-    seen = Math.max(seen, pastTime(marker.holder.at, now), tree.unattributed);
+    seen = Math.max(seen, pastTime(marker.holder.at, now), tree);
   }
   return seen;
 }
@@ -1592,9 +1449,9 @@ type OtherChats = {
   /** Another chat holding the checkout and still at work in it. */
   holder: CheckoutHolder | null;
   /** Another chat holding the checkout that has stopped working there while
-   *  the checkout has changes the caller cannot be shown to have made.
-   *  Taking it over needs the user's consent: building on those changes would
-   *  credit that chat's return to the caller. */
+   *  the checkout still has uncommitted or unpushed changes. Taking it over
+   *  needs the user's consent: building on those changes would credit that
+   *  chat's return to the caller. */
   idle: CheckoutHolder | null;
   /** When the holder, working or idle, was last seen at work. */
   seen: number;
@@ -1625,11 +1482,9 @@ async function otherChats(
   const tree = await treeActivity(repoDir, marker, changed, now);
   const working = (chat: string) => now - lastSeen(marker, chat, tree, now) < CHECKOUT_HOLD_MS;
   const commitsLive = commits.some((commit) => working(commit.session as string));
-  // Nothing unpushed, and no change but the caller's own recorded edits:
-  // whatever the holder did is finished or safely on the remote, so after a
-  // push the checkout is free at once.
-  const settled =
-    unpushed.length === 0 && changed.every((file) => tree.writers.get(file) === session);
+  // Nothing uncommitted or unpushed: whatever the holder did is finished or
+  // safely on the remote, so after a push the checkout is free at once.
+  const settled = unpushed.length === 0 && changed.length === 0;
   if (!other || (other.op === "push" && settled)) {
     return { commits, commitsLive, ...none };
   }

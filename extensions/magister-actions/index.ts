@@ -31,7 +31,6 @@ import {
   handleRepoInstall,
   handleRepoPrepare,
   handleRepoPush,
-  recordFileToolWrite,
   startCheckoutSweeper,
   trackRepoCall,
 } from "./repo-checkout.js";
@@ -1432,9 +1431,6 @@ export default definePluginEntry({
     // requested — a machine that never checks out again must still not hold a
     // repository on its volume indefinitely.
     startCheckoutSweeper();
-    // The file tools write a checkout's tree in this process: note which chat
-    // each edit came from, so it is never credited to another chat.
-    api.on("after_tool_call", recordFileToolWrite);
     api.registerTool(() => createCorpusSearchTool(), {
       name: magisterStandaloneToolNames[0],
     });
