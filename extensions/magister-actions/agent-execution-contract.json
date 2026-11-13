@@ -2755,6 +2755,28 @@
       "transport_modes": ["native_json"]
     },
     {
+      "capability_id": "contact_finder",
+      "connection_slug": null,
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:contact_finder", "call_integration_api"],
+      "minimum_native_action_registry_revision": "8b0dccbc35e8f3a0481d9aff2e4b144fff3d6cf6e6474cddc9bd401b3fa302e0",
+      "proxy_services": ["contact_finder"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-contact-finder",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
       "capability_id": "creatify",
       "connection_slug": "creatify",
       "delegation_safe_tools": [],
@@ -3271,28 +3293,6 @@
       "remediation": null,
       "rollout_service": null,
       "skill_name": "magister-mailchimp",
-      "status": "typed",
-      "transport_modes": ["json_v1"]
-    },
-    {
-      "capability_id": "moltsets",
-      "connection_slug": null,
-      "delegation_safe_tools": [],
-      "hosted_agent_tools": [
-        {
-          "action": "integration_read",
-          "approval_policy": "none",
-          "idempotency_policy": "safe_retry",
-          "side_effect": "none",
-          "tool_name": "magister_integration_read"
-        }
-      ],
-      "mcp_tool_actions": ["proxy:moltsets", "call_integration_api"],
-      "minimum_native_action_registry_revision": "8b0dccbc35e8f3a0481d9aff2e4b144fff3d6cf6e6474cddc9bd401b3fa302e0",
-      "proxy_services": ["moltsets"],
-      "remediation": null,
-      "rollout_service": null,
-      "skill_name": "magister-moltsets",
       "status": "typed",
       "transport_modes": ["json_v1"]
     },
@@ -4544,6 +4544,6 @@
     }
   ],
   "native_action_registry_revision": "8b0dccbc35e8f3a0481d9aff2e4b144fff3d6cf6e6474cddc9bd401b3fa302e0",
-  "registry_revision": "a2add8219eb0fe25a47d3d94158c4171fab09db3162d916e9eb34e2cc1f3a60b",
+  "registry_revision": "859f5b55f5c2f1f9a5cd2dfab8624a03cfdc4d0707882c6f1d23f23aef380f4d",
   "schema_version": 1
 }
