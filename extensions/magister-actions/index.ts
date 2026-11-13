@@ -32,6 +32,7 @@ import {
   handleRepoPrepare,
   handleRepoPush,
   startCheckoutSweeper,
+  trackRepoCall,
 } from "./repo-checkout.js";
 
 const DEFAULT_ENDPOINT = "http://magister-gateway.internal:8081/api/agent/actions";
@@ -1137,6 +1138,9 @@ export function createMagisterActionTool(
       const selectedTimeoutMs = actionTimeoutMs(action.action, config.timeoutMs);
       const timeout = setTimeout(() => controller.abort(), selectedTimeoutMs);
       const runtimeSessionId = context.sessionId?.trim();
+      // The Gateway serves a repository action by calling this host back
+      // while this call waits; that is how the host knows which chat it is.
+      const releaseRepoCall = trackRepoCall(action.action, rawParams, context.sessionKey);
       try {
         const mediaPreparedParams = await prepareExactSocialMedia(action.action, rawParams, {
           workspaceDir: config.workspaceDir,
@@ -1337,6 +1341,7 @@ export function createMagisterActionTool(
         );
       } finally {
         clearTimeout(timeout);
+        releaseRepoCall();
       }
     },
   };

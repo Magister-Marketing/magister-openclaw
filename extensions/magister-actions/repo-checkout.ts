@@ -4,7 +4,11 @@ import fs from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
 import { parseAllDocuments } from "yaml";
-import { reportHostRouteFailure, type HostRoute } from "./host-route-telemetry.js";
+import {
+  reportHostRouteFailure,
+  reportUnattributedCall,
+  type HostRoute,
+} from "./host-route-telemetry.js";
 import { mirrorReadBits } from "./tool-readable.js";
 
 /**
@@ -599,6 +603,9 @@ export type CheckoutRequest = {
   discard_local_changes: boolean;
   token: string;
   mutation_context?: unknown;
+  /** The calling chat, as `repoSessionTag` spells it. Never read from the
+   *  wire: the parsers refuse it, and `callingSession` fills it in. */
+  session?: string;
 };
 
 export type CheckoutReceipt = {
@@ -622,6 +629,8 @@ export type PrepareRequest = {
    *  field is declared so the shared handler still sees a scrubbing contract. */
   token?: undefined;
   mutation_context?: unknown;
+  /** As on `CheckoutRequest`. */
+  session?: string;
 };
 
 export type ManifestEntry = { path: string; change: "added" | "modified" | "deleted" };
@@ -660,6 +669,8 @@ export type InstallRequest = {
   provider: RepoProvider;
   token?: undefined;
   mutation_context?: unknown;
+  /** As on `CheckoutRequest`. */
+  session?: string;
 };
 
 export type InstallReceipt = {
@@ -699,6 +710,8 @@ export type PushRequest = {
    *  project sets one; absent means the default `.gitlab-ci.yml`. */
   ci_config_path?: string;
   mutation_context?: unknown;
+  /** As on `CheckoutRequest`. */
+  session?: string;
 };
 
 export type PushReceipt = {
@@ -1101,9 +1114,19 @@ export type PreparedCommit = {
   prepared_at: string;
   message: string;
   verification?: RunRecord[];
+  /** The chat that prepared it; absent when that cannot be told. */
+  session?: string;
 };
 
 export type PushedBranch = { branch: string; sha: string; pushed_at: string };
+
+/** The chat that last checked out, froze, pushed or installed in a checkout,
+ *  and when. */
+type CheckoutHolder = {
+  session: string;
+  at: string;
+  op: "checkout" | "prepare" | "push" | "install";
+};
 
 export type InstalledDependencies = {
   manager: InstallReceipt["manager"];
@@ -1134,6 +1157,7 @@ type CheckoutMarker = {
    *  extra authenticated fetch, and a record we wrote ourselves cannot be
    *  spoofed by whoever last pushed to the remote. */
   pushed?: PushedBranch[];
+  holder?: CheckoutHolder;
 };
 
 /** Kept inside `.git/` on purpose: anything written into the working tree
@@ -1171,17 +1195,395 @@ async function stampMarker(
     last_used_at: new Date().toISOString(),
     repo,
   };
-  await fs.promises.writeFile(markerPath(repoDir), JSON.stringify(marker), { mode: 0o600 });
+  // Written beside and renamed over, never in place: a write cut short (a
+  // crash, a full 1 GB volume) would otherwise leave a truncated marker that
+  // reads as no marker, forgetting every prepared commit, so the next refresh
+  // would move HEAD over them.
+  const target = markerPath(repoDir);
+  const staged = `${target}.${process.pid}-${randomBytes(4).toString("hex")}.tmp`;
+  try {
+    await fs.promises.writeFile(staged, JSON.stringify(marker), { mode: 0o600 });
+    await fs.promises.rename(staged, target);
+  } catch (error) {
+    await fs.promises.rm(staged, { force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 /** Prepared commits that have not reached any remote branch.
  *
  *  These leave the working tree *clean*, so the dirty-work refusal does not see
  *  them — without this the second `checkout_repo` of a session would detach
- *  HEAD back to the upstream tip and silently orphan frozen work. */
+ *  HEAD back to the upstream tip and silently orphan frozen work.
+ *
+ *  Between two refreshes the prepared commits are one linear stack: each
+ *  freeze commits on top of the one before, and a refresh empties the list.
+ *  A push sends a commit together with its ancestors, so a pushed commit
+ *  takes everything below it to the remote too — whichever branch it went
+ *  to, and even after a later push to that branch replaced its entry. */
 function unpushedCommits(marker: CheckoutMarker | null): PreparedCommit[] {
+  const prepared = marker?.prepared ?? [];
   const pushed = new Set((marker?.pushed ?? []).map((entry) => entry.sha));
-  return (marker?.prepared ?? []).filter((commit) => !pushed.has(commit.sha));
+  const lastPushed = prepared.findLastIndex((commit) => pushed.has(commit.sha));
+  return prepared.slice(lastPushed + 1);
+}
+
+// ── Chats sharing a checkout ────────────────────────────────────────────
+//
+// A machine keeps one working tree per repository, and every chat of the
+// project works in it. Git history in one tree is linear, so two chats at
+// once cannot be kept apart: a freeze commits everything in the tree, a
+// commit stacks on whatever is unpushed, and a discard resets the tree for
+// everyone. On 2026-11-10 one chat's freeze swept in another chat's edit, the
+// second chat was then told to discard, and the discard destroyed the first
+// chat's prepared, unpushed commit.
+//
+// So one chat at a time. The chat that last checked out, froze, pushed or
+// installed *holds* the checkout, and while it is still at work there no
+// other chat may check out, freeze, discard or install. "At work" means a
+// repository step, a sandbox command, a dependency install or an uncommitted
+// file edit within `CHECKOUT_HOLD_MS`. Only the first of these names a chat,
+// so the rest count for the holder, and a refusal over them never claims to
+// know whose they are. (Crediting each edited file to the chat whose file
+// tool wrote it last was tried and removed: a file two chats edit belongs to
+// neither, and a credit let one chat's freeze take the other's lines.) A
+// holder that pushed everything and left the tree clean has finished and
+// frees the checkout at once. A holder that went
+// quiet with work still here keeps the checkout until the user agrees to drop
+// that work (an explicit discard): another chat's freeze or install would
+// build on it and take the hold, and the quiet chat's return would then count
+// as the other chat's work.
+//
+// A commit another chat prepared and has not pushed is never stacked on, and
+// is destroyed only by an explicit discard once that chat has stopped working
+// here: the user's consent to drop a quiet chat's work. A commit no chat is
+// recorded for (made before this rule, or by a call the host could not place)
+// follows the old consent rule. A request from a chat the host cannot place
+// is held to the old rules, except that it cannot discard the commit of a
+// chat still at work.
+
+/** How long a chat holds a checkout after its last sign of work there. */
+export const CHECKOUT_HOLD_MS = 30 * 60 * 1000;
+/** A recorded time further ahead of the clock than this is not believed. */
+const CLOCK_SKEW_MS = 60_000;
+/** Changed paths whose times are read at once. Every one is read; this only
+ *  bounds how many are in flight, and a checkout holds at most
+ *  `MAX_CHECKOUT_FILES`. */
+const STAT_BATCH = 64;
+
+type RepoAction =
+  | "checkout_repo"
+  | "prepare_repo_commit"
+  | "push_repo_branch"
+  | "install_repo_dependencies";
+
+const ROUTE_BY_ACTION: Record<RepoAction, HostRoute> = {
+  checkout_repo: "magister_repo_checkout",
+  prepare_repo_commit: "magister_repo_prepare",
+  push_repo_branch: "magister_repo_push",
+  install_repo_dependencies: "magister_repo_install",
+};
+
+type RepoCall = { action: RepoAction; repo: string; key: string; session: string };
+
+/** The action tool calls waiting on the Gateway right now, with their chat. */
+const repoCalls = new Set<RepoCall>();
+
+/** The marker's name for a chat: its runtime session key, hashed, so the
+ *  marker holds a fixed-size token rather than a conversation identifier. */
+export function repoSessionTag(sessionKey: string): string {
+  return createHash("sha256").update(sessionKey).digest("hex").slice(0, 16);
+}
+
+/** Every spelling the Gateway's lax boolean reads as true, so a model that
+ *  sends `"true"` is matched with the request the Gateway turns it into. */
+const LAX_TRUE = new Set(["1", "on", "t", "true", "y", "yes"]);
+
+function laxTrue(value: unknown): boolean {
+  return (
+    value === true ||
+    value === 1 ||
+    (typeof value === "string" && LAX_TRUE.has(value.trim().toLowerCase()))
+  );
+}
+
+/** The argument that tells two calls of one action on one repository apart. */
+function repoCallKey(action: RepoAction, fields: Record<string, unknown>): string {
+  if (action === "checkout_repo") {
+    return laxTrue(fields.discard_local_changes) ? "discard" : "keep";
+  }
+  if (action === "install_repo_dependencies") {
+    return "";
+  }
+  const value = action === "prepare_repo_commit" ? fields.message : fields.commit_sha;
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function isRepoAction(action: string): action is RepoAction {
+  return Object.hasOwn(ROUTE_BY_ACTION, action);
+}
+
+/**
+ * Note that `sessionKey`'s chat is making `action` on a repository, until the
+ * returned function is called.
+ *
+ * The Gateway's request to this host names no chat, and need not: every
+ * brokered repository request is the Gateway calling back into this process
+ * while the chat's own action tool, in this same process, is still waiting
+ * on the Gateway for the answer. The tool notes its call here for exactly
+ * that window, and `callingSession` matches the request against it.
+ */
+export function trackRepoCall(
+  action: string,
+  params: unknown,
+  sessionKey: string | undefined,
+): () => void {
+  if (!sessionKey || !isRepoAction(action) || !params || typeof params !== "object") {
+    return () => undefined;
+  }
+  const fields = params as Record<string, unknown>;
+  if (typeof fields.repo !== "string") {
+    return () => undefined;
+  }
+  const call: RepoCall = {
+    action,
+    repo: fields.repo.trim().toLowerCase(),
+    key: repoCallKey(action, fields),
+    session: repoSessionTag(sessionKey),
+  };
+  repoCalls.add(call);
+  return () => {
+    repoCalls.delete(call);
+  };
+}
+
+/** The chat a request is for: the one chat with a matching call in flight.
+ *  No match, or matching calls from two chats, is no known chat — nothing is
+ *  attributed to a chat that cannot be shown to have made the call — and is
+ *  reported, since every request should come from a waiting tool call. */
+function callingSession(
+  action: RepoAction,
+  request: { repo: string; session?: string },
+): string | undefined {
+  if (request.session) {
+    return request.session;
+  }
+  const repo = request.repo.toLowerCase();
+  const key = repoCallKey(action, request as Record<string, unknown>);
+  const sessions = new Set<string>();
+  for (const call of repoCalls) {
+    if (call.action === action && call.repo === repo && call.key === key) {
+      sessions.add(call.session);
+    }
+  }
+  if (sessions.size === 1) {
+    return [...sessions][0];
+  }
+  reportUnattributedCall(ROUTE_BY_ACTION[action], sessions.size === 0 ? "no_call" : "ambiguous");
+  return undefined;
+}
+
+/** A recorded time, in ms, that a hold may count. Unreadable, or ahead of the
+ *  clock (a clock step, a hand-edited marker), is no time at all: a future
+ *  time would otherwise keep a hold alive for ever. */
+function pastTime(value: unknown, now: number): number {
+  const at =
+    typeof value === "number" ? value : typeof value === "string" ? Date.parse(value) : Number.NaN;
+  return Number.isFinite(at) && at <= now + CLOCK_SKEW_MS ? at : Number.NEGATIVE_INFINITY;
+}
+
+/** The newest sign of work in the tree, none of which names a chat: a
+ *  sandbox command ending, a dependency install starting or ending, a file
+ *  edited and not yet committed. */
+async function treeActivity(
+  repoDir: string,
+  marker: CheckoutMarker | null,
+  changed: string[],
+  now: number,
+): Promise<number> {
+  let newest = Math.max(
+    pastTime(marker?.deps?.started_at, now),
+    pastTime(marker?.deps?.finished_at, now),
+  );
+  // The supervisor stamps `at` when a command ends, so it already is the end.
+  for (const record of await readRunRecords(repoDir)) {
+    newest = Math.max(newest, pastTime(record.at, now));
+  }
+  // Every changed path is read: one left unread could be the fresh edit that
+  // shows the holder is still at work.
+  for (let start = 0; start < changed.length; start += STAT_BATCH) {
+    const batch = changed.slice(start, start + STAT_BATCH);
+    const stats = await Promise.all(
+      batch.map((file) => fs.promises.lstat(path.join(repoDir, file)).catch(() => null)),
+    );
+    for (const stat of stats) {
+      if (stat) {
+        newest = Math.max(newest, pastTime(stat.mtimeMs, now));
+      }
+    }
+  }
+  return newest;
+}
+
+/** When `chat` last worked here: its own repository steps and, while it holds
+ *  the checkout, every sign of work in the tree. */
+function lastSeen(marker: CheckoutMarker | null, chat: string, tree: number, now: number): number {
+  let seen = Number.NEGATIVE_INFINITY;
+  for (const commit of marker?.prepared ?? []) {
+    if (commit.session === chat) {
+      seen = Math.max(seen, pastTime(commit.prepared_at, now));
+    }
+  }
+  if (marker?.holder?.session === chat) {
+    seen = Math.max(seen, pastTime(marker.holder.at, now), tree);
+  }
+  return seen;
+}
+
+type OtherChats = {
+  /** Unpushed commits a different chat prepared; for a caller that cannot be
+   *  placed, any chat's. */
+  commits: PreparedCommit[];
+  /** Whether a chat that prepared one of them is still at work here. */
+  commitsLive: boolean;
+  /** Another chat holding the checkout and still at work in it. */
+  holder: CheckoutHolder | null;
+  /** Another chat holding the checkout that has stopped working there while
+   *  the checkout still has uncommitted or unpushed changes. Taking it over
+   *  needs the user's consent: building on those changes would credit that
+   *  chat's return to the caller. */
+  idle: CheckoutHolder | null;
+  /** When the holder, working or idle, was last seen at work. */
+  seen: number;
+};
+
+/** The other chats with a claim on this checkout, as `session` sees it.
+ *  `changed` is the tree's uncommitted paths. */
+async function otherChats(
+  repoDir: string,
+  marker: CheckoutMarker | null,
+  session: string | undefined,
+  changed: string[],
+): Promise<OtherChats> {
+  const now = Date.now();
+  const unpushed = unpushedCommits(marker);
+  const commits = unpushed.filter(
+    (commit) => typeof commit.session === "string" && commit.session !== session,
+  );
+  const holder = marker?.holder;
+  const other =
+    session !== undefined && typeof holder?.session === "string" && holder.session !== session
+      ? holder
+      : null;
+  const none = { holder: null, idle: null, seen: Number.NEGATIVE_INFINITY };
+  if (commits.length === 0 && !other) {
+    return { commits, commitsLive: false, ...none };
+  }
+  const tree = await treeActivity(repoDir, marker, changed, now);
+  const working = (chat: string) => now - lastSeen(marker, chat, tree, now) < CHECKOUT_HOLD_MS;
+  const commitsLive = commits.some((commit) => working(commit.session as string));
+  // Nothing uncommitted or unpushed: whatever the holder did is finished or
+  // safely on the remote, so after a push the checkout is free at once.
+  const settled = unpushed.length === 0 && changed.length === 0;
+  if (!other || (other.op === "push" && settled)) {
+    return { commits, commitsLive, ...none };
+  }
+  const seen = lastSeen(marker, other.session, tree, now);
+  if (working(other.session)) {
+    return { commits, commitsLive, holder: other, idle: null, seen };
+  }
+  return { commits, commitsLive, holder: null, idle: settled ? null : other, seen };
+}
+
+function shortShas(commits: PreparedCommit[]): string {
+  const shown = commits.slice(0, 3).map((commit) => commit.sha.slice(0, 12));
+  return commits.length > shown.length
+    ? `${shown.join(", ")} and ${commits.length - shown.length} more`
+    : shown.join(", ");
+}
+
+function describeCommits(commits: PreparedCommit[]): string {
+  const shown = commits
+    .slice(0, 3)
+    .map((commit) => `${commit.sha.slice(0, 12)} ("${truncate(commit.message, 60)}")`);
+  return commits.length > shown.length
+    ? `${shown.join(", ")} and ${commits.length - shown.length} more`
+    : shown.join(", ");
+}
+
+const SHARED_CHECKOUT =
+  "Every chat of this project works in the same checkout of a repository, so two chats working in it at once commit or destroy each other's work.";
+
+const QUIET = `${Math.round(CHECKOUT_HOLD_MS / 60_000)} minutes`;
+
+function anotherChatsCommitsError(
+  full: string,
+  commits: PreparedCommit[],
+  freezing: boolean,
+  live: boolean,
+): CheckoutError {
+  const plural = commits.length === 1 ? "it" : "them";
+  const consequence = freezing
+    ? "A commit here would be stacked on that chat's work and would push it too."
+    : "Checking out again here would destroy that chat's work.";
+  const remedy = live
+    ? `Tell the user that ${describeCommits(commits)} must first be pushed or discarded from the chat that prepared ${plural}, then retry.`
+    : `That chat has not worked here for over ${QUIET}. Ask the user whether to push ${describeCommits(commits)} from that chat or to drop ${plural}. Only if they choose to drop ${plural}, ${
+        freezing
+          ? "set aside anything this chat still needs from the checkout, because checkout_repo with discard_local_changes=true also discards every uncommitted edit; then run it, re-apply this chat's changes and prepare again."
+          : "retry checkout_repo with discard_local_changes=true."
+      }`;
+  return new CheckoutError(
+    `Another chat in this project is working in ${full}: it prepared ${shortShas(commits)} there and has not pushed ${plural}.`,
+    409,
+    `${SHARED_CHECKOUT} ${consequence} ${remedy}`,
+  );
+}
+
+function since(seen: number): string {
+  if (!Number.isFinite(seen)) {
+    return "a while ago";
+  }
+  const minutes = Math.max(0, Math.round((Date.now() - seen) / 60_000));
+  return minutes < 1 ? "less than a minute ago" : `${minutes} minute(s) ago`;
+}
+
+/** How a chat takes over a checkout that has changes nobody can attribute.
+ *  Never "commit or discard them from the other chat": they may be this
+ *  chat's own, and that is the cross-chat sweep this module exists to stop. */
+const UNATTRIBUTED_CHANGES =
+  "Which chat made the uncommitted changes cannot be told here, so nobody should commit or discard them from the other chat. If they are this chat's own, take the checkout over with the user's consent: set aside what this chat needs from it, retry checkout_repo with discard_local_changes=true, then re-apply it. Otherwise ask the user how to proceed.";
+
+/** Another chat holds the checkout but has gone quiet, and the checkout has
+ *  changes this chat's freeze or install would take in. */
+function anotherChatsLeftWorkError(full: string, seen: number, step: string): CheckoutError {
+  return new CheckoutError(
+    `Another chat in this project holds the checkout of ${full} and last worked there ${since(seen)}; the checkout has uncommitted changes or unpushed commits this chat cannot be shown to have made.`,
+    409,
+    `${SHARED_CHECKOUT} ${step} here would take those changes in, whoever made them. ${UNATTRIBUTED_CHANGES} A discard also drops any unpushed commits of the other chat.`,
+  );
+}
+
+function anotherChatWorkingError(full: string, seen: number, clean: boolean): CheckoutError {
+  return new CheckoutError(
+    `Another chat in this project is working in the checkout of ${full}; it last worked there ${since(seen)}.`,
+    409,
+    clean
+      ? `${SHARED_CHECKOUT} Tell the user, and wait for that chat to finish. If the user confirms it has, retry checkout_repo with discard_local_changes=true to take the checkout over: it holds no uncommitted or unpushed work.`
+      : `${SHARED_CHECKOUT} Tell the user another chat is working in this repository, and wait for it to finish. ${UNATTRIBUTED_CHANGES}`,
+  );
+}
+
+/** A refresh refused because prepared commits were never pushed. `blocked`:
+ *  a chat still at work here prepared some, so a discard cannot reach them. */
+function unpushedError(full: string, unpushed: PreparedCommit[], blocked: boolean): CheckoutError {
+  return new CheckoutError(
+    `The existing checkout of ${full} has ${unpushed.length} prepared commit(s) that were never pushed: ${shortShas(unpushed)}.`,
+    409,
+    blocked
+      ? `Push that work to a branch first. It cannot be discarded from here: a chat that is still working in this checkout prepared ${describeCommits(unpushed)}.`
+      : "Push that work to a branch first, or ask the user whether to discard it and retry with discard_local_changes=true.",
+  );
 }
 
 async function markerAge(repoDir: string, now: number): Promise<number> {
@@ -1697,12 +2099,29 @@ async function headSha(repoDir: string): Promise<string> {
   return result.code === 0 ? result.stdout.trim() : "";
 }
 
-async function isDirty(repoDir: string): Promise<boolean> {
-  const result = await runGit(["status", "--porcelain"], {
-    cwd: repoDir,
-    timeoutMs: GIT_COMMAND_TIMEOUT_MS,
-  });
-  return result.code === 0 && result.stdout.trim().length > 0;
+/** The paths `git status` reports as changed, every untracked file listed by
+ *  itself: a new folder is otherwise one entry whose time a file rewritten in
+ *  place inside it never changes.
+ *
+ *  A status git cannot produce is refused, never read as a clean tree: a
+ *  refresh over a tree misread as clean would overwrite uncommitted work. */
+async function changedPaths(repoDir: string): Promise<string[]> {
+  const result = await runGit(
+    ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"],
+    { cwd: repoDir, timeoutMs: GIT_COMMAND_TIMEOUT_MS },
+  );
+  if (result.code !== 0) {
+    throw new CheckoutError(
+      "Could not read the state of this checkout, so nothing was changed.",
+      409,
+      truncate(result.stderr) || "git status failed.",
+    );
+  }
+  // `XY path`, NUL-terminated; with renames off there is no second path.
+  return result.stdout
+    .split("\0")
+    .filter((entry) => entry.length > 3)
+    .map((entry) => entry.slice(3));
 }
 
 function remoteUrl(provider: RepoProvider, repo: string): string {
@@ -1775,19 +2194,31 @@ async function performCheckout(request: CheckoutRequest): Promise<CheckoutReceip
     .then(() => true)
     .catch(() => false);
 
+  const { session } = request;
   let status: CheckoutReceipt["status"];
   if (existing) {
     status = await withCheckoutLock(repoDir, "host:checkout", async () => {
       const marker = await readMarker(repoDir);
       const unpushed = unpushedCommits(marker);
-      if (unpushed.length > 0 && !request.discard_local_changes) {
-        throw new CheckoutError(
-          `The existing checkout of ${full} has ${unpushed.length} prepared commit(s) that were never pushed.`,
-          409,
-          "Push that work to a branch first, or ask the user whether to discard it and retry with discard_local_changes=true.",
-        );
+      const changed = await changedPaths(repoDir);
+      const clean = unpushed.length === 0 && changed.length === 0;
+      const others = await otherChats(repoDir, marker, session, changed);
+      // Refreshing moves HEAD, so it destroys unpushed commits whatever the
+      // discard flag says. Another chat's go only by an explicit discard, and
+      // only once that chat has stopped working here.
+      if (others.commits.length > 0 && (!request.discard_local_changes || others.commitsLive)) {
+        throw session
+          ? anotherChatsCommitsError(full, others.commits, false, others.commitsLive)
+          : unpushedError(full, unpushed, others.commitsLive);
       }
-      if (await isDirty(repoDir)) {
+      // Taking over a clean checkout loses nothing, so the user may hand it on.
+      if (others.holder && !(clean && request.discard_local_changes)) {
+        throw anotherChatWorkingError(full, others.seen, clean);
+      }
+      if (unpushed.length > 0 && !request.discard_local_changes) {
+        throw unpushedError(full, unpushed, false);
+      }
+      if (changed.length > 0) {
         if (!request.discard_local_changes) {
           throw new CheckoutError(
             `The existing checkout of ${full} has uncommitted changes.`,
@@ -1839,13 +2270,16 @@ async function performCheckout(request: CheckoutRequest): Promise<CheckoutReceip
 
   await makeReadableByTools(repoDir);
   const head = await headSha(repoDir);
+  const held = session
+    ? { holder: { session, at: new Date().toISOString(), op: "checkout" as const } }
+    : {};
   // HEAD moved, so any prepared commit now sits on a base that is no longer
   // this checkout's. `pushed` survives: those branches still exist on the
   // remote and are still ours to fast-forward.
   await stampMarker(
     repoDir,
     full,
-    status === "already_current" ? undefined : { base_sha: head, prepared: [] },
+    status === "already_current" ? held : { base_sha: head, prepared: [], ...held },
   );
   return {
     status,
@@ -1926,7 +2360,8 @@ async function cloneFresh(
  *
  *  Unlike the Gateway's `min instances = 2`, the OpenClaw host is a single
  *  process on a single machine, so an in-process map really is the authority
- *  here — there is no second writer to race with. */
+ *  here — there is no second writer to race with. It orders operations, not
+ *  chats: which chat may work in the tree at all is the checkout's holder. */
 async function withRepoLock<T>(
   provider: RepoProvider,
   repo: string,
@@ -1951,11 +2386,12 @@ async function withRepoLock<T>(
 }
 
 export async function checkoutRepository(request: CheckoutRequest): Promise<CheckoutReceipt> {
+  const session = callingSession("checkout_repo", request);
   return withRepoLock(
     request.provider,
     request.repo,
     `A checkout of ${request.repo} is already running.`,
-    () => performCheckout(request),
+    () => performCheckout({ ...request, session }),
   );
 }
 
@@ -2091,6 +2527,28 @@ async function freezeCheckout(
 ): Promise<PrepareReceipt> {
   const marker = await readMarker(repoDir);
   const prepared = marker?.prepared ?? [];
+  const unpushed = unpushedCommits(marker);
+  const { session } = request;
+  // `git add -A` takes everything in the tree, and the commit stacks on
+  // everything unpushed, so another chat's work here would be swept in. A
+  // caller that cannot be placed keeps the old behaviour.
+  if (session) {
+    const changed = await changedPaths(repoDir);
+    const others = await otherChats(repoDir, marker, session, changed);
+    if (others.commits.length > 0) {
+      throw anotherChatsCommitsError(full, others.commits, true, others.commitsLive);
+    }
+    if (others.holder) {
+      throw anotherChatWorkingError(
+        full,
+        others.seen,
+        unpushed.length === 0 && changed.length === 0,
+      );
+    }
+    if (others.idle) {
+      throw anotherChatsLeftWorkError(full, others.seen, "A commit");
+    }
+  }
   // A marker written before this field existed, or a checkout nothing has
   // frozen yet: HEAD *is* the base in both cases.
   const base = marker?.base_sha ?? (prepared.at(-1)?.base_sha || (await headSha(repoDir)));
@@ -2134,12 +2592,18 @@ async function freezeCheckout(
     if (shadowed.length > 0) {
       const names = shadowed.slice(0, SHADOWED_NAMES_IN_MESSAGE).map((entry) => entry.path);
       const rest = shadowed.length - names.length;
+      // Discarding resets HEAD to the upstream tip, so while a prepared commit
+      // is unpushed it is never the advice: it would destroy that commit.
+      const remedy =
+        unpushed.length > 0
+          ? `Re-apply them with the file tools. This checkout also holds ${unpushed.length} prepared commit(s) that were never pushed, ${describeCommits(unpushed)}; push ${unpushed.length === 1 ? "it" : "them"} before discarding anything, because a discard would destroy ${unpushed.length === 1 ? "it" : "them"} too.`
+          : "Re-apply them with the file tools, or discard them with checkout_repo discard_local_changes=true.";
       throw new CheckoutError(
         `There is nothing to commit in ${full}: ${shadowed.length} tracked file(s) were changed by a command in the sandbox rather than by the file tools.`,
         409,
         `Those changes live in the checkout's work layer and are never committed: ${names.join(", ")}${
           rest > 0 ? `, and ${rest} more` : ""
-        }. Re-apply them with the file tools, or discard them with checkout_repo discard_local_changes=true.`,
+        }. ${remedy}`,
       );
     }
     throw new CheckoutError(
@@ -2192,11 +2656,13 @@ async function freezeCheckout(
     prepared_at: new Date().toISOString(),
     message: request.message,
     verification: await verificationSince(repoDir, prepared.at(-1)),
+    ...(session ? { session } : {}),
   };
   await mirrorChangedFiles(repoDir, pendingEntries);
   await stampMarker(repoDir, full, {
     base_sha: base,
     prepared: trimHistory([...prepared, commit]),
+    ...(session ? { holder: { session, at: commit.prepared_at, op: "prepare" as const } } : {}),
   });
   return await prepareReceipt(repoDir, full, "prepared", commit);
 }
@@ -2234,8 +2700,9 @@ async function prepareReceipt(
   const verification = commit.verification ?? [];
   const warnings: string[] = [];
   if (shadowed.length > 0) {
+    // Not "discard the work layer": a discard now would destroy this commit.
     warnings.push(
-      `${shadowed.length} tracked file(s) were changed by a command in the sandbox and are not in this commit. Re-apply those changes with the file tools, or discard the work layer with checkout_repo discard_local_changes=true.`,
+      `${shadowed.length} tracked file(s) were changed by a command in the sandbox and are not in this commit. Re-apply those changes with the file tools and prepare again, or push this commit before discarding them, because a discard would destroy this commit too.`,
     );
   }
   if (verification.length === 0) {
@@ -2260,11 +2727,12 @@ async function prepareReceipt(
 }
 
 export async function prepareRepoCommit(request: PrepareRequest): Promise<PrepareReceipt> {
+  const session = callingSession("prepare_repo_commit", request);
   return withRepoLock(
     request.provider,
     request.repo,
     `An operation on ${request.repo} is already running.`,
-    () => performPrepare(request),
+    () => performPrepare({ ...request, session }),
   );
 }
 
@@ -2561,11 +3029,18 @@ async function pushFrozenCommit(
   });
 
   const recordPush = async () => {
+    const pushedAt = new Date().toISOString();
+    // Pushing its own commit keeps a chat's hold, marked as a push so the
+    // checkout frees itself once nothing is left uncommitted or unpushed.
+    const own = request.session !== undefined && frozen.session === request.session;
     await stampMarker(repoDir, full, {
       pushed: trimHistory([
         ...(marker?.pushed ?? []).filter((entry) => entry.branch !== request.branch),
-        { branch: request.branch, sha: request.commit_sha, pushed_at: new Date().toISOString() },
+        { branch: request.branch, sha: request.commit_sha, pushed_at: pushedAt },
       ]),
+      ...(own && request.session
+        ? { holder: { session: request.session, at: pushedAt, op: "push" as const } }
+        : {}),
     });
   };
 
@@ -2678,11 +3153,12 @@ async function pushFrozenCommit(
 }
 
 export async function pushRepoBranch(request: PushRequest): Promise<PushReceipt> {
+  const session = callingSession("push_repo_branch", request);
   return withRepoLock(
     request.provider,
     request.repo,
     `An operation on ${request.repo} is already running.`,
-    () => performPush(request),
+    () => performPush({ ...request, session }),
   );
 }
 
@@ -2859,6 +3335,26 @@ function installIsStale(deps: InstalledDependencies): boolean {
 
 async function performInstall(request: InstallRequest): Promise<InstallReceipt> {
   const { repoDir, full } = await requireCheckout(request.repo, request.provider);
+  const { session } = request;
+  const marker = await readMarker(repoDir);
+  // An install holds the repository lock for up to ten minutes, so another
+  // chat's would shut the holder out of its own checkout.
+  if (session && marker?.holder && marker.holder.session !== session) {
+    const changed = await changedPaths(repoDir);
+    const others = await otherChats(repoDir, marker, session, changed);
+    if (others.holder) {
+      throw anotherChatWorkingError(
+        full,
+        others.seen,
+        unpushedCommits(marker).length === 0 && changed.length === 0,
+      );
+    }
+    // An install takes the hold below, which is only right when nobody's
+    // work is left here; otherwise that chat's return would count as ours.
+    if (others.idle) {
+      throw anotherChatsLeftWorkError(full, others.seen, "Installing dependencies");
+    }
+  }
   const manager = await detectPackageManager(repoDir);
   if (!manager) {
     throw new CheckoutError(
@@ -2929,14 +3425,16 @@ async function performInstall(request: InstallRequest): Promise<InstallReceipt> 
     };
   }
 
+  const startedAt = new Date().toISOString();
   await stampMarker(repoDir, full, {
     deps: {
       manager: manager.name,
       lockfile: manager.lockfile,
       sha256,
       state: "running",
-      started_at: new Date().toISOString(),
+      started_at: startedAt,
     },
+    ...(session ? { holder: { session, at: startedAt, op: "install" as const } } : {}),
   });
   // Detached on purpose — see runInstall. The in-process repository lock is
   // held for the install's whole duration so a freeze or push cannot start
@@ -2975,7 +3473,10 @@ export async function installRepoDependencies(request: InstallRequest): Promise<
       "Wait for the in-flight repository operation to finish, then retry.",
     );
   }
-  return performInstall(request);
+  return performInstall({
+    ...request,
+    session: callingSession("install_repo_dependencies", request),
+  });
 }
 
 // ── HTTP surface ────────────────────────────────────────────────────────
