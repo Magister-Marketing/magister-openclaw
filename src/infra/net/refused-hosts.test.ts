@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  allHostedSitesRefused,
   assertHostNotRefused,
   assertNotWebflowSite,
   cnameIsWebflow,
@@ -11,6 +12,7 @@ import {
   REFUSED_HOST_MESSAGE,
   responseIsWebflow,
   WEBFLOW_CHECK_UNAVAILABLE_MESSAGE,
+  clearWebflowSiteCache,
   webflowDns,
 } from "./refused-hosts.js";
 import { SsrFBlockedError } from "./ssrf.js";
@@ -126,5 +128,60 @@ describe("the Webflow DNS check under a failing resolver", () => {
       await expect(assertNotWebflowSite("slow.example")).resolves.toBeUndefined();
     }
     expect(resolve.mock.calls.map(([host]) => host)).toEqual(["slow.example", "www.slow.example"]);
+  });
+});
+
+describe("with the Gateway's every-site switch off (2026-11-12)", () => {
+  let dir: string;
+  let file: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "refused-hosts-off-"));
+    file = join(dir, "egress-allowlist.json");
+    vi.stubEnv("MAGISTER_EGRESS_ALLOWLIST", file);
+    clearWebflowSiteCache();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function write(payload: Record<string, unknown>) {
+    writeFileSync(file, JSON.stringify({ version: 1, project: [], ...payload }));
+  }
+
+  it("reads a never-connected custom domain Webflow hosts, without looking it up", async () => {
+    write({ refuse_all_hosted_sites: false, refused_hosts: ["acme.com"] });
+    const resolve = vi
+      .spyOn(webflowDns, "resolve")
+      .mockResolvedValue({ names: ["cdn.webflow.com"], addresses: ["198.202.211.1"] });
+
+    expect(allHostedSitesRefused()).toBe(false);
+    await expect(
+      assertNotWebflowSite("iteright.com", { failClosed: true }),
+    ).resolves.toBeUndefined();
+    expect(resolve).not.toHaveBeenCalled();
+    expect(isWebflowAddress("198.202.211.1")).toBe(false);
+    expect(responseIsWebflow(new Headers({ "x-wf-region": "us" }), '<html data-wf-site="1">')).toBe(
+      false,
+    );
+  });
+
+  it("still refuses authorized hosts and names only Webflow serves", async () => {
+    write({ refuse_all_hosted_sites: false, refused_hosts: ["acme.com"] });
+    await expect(assertNotWebflowSite("www.acme.com")).rejects.toThrow(REFUSED_HOST_MESSAGE);
+    await expect(assertNotWebflowSite("site.webflow.io")).rejects.toThrow(REFUSED_HOST_MESSAGE);
+  });
+
+  it("keeps the ruling when the file does not say it is off", async () => {
+    write({ refused_hosts: [] });
+    expect(allHostedSitesRefused()).toBe(true);
+    vi.spyOn(webflowDns, "resolve").mockResolvedValue({
+      names: ["cdn.webflow.com"],
+      addresses: [],
+    });
+    await expect(assertNotWebflowSite("iteright.com")).rejects.toThrow(REFUSED_HOST_MESSAGE);
+    expect(isWebflowAddress("198.202.211.1")).toBe(true);
   });
 });
