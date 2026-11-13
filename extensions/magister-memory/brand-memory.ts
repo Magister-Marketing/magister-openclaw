@@ -29,7 +29,15 @@ export type BrandMemoryOperation = (
   | { action: "add"; content: string }
   | { action: "replace"; old_text?: string; content: string }
   | { action: "remove"; old_text?: string }
-) & { entry_id?: string; scope?: Record<string, string>; expected_revision?: number };
+) & {
+  entry_id?: string;
+  scope?: Record<string, string>;
+  expected_revision?: number;
+  /** An agent note: what the agent verified itself, `basis` saying what showed it. */
+  note?: boolean;
+  basis?: string;
+  session_key?: string;
+};
 
 type BrandMemoryList = { entries: string[]; content: string; charCount: number };
 

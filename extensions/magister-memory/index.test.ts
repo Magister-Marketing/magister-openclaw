@@ -126,6 +126,51 @@ describe("memory tool dispatch", () => {
     ).toContain("No paid ads before March");
   });
 
+  it("saves target='note' as the agent's own note, with its basis and session", async () => {
+    const gateway = stubBrandMemoryGateway([]);
+    const tool = createMemoryTool(
+      { config: {} as never, pluginConfig: {} } as unknown as Parameters<
+        typeof createMemoryTool
+      >[0],
+      { workspaceDir: dir, sessionKey: "agent:marketing:webchat:s-1" } as Parameters<
+        typeof createMemoryTool
+      >[1],
+    );
+    const out = await tool!.execute("call-1", {
+      action: "add",
+      target: "note",
+      content: "Instagram carousels take at most 10 images.",
+      basis: "publish_social_post refused 11 images (media_count_exceeded); 10 published.",
+      scope: { channel: "instagram" },
+    });
+    const result = JSON.parse((out.content?.[0] as { text: string }).text) as Record<
+      string,
+      unknown
+    >;
+    expect(result).toMatchObject({ success: true, target: "note" });
+    expect(gateway.calls.filter((call) => call.method === "POST")[0].body).toEqual({
+      action: "add",
+      content: "Instagram carousels take at most 10 images.",
+      scope: { channel: "instagram" },
+      note: true,
+      basis: "publish_social_post refused 11 images (media_count_exceeded); 10 published.",
+      session_key: "agent:marketing:webchat:s-1",
+    });
+  });
+
+  it("refuses a note without its basis, and a note removal, before the Gateway", async () => {
+    const gateway = stubBrandMemoryGateway([]);
+    expect(await run({ action: "add", target: "note", content: "A limit." })).toEqual({
+      success: false,
+      target: "note",
+      message: "basis is required for a note: the result, error or measurement that showed it.",
+    });
+    expect(
+      await run({ action: "remove", target: "note", old_text: "A limit", basis: "x" }),
+    ).toMatchObject({ success: false, target: "note" });
+    expect(gateway.calls.filter((call) => call.method === "POST")).toEqual([]);
+  });
+
   it("preserves scope and revision guards when correcting an exact shared rule", async () => {
     const gateway = stubBrandMemoryGateway(["Old tone"]);
     const result = await run({

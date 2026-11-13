@@ -15,6 +15,7 @@
       "magister_read_asset",
       "magister_get_brand",
       "magister_get_marketing_context",
+      "magister_read_chat_history",
       "magister_record_marketing_feedback",
       "magister_list_integrations",
       "magister_refresh_integration",

@@ -61,16 +61,19 @@ type MemoryToolParams = {
   entry_id?: string;
   scope?: Record<string, string>;
   expected_revision?: number;
+  basis?: string;
 };
 
-const TOOL_DESCRIPTION = `Persistent curated memory. Two stores, one tool.
+// Purpose first (Anthropic, "components of agent memory", 2026-11-06): what
+// memory is for transfers to how a model uses it; procedural rules about it
+// did not. Kept to the old description's length: it rides in every request.
+const TOOL_DESCRIPTION = `Memory every Magister agent on this brand reads each turn. Keep what a later agent could not find again in the brand's tools: what the user decided or prefers, what you learned the hard way here. Not figures or content a tool can re-read.
 
-target='memory' — the brand's rules and facts (voice, audience, what to avoid), including what the user tells you about the brand. Shared: every Magister agent working on this brand reads it.
-target='user'   — only facts about the person (name, role, working style).
+target='memory' — the user's rules and preferences for the brand (voice, audience, what to avoid). Scope channel/account ones; correct by entry_id or unique old_text.
+target='note'   — what you verified yourself in this brand's tools (a limit, workaround, or result and its cause); basis says what showed it. Ranks below the user's rules.
+target='user'   — facts about the person (name, role, working style).
 
-Both load into your system prompt at each turn; changes from other agents appear on the next turn.
-
-Save concise, durable facts the user confirmed. For brand rules, scope channel/account-specific preferences and replace contradictions by entry_id or unique old_text; expected_revision guards concurrent corrections. Use magister_record_marketing_feedback for item-specific corrections and reasons.`;
+Item-specific corrections go to magister_record_marketing_feedback.`;
 
 function resolveWorkspaceDir(api: OpenClawPluginApi, ctx: OpenClawPluginToolContext): string {
   if (ctx.workspaceDir) {
@@ -130,7 +133,7 @@ function createMemoryTool(api: OpenClawPluginApi, ctx: OpenClawPluginToolContext
     description: TOOL_DESCRIPTION,
     parameters: Type.Object({
       action: Type.String({ enum: ["add", "replace", "remove"] }),
-      target: Type.Optional(Type.String({ enum: ["memory", "user"] })),
+      target: Type.Optional(Type.String({ enum: ["memory", "note", "user"] })),
       content: Type.Optional(
         Type.String({ description: "Required for add/replace. The new entry text." }),
       ),
@@ -158,14 +161,50 @@ function createMemoryTool(api: OpenClawPluginApi, ctx: OpenClawPluginToolContext
             "Required for replace/remove. A short unique substring of the entry to modify.",
         }),
       ),
+      basis: Type.Optional(
+        Type.String({
+          maxLength: 1000,
+          description:
+            "Required for target='note': the result, error or measurement that showed it.",
+        }),
+      ),
     }),
     async execute(callId: string, rawParams: Record<string, unknown>) {
       const params = rawParams as MemoryToolParams;
-      const target = params.target === "user" ? "user" : "memory";
+      const target =
+        params.target === "user" || params.target === "note" ? params.target : "memory";
       const workspaceDir = resolveWorkspaceDir(api, ctx);
       const operation = readOperation(params);
       if ("error" in operation) {
         return jsonResult({ success: false, target, message: operation.error });
+      }
+
+      if (target === "note") {
+        if (operation.action === "remove") {
+          // A note leaves the way any brand memory does; only its writing differs.
+          return jsonResult({
+            success: false,
+            target,
+            message: "Remove a note with target='memory'.",
+          });
+        }
+        if (!params.basis?.trim()) {
+          return jsonResult({
+            success: false,
+            target,
+            message:
+              "basis is required for a note: the result, error or measurement that showed it.",
+          });
+        }
+        const note = {
+          ...operation,
+          note: true,
+          basis: params.basis,
+          ...(ctx.sessionKey ? { session_key: ctx.sessionKey } : {}),
+        };
+        return memoryWriteQueue.enqueue(`${workspaceDir}:memory`, async () =>
+          jsonResult({ ...(await applyBrandMemory(workspaceDir, note)), target }),
+        );
       }
 
       if (target === "memory") {
