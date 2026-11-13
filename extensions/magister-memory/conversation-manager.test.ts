@@ -60,7 +60,7 @@ describe("conversation checkpoint integration", () => {
           agentId: "marketing",
         })
       ).recallFrozen,
-    ).toBe(false);
+    ).toBe(true);
     await manager.captureAgentEnd(
       {
         success: true,
@@ -126,7 +126,7 @@ describe("conversation checkpoint integration", () => {
     ).toBeUndefined();
   });
 
-  it("excludes the current session while allowing late recall from another session", async () => {
+  it("excludes the current session's own checkpoint from its recall", async () => {
     const summaries = [
       {
         summary: "The current session produced its own campaign checkpoint.",
@@ -161,7 +161,6 @@ describe("conversation checkpoint integration", () => {
       sessionId: "other-session",
     };
 
-    expect(await manager.buildPromptContext(currentContext)).toBeUndefined();
     await manager.captureAgentEnd(
       {
         success: true,
@@ -176,9 +175,6 @@ describe("conversation checkpoint integration", () => {
       workspaceDir: dir,
       sessionHash: hashIdentifier(currentContext.sessionId),
     });
-
-    expect(await manager.buildPromptContext(currentContext)).toBeUndefined();
-
     await manager.captureAgentEnd(
       {
         success: true,
@@ -198,6 +194,52 @@ describe("conversation checkpoint integration", () => {
     expect(recall).toContain("Another project session approved the launch positioning.");
     expect(recall).not.toContain("current session produced its own campaign checkpoint");
     expect(await manager.buildPromptContext(currentContext)).toBe(recall);
+  });
+
+  it("does not add a later checkpoint to a session that started without recall", async () => {
+    const runEmbeddedPiAgent = vi.fn(async () => ({
+      payloads: [
+        {
+          text: JSON.stringify({
+            summary: "Another project session approved the launch positioning.",
+            topics: ["launch positioning"],
+          }),
+        },
+      ],
+    }));
+    const manager = new ConversationCheckpointManager(
+      makeApi(runEmbeddedPiAgent),
+      resolveConversationCheckpointConfig({ conversationCheckpoints: { mode: "active" } }, null),
+    );
+    const currentContext = {
+      agentId: "marketing",
+      sessionId: "current-session",
+      workspaceDir: dir,
+      trigger: "user",
+    };
+    const otherContext = { ...currentContext, sessionId: "other-session" };
+
+    expect(await manager.buildPromptContext(currentContext)).toBeUndefined();
+    await manager.captureAgentEnd(
+      {
+        success: true,
+        messages: [
+          { role: "user", content: "Approve the detailed positioning in another session." },
+          { role: "assistant", content: "The launch positioning is approved." },
+        ],
+      },
+      otherContext,
+    );
+    await manager.finalizeSessionForTest({
+      workspaceDir: dir,
+      sessionHash: hashIdentifier(otherContext.sessionId),
+    });
+
+    // Recall is part of the cached prompt prefix, so it is fixed at the first turn.
+    expect(await manager.buildPromptContext(currentContext)).toBeUndefined();
+    expect(
+      await manager.buildPromptContext({ ...currentContext, sessionId: "later-session" }),
+    ).toContain("Another project session approved the launch positioning.");
   });
 
   it("removes quiescent session state after a session-end checkpoint", async () => {

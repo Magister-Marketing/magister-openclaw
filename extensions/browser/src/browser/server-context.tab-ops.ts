@@ -350,9 +350,13 @@ export function createProfileTabOps({
     if (cdpActionTimeouts) {
       createTargetOpts.timeouts = cdpActionTimeouts;
     }
+    let cdpOpenError: Error | undefined;
     const createdViaCdp = await createTargetViaCdp(createTargetOpts)
       .then((r) => r.targetId)
-      .catch(() => null);
+      .catch((err: unknown) => {
+        cdpOpenError = err instanceof Error ? err : new Error(String(err));
+        return null;
+      });
 
     if (createdViaCdp) {
       const profileState = getProfileState();
@@ -391,17 +395,27 @@ export function createProfileTabOps({
         method: "PUT",
       },
       getCdpControlPolicy(),
-    ).catch(async (err) => {
-      if (String(err).includes("HTTP 405")) {
-        return await fetchJson<CdpTarget>(
-          endpoint,
-          cdpActionTimeouts?.httpTimeoutMs ?? CDP_JSON_NEW_TIMEOUT_MS,
-          undefined,
-          getCdpControlPolicy(),
-        );
-      }
-      throw err;
-    });
+    )
+      .catch(async (err) => {
+        if (String(err).includes("HTTP 405")) {
+          return await fetchJson<CdpTarget>(
+            endpoint,
+            cdpActionTimeouts?.httpTimeoutMs ?? CDP_JSON_NEW_TIMEOUT_MS,
+            undefined,
+            getCdpControlPolicy(),
+          );
+        }
+        throw err;
+      })
+      .catch((err: unknown) => {
+        // A bare status says nothing about why the tab did not open, and the CDP
+        // attempt does: a relay's refusal, a lost extension, a timeout. The
+        // extension relay has no /json/new, so there the answer is always 404.
+        if (cdpOpenError && err instanceof Error && /^HTTP \d{3}$/.test(err.message)) {
+          throw cdpOpenError;
+        }
+        throw err;
+      });
 
     if (!created.id) {
       throw new Error("Failed to open tab (missing id)");

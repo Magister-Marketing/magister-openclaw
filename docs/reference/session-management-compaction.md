@@ -362,6 +362,11 @@ Plugins can register a compaction provider via `registerCompactionProvider()` on
   instead of preserving the full previous summary verbatim.
 - Safeguard mode enables summary quality audits by default; set
   `qualityGuard.enabled: false` to skip retry-on-malformed-output behavior.
+  With `identifierPolicy: "strict"`, identifiers a summary left out are listed in
+  a section beside it without a retry, so only a missing section or latest ask
+  costs a second summary. Values over 300 characters are not listed, the section
+  is dropped if the suffix would reach the 16,000-character cap, and a provider's
+  result gets no such section.
 - If the provider fails or returns an empty result, OpenClaw falls back to built-in LLM summarization automatically.
 - Abort/timeout signals are re-thrown (not swallowed) to respect caller cancellation.
 

@@ -256,6 +256,79 @@ afterEach(async () => {
   await fs.rm(workspace, { recursive: true, force: true });
 });
 
+describe("the Gateway's turn barrier", () => {
+  function contextReadyCalls() {
+    const calls: string[] = [];
+    const original = gateway.request;
+    gateway.request = (async (
+      method: "GET" | "POST",
+      endpoint: string,
+      values?: Record<string, unknown>,
+    ) => {
+      calls.push(endpoint);
+      return original(method, endpoint, values);
+    }) as typeof gateway.request;
+    return () => calls.filter((endpoint) => endpoint === "/context-ready").length;
+  }
+
+  it("lets run setup reuse the barrier the Gateway crossed for the same turn", async () => {
+    const count = contextReadyCalls();
+    await expect(runtime.admit({ fromGateway: true, turnId: "turn-1" })).resolves.toBe(true);
+    await expect(runtime.admit({ turnId: "turn-1" })).resolves.toBe(true);
+    expect(count()).toBe(1);
+  });
+
+  it("crosses it again for another turn, after a commit, or with no turn", async () => {
+    const count = contextReadyCalls();
+    await runtime.admit({ fromGateway: true, turnId: "turn-1" });
+    await runtime.admit({ turnId: "turn-2" }); // another turn
+    expect(count()).toBe(2);
+    gateway.put("resources/new.md", "a commit moves the sequence");
+    await runtime.admit({ turnId: "turn-1" }); // same turn, the Library moved
+    expect(count()).toBe(3);
+    await runtime.admit({ fromGateway: true, turnId: "turn-3" });
+    await runtime.admit(); // a run the Gateway did not admit (cron, workflow)
+    expect(count()).toBe(5);
+  });
+
+  it("records no barrier when the Gateway sends no turn id", async () => {
+    const count = contextReadyCalls();
+    await runtime.admit({ fromGateway: true });
+    await runtime.admit({ turnId: "turn-1" });
+    expect(count()).toBe(2);
+  });
+
+  it("records no barrier while publication is pending", async () => {
+    const count = contextReadyCalls();
+    gateway.state.coverage.complete = false;
+    await expect(runtime.admit({ fromGateway: true, turnId: "turn-1" })).rejects.toThrow(
+      "publication_pending",
+    );
+    gateway.state.coverage.complete = true;
+    await expect(runtime.admit({ turnId: "turn-1" })).resolves.toBe(true);
+    expect(count()).toBe(2);
+  });
+});
+
+describe("activated", () => {
+  it("reads the activation marker, with no Library call", async () => {
+    // beforeEach admitted an active brand, which wrote the marker.
+    const calls: string[] = [];
+    const original = gateway.request;
+    gateway.request = (async (
+      method: "GET" | "POST",
+      endpoint: string,
+      values?: Record<string, unknown>,
+    ) => {
+      calls.push(endpoint);
+      return original(method, endpoint, values);
+    }) as typeof gateway.request;
+    await expect(runtime.activated()).resolves.toBe(true);
+    await expect((await freshVolume()).activated()).resolves.toBe(false);
+    expect(calls).toEqual([]);
+  });
+});
+
 describe("hosted Library tool authority", () => {
   it("fences direct legacy projections against cutover and keeps unknown outcomes open", async () => {
     const writeProjection = vi.fn(async () => {});
@@ -472,6 +545,90 @@ describe("hosted Library tool authority", () => {
       expected_revision: gateway.commits.length ? gateway.revisions[0].revision_id : "",
     });
   });
+  it("saves a new folder an agent names to the Library, at that path", async () => {
+    await write("competitor-profiles/acme.md", "profile", "new-folder");
+    expect(localCalls).not.toHaveBeenCalled();
+    expect(gateway.commits[0].changes[0]).toMatchObject({
+      kind: "create",
+      path: "competitor-profiles/acme.md",
+      expected_absent: true,
+    });
+    expect(gateway.heads().map((file) => file.path)).toContain("competitor-profiles/acme.md");
+    // The skill reads back what it saved, from where it saved it.
+    expect(await fs.readFile(path.join(workspace, "competitor-profiles/acme.md"), "utf8")).toBe(
+      "profile",
+    );
+    await read("competitor-profiles/acme.md");
+    await tool("edit").execute("edit-new-folder", {
+      path: "competitor-profiles/acme.md",
+      oldText: "profile",
+      newText: "updated",
+    });
+    expect(gateway.commits[1].changes[0]).toMatchObject({ kind: "replace" });
+    expect(await fs.readFile(path.join(workspace, "competitor-profiles/acme.md"), "utf8")).toBe(
+      "updated",
+    );
+    await write("notes.md", "at the root", "new-root-file");
+    expect(gateway.heads().map((file) => file.path)).toContain("notes.md");
+  });
+  it.each([
+    "tmp/scratch.txt",
+    "temp/scratch.txt",
+    "node_modules/pkg/index.js",
+    "campaign/__pycache__/x.pyc",
+    "campaign/venv/bin/x",
+    "campaign/tmp/draft.txt",
+    ".agents/product-marketing.md",
+    "campaign/.cache/x",
+    "USER.md",
+    "PROJECT.md",
+    "HEARTBEAT.md",
+    "product-marketing-context.md",
+    "memory.archive/USER.md",
+    "memory/2026-11-04.md",
+    "skills/mine/SKILL.md",
+    "hooks/mine/handler.js",
+  ])("keeps %s on the machine, with no Library commit", async (target) => {
+    await fs.mkdir(path.dirname(path.join(workspace, target)), { recursive: true });
+    await write(target, "local", `local-${target}`);
+    expect(localCalls).toHaveBeenCalledWith("write");
+    expect(await fs.readFile(path.join(workspace, target), "utf8")).toBe("local");
+    expect(gateway.commits).toHaveLength(0);
+  });
+  it.each(["INTEGRATIONS.md", "WORKFLOWS.md"])(
+    "refuses a write to %s, which its Gateway writer keeps current on the volume",
+    async (target) => {
+      await fs.writeFile(path.join(workspace, target), "from the Gateway");
+      await expect(write(target, "from the agent", `refused-${target}`)).rejects.toThrow(
+        `managed_file: ${target}`,
+      );
+      expect(await fs.readFile(path.join(workspace, target), "utf8")).toBe("from the Gateway");
+      expect(gateway.commits).toHaveLength(0);
+      // Reading it is ordinary, and no Library entry stands behind it.
+      expect((await read(target)).content[0]).toMatchObject({ text: "from the Gateway" });
+    },
+  );
+  it("does not let a patch mix a new Library folder with a machine-local path", async () => {
+    const stage = vi.fn(async () => []);
+    await expect(
+      tool("apply_patch", { paths: ["competitor-profiles/a.md", "USER.md"], stage }).execute(
+        "patch-mixed-new",
+        { input: "mixed" },
+      ),
+    ).rejects.toThrow("mix");
+    expect(stage).not.toHaveBeenCalled();
+    expect(gateway.commits).toHaveLength(0);
+  });
+  it("cannot write through a symlink into a new Library folder", async () => {
+    await fs.mkdir(path.join(workspace, "competitor-profiles"));
+    await fs.symlink(path.join(workspace, "competitor-profiles"), path.join(workspace, "alias"));
+    const native = runtime.wrap(createWriteTool(workspace) as unknown as AnyAgentTool, context());
+    await expect(
+      native.execute("alias-new-folder", { path: "alias/x.md", content: "bad" }),
+    ).rejects.toThrow("aliases");
+    await expect(fs.stat(path.join(workspace, "competitor-profiles/x.md"))).rejects.toThrow();
+    expect(gateway.commits).toHaveLength(0);
+  });
   it("moves and trashes a read Library file through hosted tools", async () => {
     // Hosted models have no apply_patch and exec cannot write the workspace,
     // so these are the only way an agent renames or removes a Library file.
@@ -577,7 +734,7 @@ describe("hosted Library tool authority", () => {
     gateway.put("BRAND.md", "brand", "managed");
     const stage = vi.fn(async () => []);
     await expect(
-      tool("apply_patch", { paths: ["scratch.txt", "resources/draft.md"], stage }).execute(
+      tool("apply_patch", { paths: ["tmp/scratch.txt", "resources/draft.md"], stage }).execute(
         "patch",
         { input: "mixed" },
       ),
@@ -983,8 +1140,9 @@ describe("review fixes (PR 2210)", () => {
     );
     expect(localCalls).not.toHaveBeenCalledWith("write");
     // Paths outside the Library keep working.
-    await write("scratch.txt", "local", "recovery-local");
-    expect(await fs.readFile(path.join(workspace, "scratch.txt"), "utf8")).toBe("local");
+    await fs.mkdir(path.join(workspace, "tmp"));
+    await write("tmp/scratch.txt", "local", "recovery-local");
+    expect(await fs.readFile(path.join(workspace, "tmp/scratch.txt"), "utf8")).toBe("local");
     // If the Library's paths cannot be listed, recovery refuses every write.
     replaced.recoveryListingTtlMs = 0;
     const original = gateway.request;
@@ -992,10 +1150,57 @@ describe("review fixes (PR 2210)", () => {
       if (endpoint === "/manifest") throw new LibraryHttpError(503, {});
       return original(method, endpoint, values);
     });
-    await expect(write("scratch.txt", "x", "recovery-unlisted")).rejects.toThrow(
+    await expect(write("tmp/scratch.txt", "x", "recovery-unlisted")).rejects.toThrow(
       "temporarily_unavailable",
     );
     expect(gateway.commits).toHaveLength(0);
+  });
+  it("C5: recovery refuses a write through a local link that lands on a Library path", async () => {
+    gateway.put("resources/report.md", "cloud copy");
+    const replaced = await freshVolume();
+    await fs.mkdir(path.join(workspace, "resources"), { recursive: true });
+    await fs.writeFile(path.join(workspace, "resources/report.md"), "legacy bytes");
+    await fs.mkdir(path.join(workspace, "tmp"));
+    await fs.symlink(path.join(workspace, "resources"), path.join(workspace, "tmp/alias"));
+    gateway.state.mode = "recovery";
+    await expect(replaced.admit()).resolves.toBe(false);
+    await expect(write("tmp/alias/report.md", "lost edit", "recovery-alias")).rejects.toThrow(
+      "temporarily_unavailable",
+    );
+    expect(await fs.readFile(path.join(workspace, "resources/report.md"), "utf8")).toBe(
+      "legacy bytes",
+    );
+    expect(localCalls).not.toHaveBeenCalledWith("write");
+  });
+  it("refuses a link reached through a space the tool reads as a plain one, in recovery and active", async () => {
+    gateway.put("resources/report.md", "cloud copy");
+    const replaced = await freshVolume();
+    await fs.mkdir(path.join(workspace, "resources"), { recursive: true });
+    await fs.writeFile(path.join(workspace, "resources/report.md"), "legacy bytes");
+    await fs.mkdir(path.join(workspace, "tmp"));
+    await fs.symlink(path.join(workspace, "resources"), path.join(workspace, "tmp/my alias"));
+    gateway.state.mode = "recovery";
+    await expect(replaced.admit()).resolves.toBe(false);
+    await expect(write("tmp/my\u00a0alias/report.md", "x", "recovery-space")).rejects.toThrow(
+      "temporarily_unavailable",
+    );
+    gateway.state.mode = "active";
+    await replaced.admit();
+    await expect(write("tmp/my\u00a0alias/report.md", "x", "active-space")).rejects.toThrow(
+      "invalid_path",
+    );
+    expect(localCalls).not.toHaveBeenCalledWith("write");
+  });
+  it("C5: recovery refuses a Library file named through a space the tool reads as a plain one", async () => {
+    gateway.put("campaigns/my launch.md", "cloud copy");
+    const replaced = await freshVolume();
+    await fs.mkdir(path.join(workspace, "campaigns"));
+    await fs.writeFile(path.join(workspace, "campaigns/my launch.md"), "stale local bytes");
+    gateway.state.mode = "recovery";
+    await expect(replaced.admit()).resolves.toBe(false);
+    await expect(
+      tool("read").execute("recovery-read-space", { path: "campaigns/my\u00a0launch.md" }),
+    ).rejects.toThrow("temporarily_unavailable");
   });
   it("C5: recovery refuses local writes under publication roots before the path exists", async () => {
     const replaced = await freshVolume();
@@ -1015,8 +1220,22 @@ describe("review fixes (PR 2210)", () => {
     await expect(fs.stat(path.join(workspace, "audits"))).rejects.toThrow("ENOENT");
     await expect(fs.stat(path.join(workspace, "data"))).rejects.toThrow("ENOENT");
     await expect(fs.stat(path.join(workspace, "plans"))).rejects.toThrow("ENOENT");
-    await write("database-notes.txt", "local", "recovery-similar-name");
-    expect(await fs.readFile(path.join(workspace, "database-notes.txt"), "utf8")).toBe("local");
+    // A root that only resembles a publication folder is still not Library content to read.
+    await fs.writeFile(path.join(workspace, "database-notes.txt"), "local");
+    expect((await read("database-notes.txt")).content[0]).toMatchObject({ text: "local" });
+  });
+  it("C5: recovery refuses an agent's new file, which active would save to the Library", async () => {
+    const replaced = await freshVolume();
+    gateway.state.mode = "recovery";
+    await expect(replaced.admit()).resolves.toBe(false);
+    // Left on the volume it would be in no listing once the brand returns to active.
+    await expect(write("competitor-profiles/acme.md", "local", "recovery-new")).rejects.toThrow(
+      "temporarily_unavailable",
+    );
+    await fs.mkdir(path.join(workspace, "tmp"));
+    await write("tmp/scratch.txt", "local", "recovery-scratch");
+    expect(await fs.readFile(path.join(workspace, "tmp/scratch.txt"), "utf8")).toBe("local");
+    expect(gateway.commits).toHaveLength(0);
   });
   it("C5: recovery reuses its Library path list for 30 s and never caches a failure", async () => {
     const replaced = await freshVolume();
@@ -1031,18 +1250,19 @@ describe("review fixes (PR 2210)", () => {
         return original(method, endpoint, values);
       });
     const listings = () => request.mock.calls.filter((call) => call[1] === "/manifest").length;
-    for (const id of ["one", "two", "three"]) await write("scratch.txt", id, `cached-${id}`);
+    await fs.mkdir(path.join(workspace, "tmp"));
+    for (const id of ["one", "two", "three"]) await write("tmp/scratch.txt", id, `cached-${id}`);
     expect(listings()).toBe(1);
     replaced.recoveryListingTtlMs = 0;
     failManifest = true;
-    await expect(write("scratch.txt", "x", "cached-failed")).rejects.toThrow(
+    await expect(write("tmp/scratch.txt", "x", "cached-failed")).rejects.toThrow(
       "temporarily_unavailable",
     );
     failManifest = false;
     replaced.recoveryListingTtlMs = 30_000;
-    await write("scratch.txt", "four", "cached-retry");
+    await write("tmp/scratch.txt", "four", "cached-retry");
     expect(listings()).toBe(3);
-    await write("scratch.txt", "five", "cached-again");
+    await write("tmp/scratch.txt", "five", "cached-again");
     expect(listings()).toBe(3);
   });
   it("L1: caches a legacy answer for 60 s and a Gateway reconcile refreshes it", async () => {

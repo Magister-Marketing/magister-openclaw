@@ -402,9 +402,15 @@ export function activateToolSchemaDeferral(params: {
     entries: params.transcriptEntries,
     deferredToolNames,
   });
-  const activeToolNames = params.registeredToolNames.filter(
-    (name) => !deferredToolNames.has(name) || promoted.has(name),
-  );
+  // Eager tools in registered order, then the loaded ones in the order they were
+  // loaded: the order promoteTool leaves them in mid-turn. The tool list is part
+  // of the provider's cached prefix, so re-sorting them at the next turn missed
+  // the cache a second time for one loaded tool.
+  const registered = new Set(params.registeredToolNames);
+  const activeToolNames = [
+    ...params.registeredToolNames.filter((name) => !deferredToolNames.has(name)),
+    ...[...promoted].filter((name) => registered.has(name)),
+  ];
   params.session.setActiveToolsByName(activeToolNames);
   installPromotionHook(params.session, deferredToolNames);
   return { activeToolNames, promotedFromTranscript: [...promoted].toSorted() };

@@ -117,6 +117,26 @@ describe("cdp helpers", () => {
     expect(release).toHaveBeenCalledTimes(1);
   });
 
+  it.each([401, 403])("says an HTTP %i is about this machine, not a site", async (status) => {
+    fetchWithSsrFGuardMock.mockResolvedValueOnce({
+      response: { ok: false, status },
+      release: vi.fn(async () => {}),
+    });
+
+    await expect(fetchOk("http://127.0.0.1:9222/json/version")).rejects.toThrow(
+      `HTTP ${status}: the browser endpoint refused this machine (its credentials or access policy), not the site`,
+    );
+  });
+
+  it("keeps any other status bare for callers that match on it", async () => {
+    fetchWithSsrFGuardMock.mockResolvedValueOnce({
+      response: { ok: false, status: 405 },
+      release: vi.fn(async () => {}),
+    });
+
+    await expect(fetchOk("http://127.0.0.1:9222/json/new")).rejects.toThrow(/^HTTP 405$/);
+  });
+
   it("preserves hostname allowlist while allowing exact loopback CDP fetches", async () => {
     const release = vi.fn(async () => {});
     fetchWithSsrFGuardMock.mockResolvedValueOnce({

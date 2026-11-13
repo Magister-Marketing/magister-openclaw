@@ -73,6 +73,8 @@ export type AgentCommandOpts = {
   messageChannel?: string;
   /** Deferred-schema tools whose schema ships eagerly for this session (x-magister-eager-schemas). */
   eagerSchemaTools?: string[];
+  /** The Gateway's turn id (x-magister-turn-id): run setup reuses its Library barrier. */
+  libraryTurnId?: string;
   /** Tool-policy/output surface context. Defaults to messageChannel. */
   messageProvider?: string;
   /** Delivery channel. */

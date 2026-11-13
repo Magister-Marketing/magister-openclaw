@@ -16,7 +16,7 @@ import { createDefaultDeps } from "../cli/deps.js";
 import type { CliDeps } from "../cli/deps.types.js";
 import { agentCommandFromIngress } from "../commands/agent.js";
 import type { GatewayHttpResponsesConfig } from "../config/types.gateway.js";
-import { emitAgentEvent, onAgentEvent } from "../infra/agent-events.js";
+import { emitAgentEvent, onAgentEvent, rememberAgentRun } from "../infra/agent-events.js";
 import { logWarn } from "../logger.js";
 import { renderFileContextBlock } from "../media/file-context.js";
 import {
@@ -721,6 +721,8 @@ export async function handleOpenResponsesHttpRequest(
   }
 
   const responseId = `resp_${randomUUID()}`;
+  // Before response.created: the Gateway can ask about this id from then on.
+  rememberAgentRun(responseId);
   const rememberResponseSession = () =>
     storeResponseSession(responseId, sessionKey, responseSessionScope);
   const outputItemId = `msg_${randomUUID()}`;

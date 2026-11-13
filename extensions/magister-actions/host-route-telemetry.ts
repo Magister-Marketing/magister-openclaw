@@ -46,6 +46,22 @@ export function reportHostRouteFailure(route: HostRoute, error: unknown): void {
   }
 }
 
+/** A repository request the host could not place with the chat that made it,
+ *  so the chat ownership rules fell back to those for an unknown caller.
+ *  Warn-level: the request was still answered. */
+export function reportUnattributedCall(route: HostRoute, reason: "no_call" | "ambiguous"): void {
+  try {
+    emitTrustedDiagnosticEvent({
+      type: "plugin.caller.unattributed",
+      pluginId: "magister-actions",
+      toolName: route,
+      reasonCode: reason,
+    });
+  } catch {
+    // Telemetry must never change the answer the caller gets.
+  }
+}
+
 /** Cleanup that failed after the operation committed. Warn-level, never an
  *  issue: the caller's result stands and the residue has another owner. */
 export function reportCleanupFailure(route: HostRoute, error: unknown): void {
