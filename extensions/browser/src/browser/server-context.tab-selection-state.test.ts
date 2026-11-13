@@ -298,6 +298,48 @@ describe("browser server-context tab selection state", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("reports why the CDP attempt failed when /json/new answers only a status", async () => {
+    const refusal = "Not allowed: example.org is not on this brand's URL allowlist.";
+    vi.spyOn(cdpModule, "createTargetViaCdp").mockRejectedValue(new Error(refusal));
+    vi.spyOn(cdpHelpersModule, "fetchJson").mockRejectedValue(new Error("HTTP 404"));
+
+    const state = makeState("openclaw");
+    const ctx = createTestBrowserRouteContext({ getState: () => state });
+
+    await expect(ctx.forProfile("openclaw").openTab("https://example.org")).rejects.toThrow(
+      refusal,
+    );
+  });
+
+  it("reports the CDP failure after the /json/new method retry also answers a status", async () => {
+    vi.spyOn(cdpModule, "createTargetViaCdp").mockRejectedValue(
+      new Error("Extension not connected"),
+    );
+    vi.spyOn(cdpHelpersModule, "fetchJson")
+      .mockRejectedValueOnce(new Error("HTTP 405"))
+      .mockRejectedValueOnce(new Error("HTTP 404"));
+
+    const state = makeState("openclaw");
+    const ctx = createTestBrowserRouteContext({ getState: () => state });
+
+    await expect(ctx.forProfile("openclaw").openTab("https://example.org")).rejects.toThrow(
+      "Extension not connected",
+    );
+  });
+
+  it("keeps a /json/new error that explains itself", async () => {
+    const rateLimited = "Browser service rate limit reached. Do NOT retry the browser tool.";
+    vi.spyOn(cdpModule, "createTargetViaCdp").mockRejectedValue(new Error("socket hang up"));
+    vi.spyOn(cdpHelpersModule, "fetchJson").mockRejectedValue(new Error(rateLimited));
+
+    const state = makeState("openclaw");
+    const ctx = createTestBrowserRouteContext({ getState: () => state });
+
+    await expect(ctx.forProfile("openclaw").openTab("https://example.org")).rejects.toThrow(
+      rateLimited,
+    );
+  });
+
   it("uses the loopback CDP control policy for /json/new fallback requests", async () => {
     vi.spyOn(cdpModule, "createTargetViaCdp").mockRejectedValue(new Error("cdp unavailable"));
     const fetchJson = vi.spyOn(cdpHelpersModule, "fetchJson");

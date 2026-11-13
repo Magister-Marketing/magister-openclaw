@@ -165,7 +165,7 @@ async function runBrowserLiveProbe(req: BrowserRequest, ctx: BrowserRouteContext
         summary: "No per-tab CDP WebSocket available for the lightweight live snapshot probe",
       };
     }
-    const snap = await snapshotAria({ wsUrl: tab.wsUrl, limit: 25 });
+    const snap = await snapshotAria({ wsUrl: tab.wsUrl, targetId: tab.targetId, limit: 25 });
     return {
       id: "live-snapshot",
       label: "Live snapshot",

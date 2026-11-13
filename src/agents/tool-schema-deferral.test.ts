@@ -234,6 +234,32 @@ describe("activateToolSchemaDeferral", () => {
     expect(session.agent.afterToolCall).toBeUndefined();
   });
 
+  it("keeps loaded tools last, in the order they were loaded, as they are mid-turn", () => {
+    const describe = createToolDescribeTool();
+    const registry = [
+      describe,
+      makeTool("magister_create_workflow", { schemaDelivery: "deferred" }),
+      eager(),
+      deferred(),
+    ];
+    const session = fakeSession(registry);
+    const activation = activateToolSchemaDeferral({
+      session,
+      plan: planToolSchemaDelivery(registry),
+      registeredToolNames: registry.map((tool) => tool.name),
+      transcriptEntries: [
+        assistantToolCall(deferred().name),
+        assistantToolCall("magister_create_workflow"),
+      ],
+    });
+    expect(activation.activeToolNames).toEqual([
+      TOOL_DESCRIBE_TOOL_NAME,
+      "magister_get_brand",
+      deferred().name,
+      "magister_create_workflow",
+    ]);
+  });
+
   it("activates eager tools plus the ones the transcript already loaded", () => {
     const describe = createToolDescribeTool();
     const registry = [

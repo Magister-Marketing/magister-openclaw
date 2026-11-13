@@ -122,22 +122,54 @@ type AgentEventState = {
   seqByRun: Map<string, number>;
   listeners: Set<(evt: AgentEventPayload) => void>;
   runContextById: Map<string, AgentRunContext>;
+  /** Every run this process was told about, finished ones included, oldest first. */
+  heardOfRunIds: Set<string>;
 };
 
 const AGENT_EVENT_STATE_KEY = Symbol.for("openclaw.agentEvents.state");
+const HEARD_OF_RUN_IDS_MAX = 10_000;
 
 function getAgentEventState(): AgentEventState {
   return resolveGlobalSingleton<AgentEventState>(AGENT_EVENT_STATE_KEY, () => ({
     seqByRun: new Map<string, number>(),
     listeners: new Set<(evt: AgentEventPayload) => void>(),
     runContextById: new Map<string, AgentRunContext>(),
+    heardOfRunIds: new Set<string>(),
   }));
+}
+
+/**
+ * Record that this process owns a run, from the moment its id exists.
+ *
+ * `agent.wait` needs this to tell a run still working here from one that started
+ * in an earlier process: nothing else lasts for a run's whole life. A run context
+ * is cleared at every lifecycle end and swept when silent, and the `agent.wait`
+ * listener arms on its first call, so a run that has merely gone quiet can look
+ * absent from both.
+ */
+export function rememberAgentRun(runId: string) {
+  if (!runId) {
+    return;
+  }
+  const { heardOfRunIds } = getAgentEventState();
+  if (heardOfRunIds.has(runId)) {
+    return;
+  }
+  if (heardOfRunIds.size >= HEARD_OF_RUN_IDS_MAX) {
+    heardOfRunIds.delete(heardOfRunIds.values().next().value as string);
+  }
+  heardOfRunIds.add(runId);
+}
+
+export function hasHeardOfAgentRun(runId: string): boolean {
+  return getAgentEventState().heardOfRunIds.has(runId);
 }
 
 export function registerAgentRunContext(runId: string, context: AgentRunContext) {
   if (!runId) {
     return;
   }
+  rememberAgentRun(runId);
   const state = getAgentEventState();
   const existing = state.runContextById.get(runId);
   if (!existing) {
@@ -205,6 +237,7 @@ export function resetAgentRunContextForTest() {
 }
 
 export function emitAgentEvent(event: Omit<AgentEventPayload, "seq" | "ts">) {
+  rememberAgentRun(event.runId);
   const state = getAgentEventState();
   const nextSeq = (state.seqByRun.get(event.runId) ?? 0) + 1;
   state.seqByRun.set(event.runId, nextSeq);
@@ -307,4 +340,5 @@ export function resetAgentEventsForTest() {
   state.seqByRun.clear();
   state.listeners.clear();
   state.runContextById.clear();
+  state.heardOfRunIds.clear();
 }

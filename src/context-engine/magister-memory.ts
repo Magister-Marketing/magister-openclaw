@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import { readWorkspaceFileSnapshot } from "../agents/workspace-file-authority.js";
 import type { MemoryCitationsMode } from "../config/types.memory.js";
 import { pruneMapToMaxSize } from "../infra/map-size.js";
 import { MagisterIntegrationsContextEngine } from "./magister-integrations.js";
@@ -73,6 +74,7 @@ const BRAND_TASK_PATTERN = new RegExp(
 
 type Options = {
   memoryPath?: string;
+  marketingContextPath?: string;
   userPath?: string;
   projectPath?: string;
   brandPath?: string;
@@ -81,8 +83,8 @@ type Options = {
 
 /**
  * Wraps another context engine (default: MagisterIntegrationsContextEngine) and
- * folds MEMORY.md + USER.md + PROJECT.md content into the system prompt as a
- * snapshot read once per run.
+ * folds the shared marketing context + USER.md + PROJECT.md into the system
+ * prompt as a snapshot read once per run.
  *
  * resolveContextEngine builds a new engine for every run, so the snapshot is
  * held for the model calls of one turn and read again on the next turn. That
@@ -103,6 +105,7 @@ export class MagisterMemoryContextEngine implements ContextEngine {
 
   private readonly inner: ContextEngine;
   private readonly memoryPath: string;
+  private readonly marketingContextPath: string;
   private readonly userPath: string;
   private readonly projectPath: string;
   private readonly brandPath: string;
@@ -111,6 +114,9 @@ export class MagisterMemoryContextEngine implements ContextEngine {
   constructor(options: Options = {}) {
     this.inner = options.inner ?? new MagisterIntegrationsContextEngine();
     this.memoryPath = options.memoryPath ?? DEFAULT_MEMORY_PATH;
+    this.marketingContextPath =
+      options.marketingContextPath ??
+      join(this.memoryPath, "..", ".magister", "state", "marketing-context.json");
     this.userPath = options.userPath ?? DEFAULT_USER_PATH;
     this.projectPath = options.projectPath ?? DEFAULT_PROJECT_PATH;
     this.brandPath = options.brandPath ?? DEFAULT_BRAND_PATH;
@@ -135,6 +141,12 @@ export class MagisterMemoryContextEngine implements ContextEngine {
     model?: string;
     prompt?: string;
   }): Promise<AssembleResult> {
+    return readWorkspaceFileSnapshot(dirname(this.memoryPath), () => this.assembleSnapshot(params));
+  }
+
+  private async assembleSnapshot(
+    params: Parameters<MagisterMemoryContextEngine["assemble"]>[0],
+  ): Promise<AssembleResult> {
     const innerResult = await this.inner.assemble(params);
 
     let snapshot = this.snapshotBySession.get(params.sessionId);
@@ -199,20 +211,37 @@ export class MagisterMemoryContextEngine implements ContextEngine {
   }
 
   private async renderSnapshot(): Promise<string> {
-    const [memory, user, project] = await Promise.all([
-      readTextOrEmpty(this.memoryPath),
+    // MEMORY.md is still owned (so the host never injects the stale legacy
+    // copy as a bootstrap file) but no longer read: shared context replaced it.
+    const [user, project, marketingContext] = await Promise.all([
       readTextOrEmpty(this.userPath),
       readTextOrEmpty(this.projectPath),
+      readTextOrEmpty(this.marketingContextPath),
     ]);
 
     const blocks: string[] = [];
-    if (memory) {
+    let shared: string | undefined;
+    if (marketingContext) {
+      try {
+        const context = JSON.parse(marketingContext) as { rendered?: unknown; stale?: unknown };
+        if (typeof context.rendered === "string") {
+          shared =
+            context.rendered +
+            (context.stale
+              ? "\nRefresh failed. This is the last known context; verify freshness before relying on performance claims."
+              : "");
+        }
+      } catch {
+        // A malformed cache supplies no shared context.
+      }
+    }
+    if (shared) {
       blocks.push(
         renderMagisterContextBlock({
           provenance: "trusted_project_state",
-          source: "older_inferred_memory",
-          title: "Memory (about the project)",
-          content: memory,
+          source: "shared_marketing_context",
+          title: "Shared Marketing Context",
+          content: shared,
         }),
       );
     }
@@ -423,7 +452,7 @@ export function createMagisterMemoryContextEngine(options?: {
 
 export function registerMagisterMemoryContextEngine(): void {
   // Compose ON TOP of magister-plan so the active 'magister-memory' slot folds
-  // MEMORY.md + USER.md + PROJECT.md (a snapshot read once per run), the live
+  // shared marketing context + USER.md + PROJECT.md (a snapshot read once per run), the live
   // marketing plan, WORKFLOWS.md, and INTEGRATIONS.md. The chain is:
   //   MagisterMemoryContextEngine (once per run)
   //     -> MagisterPlanContextEngine (per-turn gateway summary + PLAN.md fallback)

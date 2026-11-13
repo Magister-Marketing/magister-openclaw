@@ -5,7 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { createClientToolNameConflictError } from "../agents/pi-tool-definition-adapter.js";
 import { HISTORY_CONTEXT_MARKER } from "../auto-reply/reply/history.js";
 import { CURRENT_MESSAGE_MARKER } from "../auto-reply/reply/mentions.js";
-import { emitAgentEvent } from "../infra/agent-events.js";
+import { emitAgentEvent, hasHeardOfAgentRun } from "../infra/agent-events.js";
 import { buildAssistantDeltaResult } from "./test-helpers.agent-results.js";
 import {
   agentCommand,
@@ -204,6 +204,21 @@ async function expectInvalidRequest(
 }
 
 describe("OpenResponses HTTP API (e2e)", () => {
+  it("remembers its run before dispatching it, so agent.wait knows a queued run", async () => {
+    let heardOf: boolean | undefined;
+    agentCommand.mockClear();
+    agentCommand.mockImplementationOnce((async (opts: { runId: string }) => {
+      heardOf = hasHeardOfAgentRun(opts.runId);
+      return { payloads: [{ text: "hello" }] };
+    }) as never);
+
+    const res = await postResponses(enabledPort, { model: "openclaw", input: "hi" });
+
+    expect(res.status).toBe(200);
+    expect(heardOf).toBe(true);
+    await ensureResponseConsumed(res);
+  });
+
   it("handles OpenResponses request parsing and validation", async () => {
     const port = enabledPort;
     const mockAgentOnce = (payloads: Array<{ text: string }>, meta?: unknown) => {

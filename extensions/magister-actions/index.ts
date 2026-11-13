@@ -22,11 +22,17 @@ import {
 } from "./corpus-index.js";
 import { handleCorpusIngestion } from "./corpus.js";
 import {
+  handleLibraryReconcile,
+  hostedLibraryRuntime,
+  registerHostedLibraryAuthority,
+} from "./library-integration.js";
+import {
   handleRepoCheckout,
   handleRepoInstall,
   handleRepoPrepare,
   handleRepoPush,
   startCheckoutSweeper,
+  trackRepoCall,
 } from "./repo-checkout.js";
 
 const DEFAULT_ENDPOINT = "http://magister-gateway.internal:8081/api/agent/actions";
@@ -39,6 +45,17 @@ const SOCIAL_MEDIA_UPLOAD_TIMEOUT_MS = 300_000;
  *  above both or a large repository's checkout times out here while the
  *  clone completes unobserved behind it. */
 const REPO_TRANSFER_TIMEOUT_MS = 180_000;
+/** The Gateway waits on a slow provider longer than the default here: 60s for
+ *  Firecrawl plus its Web Unlocker fallback, 120s for PageSpeed. The machine's
+ *  broker allows 170s, so this hop must sit above both or a read that would
+ *  have succeeded is reported as `Magister action timed out after 45000ms`. */
+const INTEGRATION_CALL_TIMEOUT_MS = 180_000;
+const INTEGRATION_ACTIONS = new Set([
+  "integration_read",
+  "integration_change",
+  "integration_delete",
+  "integration_spend",
+]);
 const DEFAULT_MAX_RESPONSE_BYTES = 512 * 1024;
 const DEFAULT_WORKSPACE_DIR = "/data/.openclaw/workspace";
 const MAX_COMPLETION_ARTIFACT_BYTES = 16 * 1024 * 1024;
@@ -365,6 +382,9 @@ export function actionTimeoutMs(action: string, configuredTimeoutMs: number): nu
   }
   if (action === "checkout_repo" || action === "push_repo_branch") {
     return Math.max(configuredTimeoutMs, REPO_TRANSFER_TIMEOUT_MS);
+  }
+  if (INTEGRATION_ACTIONS.has(action)) {
+    return Math.max(configuredTimeoutMs, INTEGRATION_CALL_TIMEOUT_MS);
   }
   return configuredTimeoutMs;
 }
@@ -1118,6 +1138,9 @@ export function createMagisterActionTool(
       const selectedTimeoutMs = actionTimeoutMs(action.action, config.timeoutMs);
       const timeout = setTimeout(() => controller.abort(), selectedTimeoutMs);
       const runtimeSessionId = context.sessionId?.trim();
+      // The Gateway serves a repository action by calling this host back
+      // while this call waits; that is how the host knows which chat it is.
+      const releaseRepoCall = trackRepoCall(action.action, rawParams, context.sessionKey);
       try {
         const mediaPreparedParams = await prepareExactSocialMedia(action.action, rawParams, {
           workspaceDir: config.workspaceDir,
@@ -1318,6 +1341,7 @@ export function createMagisterActionTool(
         );
       } finally {
         clearTimeout(timeout);
+        releaseRepoCall();
       }
     },
   };
@@ -1335,13 +1359,32 @@ export function createContextualMagisterActionTool(
   return createMagisterActionTool(api, action, fetchImpl, context);
 }
 
-export const magisterStandaloneToolNames = ["search_project_corpus"] as const;
+export const magisterStandaloneToolNames = [
+  "search_project_corpus",
+  "move_file",
+  "trash_file",
+] as const;
 
 export default definePluginEntry({
   id: "magister-actions",
   name: "Magister Actions",
   description: "Typed project-scoped actions executed by the Magister gateway.",
   register(api) {
+    registerHostedLibraryAuthority();
+    api.on("before_prompt_build", async (_event, context) => {
+      if (!hostedLibraryRuntime(context.workspaceDir)?.active) return undefined;
+      return {
+        appendSystemContext:
+          "Library file authority is active (library_files_v1); committed cloud_saved receipts are durable. Ordinary file tools need no separate snapshot/export step.",
+      };
+    });
+    api.registerHttpRoute({
+      path: "/v1/library/reconcile",
+      auth: "gateway",
+      match: "exact",
+      gatewayRuntimeScopeSurface: "write-default",
+      handler: handleLibraryReconcile,
+    });
     api.registerHttpRoute({
       path: "/v1/files",
       auth: "gateway",
@@ -1391,6 +1434,12 @@ export default definePluginEntry({
     api.registerTool(() => createCorpusSearchTool(), {
       name: magisterStandaloneToolNames[0],
     });
+    for (const name of ["move_file", "trash_file"] as const) {
+      api.registerTool(
+        (context) => hostedLibraryRuntime(context.workspaceDir)?.fileTool(name, context) ?? null,
+        { name },
+      );
+    }
     for (const action of contract.actions) {
       api.registerTool(
         (context) => createContextualMagisterActionTool(api, action, fetch, context),

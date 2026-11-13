@@ -21,6 +21,15 @@ function runtimeEndpoint(path: string): string {
   return `${raw}/api/runtime/${path}`;
 }
 
+export class RuntimeGatewayError extends Error {
+  constructor(
+    public readonly status: number,
+    path: string,
+  ) {
+    super(`memory gateway rejected ${path}: HTTP ${status}`);
+  }
+}
+
 export async function callRuntimeGateway(
   path: string,
   options: { method: "GET" | "POST"; body?: unknown; timeoutMs: number },
@@ -42,7 +51,7 @@ export async function callRuntimeGateway(
     signal: AbortSignal.timeout(options.timeoutMs),
   });
   if (!response.ok) {
-    throw new Error(`memory gateway rejected ${path}: HTTP ${response.status}`);
+    throw new RuntimeGatewayError(response.status, path);
   }
   const result: unknown = await response.json();
   if (!result || typeof result !== "object" || Array.isArray(result)) {

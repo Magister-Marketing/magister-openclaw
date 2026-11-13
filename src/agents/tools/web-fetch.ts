@@ -1,5 +1,11 @@
 import { Type } from "typebox";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import {
+  assertHostNotRefused,
+  assertNotWebflowSite,
+  REFUSED_HOST_MESSAGE,
+  responseIsWebflow,
+} from "../../infra/net/refused-hosts.js";
 import { SsrFBlockedError, type LookupFn, type SsrFPolicy } from "../../infra/net/ssrf.js";
 import { logDebug } from "../../logger.js";
 import type { RuntimeWebFetchMetadata } from "../../secrets/runtime-web-tools.types.js";
@@ -368,6 +374,19 @@ function normalizeProviderWebFetchPayload(params: {
   };
 }
 
+function assertFinalUrlNotRefused(finalUrl: unknown): void {
+  if (typeof finalUrl !== "string") {
+    return;
+  }
+  let hostname: string;
+  try {
+    hostname = new URL(finalUrl).hostname;
+  } catch {
+    return;
+  }
+  assertHostNotRefused(hostname);
+}
+
 async function maybeFetchProviderWebFetchPayload(
   params: WebFetchRuntimeParams & {
     urlToFetch: string;
@@ -392,6 +411,8 @@ async function maybeFetchProviderWebFetchPayload(
     maxChars: params.maxChars,
     tookMs: params.tookMs,
   });
+  // A provider follows redirects on its own side, past the per-hop guard.
+  assertFinalUrlNotRefused(payload.finalUrl);
   writeCache(FETCH_CACHE, params.cacheKey, payload, params.cacheTtlMs);
   return payload;
 }
@@ -410,11 +431,6 @@ async function runWebFetch(params: WebFetchRuntimeParams): Promise<Record<string
   const cacheKey = normalizeCacheKey(
     `fetch:${params.url}:${params.extractMode}:${params.maxChars}${params.providerCacheKey ? `:provider:${params.providerCacheKey}` : ""}${allowRfc2544BenchmarkRange ? ":allow-rfc2544" : ""}${allowIpv6UniqueLocalRange ? ":allow-ipv6-ula" : ""}${useTrustedEnvProxy ? ":trusted-env-proxy" : ""}`,
   );
-  const cached = readCache(FETCH_CACHE, cacheKey);
-  if (cached) {
-    return { ...cached.value, cached: true };
-  }
-
   let parsedUrl: URL;
   try {
     parsedUrl = new URL(params.url);
@@ -423,6 +439,16 @@ async function runWebFetch(params: WebFetchRuntimeParams): Promise<Record<string
   }
   if (!["http:", "https:"].includes(parsedUrl.protocol)) {
     throw new Error("Invalid URL: must be http or https");
+  }
+  // Ahead of the cache: a page read before the brand connected Webflow is not
+  // served afterwards. The guarded fetch repeats this on every redirect hop. The
+  // address the tool was handed refuses when DNS cannot say whether Webflow serves it.
+  await assertNotWebflowSite(parsedUrl.hostname, { failClosed: true });
+  const cached = readCache(FETCH_CACHE, cacheKey);
+  if (cached) {
+    // The page it redirected to may have become refused since it was cached.
+    assertFinalUrlNotRefused(cached.value.finalUrl);
+    return { ...cached.value, cached: true };
   }
 
   const start = Date.now();
@@ -499,6 +525,10 @@ async function runWebFetch(params: WebFetchRuntimeParams): Promise<Record<string
     const normalizedContentType = normalizeContentType(contentType) ?? "application/octet-stream";
     const bodyResult = await readResponseText(res, { maxBytes: params.maxResponseBytes });
     const body = bodyResult.text;
+    // Behind a proxy, a Webflow site may show only in its page: discarded unread.
+    if (responseIsWebflow(null, body)) {
+      throw new SsrFBlockedError(REFUSED_HOST_MESSAGE);
+    }
     const responseTruncatedWarning = bodyResult.truncated
       ? `Response body truncated after ${params.maxResponseBytes} bytes.`
       : undefined;
@@ -533,7 +563,11 @@ async function runWebFetch(params: WebFetchRuntimeParams): Promise<Record<string
               cacheKey,
               tookMs: Date.now() - start,
             });
-          } catch {
+          } catch (error) {
+            // A refusal is final: only an extraction failure falls through.
+            if (error instanceof SsrFBlockedError) {
+              throw error;
+            }
             payload = null;
           }
           if (payload) {

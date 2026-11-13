@@ -9,7 +9,7 @@ import {
 import { subscribeEmbeddedPiSession } from "../agents/pi-embedded-subscribe.js";
 import { HISTORY_CONTEXT_MARKER } from "../auto-reply/reply/history.js";
 import { CURRENT_MESSAGE_MARKER } from "../auto-reply/reply/mentions.js";
-import { emitAgentEvent } from "../infra/agent-events.js";
+import { emitAgentEvent, hasHeardOfAgentRun } from "../infra/agent-events.js";
 import { buildAssistantDeltaResult } from "./test-helpers.agent-results.js";
 import {
   agentCommand,
@@ -94,6 +94,24 @@ function parseSseDataLines(text: string): string[] {
 }
 
 describe("OpenAI-compatible HTTP API (e2e)", () => {
+  it("remembers its run before dispatching it, so agent.wait knows a queued run", async () => {
+    let heardOf: boolean | undefined;
+    agentCommand.mockClear();
+    agentCommand.mockImplementationOnce((async (opts: { runId: string }) => {
+      heardOf = hasHeardOfAgentRun(opts.runId);
+      return { payloads: [{ text: "hello" }] };
+    }) as never);
+
+    const res = await postChatCompletions(enabledPort, {
+      model: "openclaw",
+      messages: [{ role: "user", content: "hi" }],
+    });
+
+    expect(res.status).toBe(200);
+    expect(heardOf).toBe(true);
+    await res.text();
+  });
+
   it("handles request validation and routing", async () => {
     const port = enabledPort;
     const mockAgentOnce = (payloads: Array<{ text: string }>) => {

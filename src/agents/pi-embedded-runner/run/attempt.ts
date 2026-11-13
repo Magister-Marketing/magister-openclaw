@@ -178,6 +178,7 @@ import {
 } from "../../tool-schema-deferral.js";
 import { shouldAllowProviderOwnedThinkingReplay } from "../../transcript-policy.js";
 import { normalizeUsage, type NormalizedUsage } from "../../usage.js";
+import { WorkspaceFileAuthorityError } from "../../workspace-file-authority.js";
 import { DEFAULT_BOOTSTRAP_FILENAME } from "../../workspace.js";
 import { isRunnerAbortError } from "../abort.js";
 import { noteRunDeliveredWork } from "../attempt-retry-registry.js";
@@ -2369,6 +2370,7 @@ export async function runEmbeddedAttempt(
               );
             }
           } catch (assembleErr) {
+            if (assembleErr instanceof WorkspaceFileAuthorityError) throw assembleErr;
             log.warn(
               `context engine assemble failed, using pipeline messages: ${String(assembleErr)}`,
             );

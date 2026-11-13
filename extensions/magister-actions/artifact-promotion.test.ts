@@ -73,6 +73,15 @@ beforeEach(() => {
     "fetch",
     vi.fn(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (new URL(url).pathname === "/api/library/state") {
+        return new Response(
+          JSON.stringify({ project_id: "legacy-project", mode: "legacy", epoch: 1, sequence: 0 }),
+          { status: 200 },
+        );
+      }
+      if (new URL(url).pathname === "/api/library/legacy-writes") {
+        return new Response(JSON.stringify({ lease_id: "legacy-lease" }), { status: 200 });
+      }
       const body = url.endsWith("/attest")
         ? { commit_expires_at: new Date(Date.now() + 60_000).toISOString() }
         : { status: "ok" };
