@@ -56,6 +56,20 @@ export type AgentContextPruningConfig = {
   completedTurnsSessionKeys?: string[];
   /** Path prefixes whose `read` results the completed-turns rule keeps (skills reused every turn). */
   completedTurnsKeepReads?: string[];
+  /**
+   * Tool names whose long string arguments are cleared once their turn closed (`write` content).
+   * No effect while `completedTurns` is `keep`, the default.
+   */
+  completedTurnsClearArgs?: string[];
+  /** `always` mode: prune the open turn's older tool results in batches, not one per request. */
+  batch?: {
+    /** Prompt size in tokens that starts a batch (default and ceiling: `softTrimRatio` of the window). */
+    triggerTokens?: number;
+    /** A batch that would free fewer tokens than this is skipped (default 20000). */
+    minFreedTokens?: number;
+    /** What replaces a trimmed result once a later batch clears it. */
+    placeholder?: string;
+  };
   keepLastAssistants?: number;
   softTrimRatio?: number;
   hardClearRatio?: number;

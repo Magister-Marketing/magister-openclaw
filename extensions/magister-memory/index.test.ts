@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -67,13 +67,6 @@ describe("memory tool dispatch", () => {
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), "magister-memory-tool-test-"));
     restoreEnv = useMachineGatewayEnv();
-    // A machine whose MEMORY.md entries already moved to the Gateway; before
-    // that import, writes leave MEMORY.md alone (brand-memory.test.ts).
-    await mkdir(join(dir, ".magister", "state"), { recursive: true });
-    await writeFile(
-      join(dir, ".magister", "state", "brand-memory-import"),
-      "2026-10-22T00:00:00.000Z\n",
-    );
   });
 
   afterEach(async () => {
@@ -102,21 +95,21 @@ describe("memory tool dispatch", () => {
     return JSON.parse(text) as Record<string, unknown>;
   }
 
-  it("adds brand memory through the Gateway and writes the returned list to MEMORY.md", async () => {
+  it("adds a shared rule through the Gateway and refreshes modern context", async () => {
     const gateway = stubBrandMemoryGateway(["Never call it Magister Cloud"]);
 
     const result = await run({ action: "add", content: "  No paid ads before March  " });
 
-    expect(gateway.calls).toEqual([
+    expect(gateway.calls.filter((call) => call.method === "POST")).toEqual([
       {
         method: "POST",
-        path: "/api/runtime/brand-memory",
+        path: "/api/runtime/marketing-context/rules",
         body: { action: "add", content: "  No paid ads before March  " },
         authorization: "Bearer broker-local",
       },
     ]);
     expect(gateway.fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:18796/api/runtime/brand-memory",
+      "http://127.0.0.1:18796/api/runtime/marketing-context/rules",
       // A redirect is an error, never followed with the token and body.
       expect.objectContaining({ method: "POST", redirect: "error" }),
     );
@@ -127,7 +120,74 @@ describe("memory tool dispatch", () => {
       entries: ["Never call it Magister Cloud", "No paid ads before March"],
       charCount: content.length,
     });
-    expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe(content);
+    expect(
+      JSON.parse(await readFile(join(dir, ".magister", "state", "marketing-context.json"), "utf8"))
+        .rendered,
+    ).toContain("No paid ads before March");
+  });
+
+  it("saves target='note' as the agent's own note, with its basis and session", async () => {
+    const gateway = stubBrandMemoryGateway([]);
+    const tool = createMemoryTool(
+      { config: {} as never, pluginConfig: {} } as unknown as Parameters<
+        typeof createMemoryTool
+      >[0],
+      { workspaceDir: dir, sessionKey: "agent:marketing:webchat:s-1" } as Parameters<
+        typeof createMemoryTool
+      >[1],
+    );
+    const out = await tool!.execute("call-1", {
+      action: "add",
+      target: "note",
+      content: "Instagram carousels take at most 10 images.",
+      basis: "publish_social_post refused 11 images (media_count_exceeded); 10 published.",
+      scope: { channel: "instagram" },
+    });
+    const result = JSON.parse((out.content?.[0] as { text: string }).text) as Record<
+      string,
+      unknown
+    >;
+    expect(result).toMatchObject({ success: true, target: "note" });
+    expect(gateway.calls.filter((call) => call.method === "POST")[0].body).toEqual({
+      action: "add",
+      content: "Instagram carousels take at most 10 images.",
+      scope: { channel: "instagram" },
+      note: true,
+      basis: "publish_social_post refused 11 images (media_count_exceeded); 10 published.",
+      session_key: "agent:marketing:webchat:s-1",
+    });
+  });
+
+  it("refuses a note without its basis, and a note removal, before the Gateway", async () => {
+    const gateway = stubBrandMemoryGateway([]);
+    expect(await run({ action: "add", target: "note", content: "A limit." })).toEqual({
+      success: false,
+      target: "note",
+      message: "basis is required for a note: the result, error or measurement that showed it.",
+    });
+    expect(
+      await run({ action: "remove", target: "note", old_text: "A limit", basis: "x" }),
+    ).toMatchObject({ success: false, target: "note" });
+    expect(gateway.calls.filter((call) => call.method === "POST")).toEqual([]);
+  });
+
+  it("preserves scope and revision guards when correcting an exact shared rule", async () => {
+    const gateway = stubBrandMemoryGateway(["Old tone"]);
+    const result = await run({
+      action: "replace",
+      entry_id: "entry-0",
+      content: "Plain tone",
+      scope: { channel: "instagram" },
+      expected_revision: 3,
+    });
+    expect(result.success).toBe(true);
+    expect(gateway.calls[0].body).toEqual({
+      action: "replace",
+      entry_id: "entry-0",
+      content: "Plain tone",
+      scope: { channel: "instagram" },
+      expected_revision: 3,
+    });
   });
 
   it("defaults to target='memory'", async () => {
@@ -150,16 +210,21 @@ describe("memory tool dispatch", () => {
     });
     const removed = await run({ action: "remove", target: "memory", old_text: "Throwaway" });
 
-    expect(gateway.calls.map((call) => call.body)).toEqual([
-      { action: "replace", old_text: "Original", content: "Updated durable fact" },
-      { action: "remove", old_text: "Throwaway" },
-    ]);
+    expect(gateway.calls.filter((call) => call.method === "POST").map((call) => call.body)).toEqual(
+      [
+        { action: "replace", old_text: "Original", content: "Updated durable fact" },
+        { action: "remove", old_text: "Throwaway" },
+      ],
+    );
     expect(replaced).toMatchObject({
       success: true,
       entries: ["Updated durable fact", "Throwaway entry"],
     });
     expect(removed).toMatchObject({ success: true, entries: ["Updated durable fact"] });
-    expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("Updated durable fact");
+    expect(
+      JSON.parse(await readFile(join(dir, ".magister", "state", "marketing-context.json"), "utf8"))
+        .rendered,
+    ).toContain("Updated durable fact");
   });
 
   it("returns the Gateway's refusal as the tool's failure, verbatim", async () => {
@@ -180,14 +245,17 @@ describe("memory tool dispatch", () => {
     });
   });
 
-  it("refreshes MEMORY.md from a refusal's list, so a stale copy catches up", async () => {
+  it("refreshes shared context after a refusal, so a stale copy catches up", async () => {
     stubBrandMemoryGateway(["Written by an MCP client"]);
     await writeFile(join(dir, "MEMORY.md"), "stale copy", "utf8");
 
     const result = await run({ action: "remove", old_text: "stale" });
 
     expect(result).toMatchObject({ success: false });
-    expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("Written by an MCP client");
+    expect(
+      JSON.parse(await readFile(join(dir, ".magister", "state", "marketing-context.json"), "utf8"))
+        .rendered,
+    ).toContain("Written by an MCP client");
   });
 
   it("reports a Gateway timeout as unavailable and keeps the local copy", async () => {
@@ -223,7 +291,7 @@ describe("memory tool dispatch", () => {
 
     expect(result).toMatchObject({
       success: false,
-      message: expect.stringContaining("memory gateway rejected brand-memory: HTTP 503"),
+      message: expect.stringContaining("memory gateway rejected marketing-context/rules: HTTP 503"),
     });
   });
 

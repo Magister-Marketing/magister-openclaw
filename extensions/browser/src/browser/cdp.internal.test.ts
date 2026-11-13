@@ -486,6 +486,66 @@ describe("cdp internal", () => {
     });
   });
 
+  describe("reading one tab", () => {
+    function startTabServer(attach: Record<string, unknown> | "fail") {
+      const sent: Array<{ method?: string; sessionId?: string }> = [];
+      return startMockWsServer((msg, socket) => {
+        const sessionId = (msg as { sessionId?: string }).sessionId;
+        sent.push({ method: msg.method, sessionId });
+        if (msg.method === "Target.attachToTarget") {
+          socket.send(
+            JSON.stringify(
+              attach === "fail"
+                ? { id: msg.id, error: { message: "target not found" } }
+                : { id: msg.id, result: attach },
+            ),
+          );
+          return;
+        }
+        if (msg.method === "Accessibility.getFullAXTree") {
+          sendCdpResult(socket, msg.id, { nodes: [] });
+          return;
+        }
+        if (msg.method === "Runtime.evaluate" || msg.method === "DOM.getFlattenedDocument") {
+          sendCdpResult(socket, msg.id, {});
+        }
+      }).then((server) => ({ ...server, sent }));
+    }
+
+    it("reads the named tab through its own session on a shared socket", async () => {
+      const server = await startTabServer({ sessionId: "tab-2" });
+      wss = server.wss;
+      await snapshotRoleViaCdp({ wsUrl: server.wsUrl, targetId: "TARGET_2" });
+      await snapshotAria({ wsUrl: server.wsUrl, targetId: "TARGET_2" });
+      const reads = server.sent.filter((m) => m.method === "Accessibility.getFullAXTree");
+      expect(reads).toEqual([
+        { method: "Accessibility.getFullAXTree", sessionId: "tab-2" },
+        { method: "Accessibility.getFullAXTree", sessionId: "tab-2" },
+      ]);
+    });
+
+    it("refuses to read a shared socket when the tab cannot be attached", async () => {
+      const server = await startTabServer("fail");
+      wss = server.wss;
+      await expect(snapshotRoleViaCdp({ wsUrl: server.wsUrl, targetId: "GONE" })).rejects.toThrow(
+        "target not found",
+      );
+      expect(server.sent.map((m) => m.method)).not.toContain("Accessibility.getFullAXTree");
+    });
+
+    it("does not attach through a socket that already is the page", async () => {
+      const server = await startTabServer({ sessionId: "unused" });
+      wss = server.wss;
+      await snapshotAria({
+        wsUrl: `${server.wsUrl}/devtools/page/TARGET_2`,
+        targetId: "TARGET_2",
+      });
+      const methods = server.sent.map((m) => m.method);
+      expect(methods).not.toContain("Target.attachToTarget");
+      expect(methods).toContain("Accessibility.getFullAXTree");
+    });
+  });
+
   describe("snapshotRoleViaCdp", () => {
     it("builds role refs, promotes cursor-interactive nodes, and appends link urls", async () => {
       const server = await startMockWsServer((msg, socket) => {

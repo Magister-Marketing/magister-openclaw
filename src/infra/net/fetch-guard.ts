@@ -5,6 +5,13 @@ import { buildTimeoutAbortSignal } from "../../utils/fetch-timeout.js";
 import { hasProxyEnvConfigured, shouldUseEnvHttpProxyForUrl } from "./proxy-env.js";
 import { retainSafeHeadersForCrossOriginRedirect as retainSafeRedirectHeaders } from "./redirect-headers.js";
 import {
+  assertNotWebflowSite,
+  isRefusedHost,
+  isWebflowAddress,
+  REFUSED_HOST_MESSAGE,
+  responseIsWebflow,
+} from "./refused-hosts.js";
+import {
   fetchWithRuntimeDispatcher,
   isMockedFetch,
   type DispatcherAwareRequestInit,
@@ -349,6 +356,11 @@ export async function fetchWithSsrFGuard(params: GuardedFetchOptions): Promise<G
       await release();
       throw new Error("Invalid URL: must be http or https");
     }
+    // Checked on every hop: a redirect must not reach a site the first URL could not.
+    if (isRefusedHost(parsedUrl.hostname)) {
+      await release();
+      throw new SsrFBlockedError(REFUSED_HOST_MESSAGE);
+    }
     if (params.requireHttps === true && parsedUrl.protocol !== "https:") {
       await release();
       throw new Error("URL must use https");
@@ -356,6 +368,9 @@ export async function fetchWithSsrFGuard(params: GuardedFetchOptions): Promise<G
 
     let dispatcher: Dispatcher | null = null;
     try {
+      // A site Webflow serves, by DNS, on every hop. An unanswered lookup is left
+      // to the address check below and the response check after the request.
+      await assertNotWebflowSite(parsedUrl.hostname);
       const usesTrustedExplicitProxyMode =
         mode === GUARDED_FETCH_MODE.TRUSTED_EXPLICIT_PROXY &&
         params.dispatcherPolicy?.mode === "explicit-proxy";
@@ -402,6 +417,9 @@ export async function fetchWithSsrFGuard(params: GuardedFetchOptions): Promise<G
           lookupFn: params.lookupFn,
           policy: params.policy,
         });
+        if (pinned.addresses.some(isWebflowAddress)) {
+          throw new SsrFBlockedError(REFUSED_HOST_MESSAGE);
+        }
         dispatcher = createPinnedDispatcher(
           pinned,
           params.dispatcherPolicy,
@@ -432,6 +450,12 @@ export async function fetchWithSsrFGuard(params: GuardedFetchOptions): Promise<G
       const response = shouldUseRuntimeFetch
         ? await fetchWithRuntimeDispatcher(parsedUrl.toString(), init)
         : await defaultFetch(parsedUrl.toString(), init);
+
+      // Behind a proxy, a Webflow site shows only in its response: discarded unread.
+      if (responseIsWebflow(response.headers)) {
+        void response.body?.cancel();
+        throw new SsrFBlockedError(REFUSED_HOST_MESSAGE);
+      }
 
       if (params.capture !== false) {
         captureHttpExchange({

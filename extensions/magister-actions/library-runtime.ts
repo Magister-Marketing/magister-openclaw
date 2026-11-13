@@ -37,6 +37,11 @@ export type LegacyWriteOutcome = "completed" | "no_effect" | "unknown";
 type Admission =
   | { mode: "active"; state: LibraryState; cache: LibraryCache }
   | { mode: "recovery"; state: LibraryState; cache?: LibraryCache };
+/** Who is admitting the turn: the Gateway's reconcile call, or run setup of
+ * the Gateway's turn `turnId`. */
+type TurnAdmission = { fromGateway?: boolean; turnId?: string };
+/** The Library barrier a turn admission crosses: this project, epoch and sequence. */
+const barrierKey = (state: LibraryState) => `${state.project_id}:${state.epoch}:${state.sequence}`;
 const recoveryError = () =>
   new Error(
     "temporarily_unavailable: Library recovery is in progress; Library files are unavailable until it finishes. Other tools keep working.",
@@ -57,6 +62,31 @@ const sourcePaths = new Set([
 // Every folder a Gateway publication creates outside resources/ (library_publication.py;
 // gateway/tests/test_library_publication_roots.py fails if the two lists drift).
 const publishedRoots = ["audits", "data", "plans"];
+// What stays on this volume on an active brand, as a legacy brand keeps it: the
+// platform's files, context other writers keep current, and runtime folders. Mirrors
+// what gateway/app/services/library_machine_scan.py leaves out of the migration
+// (gateway/tests/test_library_publication_roots.py fails if they drift). Any other
+// file an agent writes is a Library file: saved at the path it named and listed in
+// the Library, so a deliverable is never a local file no surface can see.
+const machineLocalRoots = new Set([
+  "AGENTS.md",
+  "SOUL.md",
+  "TOOLS.md",
+  "IDENTITY.md",
+  "BOOTSTRAP.md",
+  "HEARTBEAT.md",
+  "USER.md",
+  "PROJECT.md",
+  "product-marketing-context.md",
+  "memory",
+  "memory.archive",
+  "skills",
+  "hooks",
+]);
+const machineLocalFolders = new Set(["node_modules", "__pycache__", "venv", "tmp", "temp"]);
+// The native tools read these as plain spaces before they resolve a path.
+const withPlainSpaces = (input: string) =>
+  input.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ");
 const jsonResult = (value: unknown) => ({
   content: [{ type: "text" as const, text: JSON.stringify(value) }],
   details: value,
@@ -91,6 +121,20 @@ export async function libraryActivated(workspace: string): Promise<boolean> {
   return !!(await readJson(path.join(workspace, marker)));
 }
 
+/** Where a link takes a tool's path, as given and as the tool reads it; empty when none does. */
+const linkedPaths = async (workspace: string, input: string) => {
+  const realWorkspace = await fs.realpath(workspace);
+  const landing = await Promise.all(
+    [input, withPlainSpaces(input)].map(async (spelling) => {
+      const resolved = libraryRelative(
+        realWorkspace,
+        await resolveLibraryToolTarget(path.resolve(workspace, expandLibraryToolPath(spelling))),
+      );
+      return resolved === libraryRelative(workspace, spelling) ? undefined : resolved;
+    }),
+  );
+  return landing.filter((entry) => entry !== undefined);
+};
 export class LibraryRuntime {
   readonly store: LibraryStore;
   private acknowledged: string | undefined;
@@ -103,6 +147,9 @@ export class LibraryRuntime {
   discoveryTimeoutMs = 3_000;
   discoveryBackoffMs = 60_000;
   private discoveryPausedUntil = 0;
+  /** The barrier the Gateway's admission crossed for its turn: run setup of the
+   * same turn reuses it while the Library is still at that epoch and sequence. */
+  private gatewayBarrier: { turnId: string; key: string } | undefined;
   /** Recovery's cloud path list is reused this long; a failure is never cached. */
   recoveryListingTtlMs = 30_000;
   private recoveryListing:
@@ -135,6 +182,11 @@ export class LibraryRuntime {
         return name === "activation" ? "active" : "shadow";
     }
     return undefined;
+  }
+  /** An activated volume: the Library owns its files (active or recovery) and
+   * can never fall back to legacy storage. A local marker read, no network. */
+  async activated(): Promise<boolean> {
+    return libraryActivated(this.workspace);
   }
   /** One bounded state read for a brand that is not enrolled yet. */
   private async discover(): Promise<boolean> {
@@ -256,7 +308,10 @@ export class LibraryRuntime {
   }
   /** undefined: legacy storage (never enrolled, legacy, or shadow). Only turn
    * admission discovers; a never-enrolled brand's tool calls cost nothing. */
-  private async admitted(refreshSources = false): Promise<Admission | undefined> {
+  private async admitted(
+    refreshSources = false,
+    turn: TurnAdmission = {},
+  ): Promise<Admission | undefined> {
     if (!(await this.enrollment()) && !(refreshSources && (await this.discover()))) {
       this.active = false;
       return undefined;
@@ -281,7 +336,15 @@ export class LibraryRuntime {
         this.active = false;
         return undefined;
       }
-      if (refreshSources) {
+      // Run setup of a turn the Gateway already admitted: that admission
+      // published the required context for this turn. Reused only for the same
+      // turn and while the Library has not moved; anything else crosses it again.
+      const crossed =
+        !turn.fromGateway &&
+        !!turn.turnId &&
+        this.gatewayBarrier?.turnId === turn.turnId &&
+        this.gatewayBarrier.key === barrierKey(state);
+      if (refreshSources && !crossed) {
         await this.bridge.request("POST", "/context-ready", { project_id: state.project_id });
         state = await this.state();
         if (!state || state.mode !== "active")
@@ -296,23 +359,24 @@ export class LibraryRuntime {
           "publication_pending: Library context is not ready; retry after publication completes",
         );
       const cache = await this.store.reconcile(state.project_id, state.epoch, state.sequence);
+      // Recorded only once the whole admission succeeded, local catch-up included.
+      if (refreshSources && turn.fromGateway && turn.turnId)
+        this.gatewayBarrier = { turnId: turn.turnId, key: barrierKey(state) };
       this.active = true;
       return { mode: "active", state, cache };
     });
   }
   /** Turn admission. Recovery admits the turn without Library authority: only
    * Library file tools answer temporarily_unavailable. */
-  async admit(options: { fromGateway?: boolean } = {}): Promise<boolean> {
+  async admit(options: TurnAdmission = {}): Promise<boolean> {
     return (await this.admissionMode(options)) === "active";
   }
   /** The mode turn admission settled on, which the Gateway's reconcile call
    * checks: it admits a recovery turn only on an explicit "recovery". */
-  async admissionMode(
-    options: { fromGateway?: boolean } = {},
-  ): Promise<"active" | "recovery" | "legacy"> {
+  async admissionMode(options: TurnAdmission = {}): Promise<"active" | "recovery" | "legacy"> {
     // The Gateway calling us is proof it is reachable: skip any discovery backoff.
     if (options.fromGateway) this.discoveryPausedUntil = 0;
-    return (await this.admitted(true))?.mode ?? "legacy";
+    return (await this.admitted(true, options))?.mode ?? "legacy";
   }
   private async activeAdmission(): Promise<
     { state: LibraryState; cache: LibraryCache } | undefined
@@ -497,6 +561,16 @@ export class LibraryRuntime {
         ))
     );
   }
+  /** Whether a write to this path goes to the Library rather than the volume. */
+  private libraryWritePath(relative: string | undefined, cache: LibraryCache): boolean {
+    if (this.managedPath(relative, cache)) return true;
+    if (!relative) return false;
+    const pieces = relative.split("/");
+    return (
+      !machineLocalRoots.has(pieces[0]) &&
+      !pieces.some((piece) => piece.startsWith(".") || machineLocalFolders.has(piece))
+    );
+  }
   private async base(
     relative: string,
     session: string,
@@ -640,7 +714,7 @@ export class LibraryRuntime {
   ): Promise<LibraryChange[]> {
     const relative = (input: string) => {
       const value = libraryRelative(this.workspace, input);
-      if (!value || !this.managedPath(value, cache))
+      if (!value || !this.libraryWritePath(value, cache))
         throw new Error("invalid_path: mixed Library and local patch targets");
       return value;
     };
@@ -809,6 +883,9 @@ export class LibraryRuntime {
           }
         }
         const targets = patch?.paths ?? (typeof rawPath === "string" ? [rawPath] : []);
+        const mutating = ["write", "edit", "apply_patch"].includes(tool.name);
+        const libraryPath = (entry: string | undefined, cache: LibraryCache) =>
+          mutating ? runtime.libraryWritePath(entry, cache) : runtime.managedPath(entry, cache);
         const admitted = await runtime.admitted();
         if (!admitted)
           return runtime.legacyTool(tool, context, [toolCallId, args, signal, onUpdate], targets);
@@ -823,7 +900,6 @@ export class LibraryRuntime {
             sequence: admitted.state.sequence,
             files: { ...admitted.cache?.files },
           };
-          const mutating = ["write", "edit", "apply_patch"].includes(tool.name);
           try {
             for (const file of Object.values(await runtime.recoveryPaths(admitted.state)))
               cache.files[`listed:${file.file_id}`] = file;
@@ -831,30 +907,27 @@ export class LibraryRuntime {
             // Without the list no write can be proven safe; reads still use the cache.
             if (mutating) throw recoveryError();
           }
-          for (const input of targets)
-            if (runtime.managedPath(libraryRelative(runtime.workspace, input), cache))
+          // Checked where it lands too: a link under a local folder can reach a Library path.
+          for (const input of targets) {
+            const linked = await linkedPaths(runtime.workspace, input);
+            if (
+              libraryPath(libraryRelative(runtime.workspace, input), cache) ||
+              libraryPath(libraryRelative(runtime.workspace, withPlainSpaces(input)), cache) ||
+              linked.some((entry) => libraryPath(entry, cache))
+            )
               throw recoveryError();
+          }
           return tool.execute(toolCallId, args, signal, onUpdate);
         }
         const session = context.sessionId || context.sessionKey;
         if (!session) throw new Error("precondition_required: Library session identity is missing");
-        const realWorkspace = await fs.realpath(runtime.workspace);
         for (const input of patch?.paths ?? (typeof rawPath === "string" ? [rawPath] : [])) {
           const relative = libraryRelative(runtime.workspace, input);
-          const resolved = libraryRelative(
-            realWorkspace,
-            await resolveLibraryToolTarget(
-              path.resolve(runtime.workspace, expandLibraryToolPath(input)),
-            ),
-          );
-          const normalized = libraryRelative(
-            runtime.workspace,
-            input.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " "),
-          );
+          const linked = await linkedPaths(runtime.workspace, input);
+          const normalized = libraryRelative(runtime.workspace, withPlainSpaces(input));
           if (
-            (resolved !== relative && runtime.managedPath(resolved, admitted.cache)) ||
-            (!runtime.managedPath(relative, admitted.cache) &&
-              runtime.managedPath(normalized, admitted.cache))
+            linked.some((entry) => libraryPath(entry, admitted.cache)) ||
+            (!libraryPath(relative, admitted.cache) && libraryPath(normalized, admitted.cache))
           )
             throw new Error("invalid_path: aliases cannot bypass Library file authority");
         }
@@ -862,15 +935,15 @@ export class LibraryRuntime {
           typeof rawPath === "string" ? libraryRelative(runtime.workspace, rawPath) : undefined;
         const patchPaths = patch?.paths.map((entry) => libraryRelative(runtime.workspace, entry));
         const managed = patchPaths
-          ? patchPaths.some((entry) => runtime.managedPath(entry, admitted.cache))
-          : runtime.managedPath(relative, admitted.cache);
+          ? patchPaths.some((entry) => libraryPath(entry, admitted.cache))
+          : libraryPath(relative, admitted.cache);
         if (
           patchPaths &&
           managed &&
-          !patchPaths.every((entry) => runtime.managedPath(entry, admitted.cache))
+          !patchPaths.every((entry) => libraryPath(entry, admitted.cache))
         )
           throw new Error("invalid_path: an atomic patch cannot mix Library and local paths");
-        if (["write", "edit", "apply_patch"].includes(tool.name)) {
+        if (mutating) {
           if (!managed) return tool.execute(toolCallId, args, signal, onUpdate);
           return runtime.lock("exclusive", async () => {
             await runtime.store.recover();

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -27,6 +27,73 @@ describe("MagisterMemoryContextEngine", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  it("uses the shared provenance projection instead of labeling confirmed rules as inferred", async () => {
+    await mkdir(join(dir, ".magister", "state"), { recursive: true });
+    await writeFile(memoryPath, "old legacy note");
+    await writeFile(
+      join(dir, ".magister", "state", "marketing-context.json"),
+      JSON.stringify({
+        revision: 2,
+        rendered: "Confirmed rules: use short sentences.\nObserved style: candid.",
+        stale: true,
+      }),
+    );
+    const engine = new MagisterMemoryContextEngine({
+      memoryPath,
+      userPath,
+      projectPath,
+      brandPath,
+      inner: new LegacyContextEngine(),
+    });
+    const result = await engine.assemble({ sessionId: "same", messages: [] });
+    expect(result.systemPromptAddition).toContain("source=shared_marketing_context");
+    expect(result.systemPromptAddition).toContain("Confirmed rules: use short sentences");
+    expect(result.systemPromptAddition).toContain("Refresh failed");
+    expect(result.systemPromptAddition).not.toContain("older_inferred_memory");
+  });
+
+  it("an authoritative empty shared context suppresses a stale legacy copy", async () => {
+    await mkdir(join(dir, ".magister", "state"), { recursive: true });
+    await writeFile(memoryPath, "Retired brand rule");
+    await writeFile(userPath, "Keep the personal profile");
+    await writeFile(
+      join(dir, ".magister", "state", "marketing-context.json"),
+      JSON.stringify({ revision: 3, rendered: "" }),
+    );
+    const engine = new MagisterMemoryContextEngine({
+      memoryPath,
+      userPath,
+      projectPath,
+      brandPath,
+      inner: new LegacyContextEngine(),
+    });
+    const result = await engine.assemble({ sessionId: "empty-shared", messages: [] });
+    expect(result.systemPromptAddition).not.toContain("Retired brand rule");
+    expect(result.systemPromptAddition).not.toContain("older_inferred_memory");
+    expect(result.systemPromptAddition).toContain("Keep the personal profile");
+  });
+
+  it.each(["{", JSON.stringify({ rendered: null }), undefined])(
+    "never falls back to the legacy MEMORY.md (shared cache: %s)",
+    async (cache) => {
+      await mkdir(join(dir, ".magister", "state"), { recursive: true });
+      await writeFile(memoryPath, "Legacy rule");
+      if (cache !== undefined) {
+        await writeFile(join(dir, ".magister", "state", "marketing-context.json"), cache);
+      }
+      const engine = new MagisterMemoryContextEngine({
+        memoryPath,
+        userPath,
+        projectPath,
+        brandPath,
+        inner: new LegacyContextEngine(),
+      });
+      const result = await engine.assemble({ sessionId: "invalid-shared", messages: [] });
+      expect(result.systemPromptAddition ?? "").not.toContain("Legacy rule");
+      expect(result.systemPromptAddition ?? "").not.toContain("older_inferred_memory");
+    },
+  );
+
   it("returns inner result unchanged when both files are absent", async () => {
     const engine = new MagisterMemoryContextEngine({
       memoryPath,
@@ -40,8 +107,13 @@ describe("MagisterMemoryContextEngine", () => {
     expect(res.systemPromptAddition ?? "").not.toContain("## User Profile");
   });
 
-  it("folds memory, user, and project content into system prompt addition", async () => {
-    await writeFile(memoryPath, "Fact 1\n§\nFact 2");
+  it("folds shared context, user, and project content into system prompt addition", async () => {
+    await mkdir(join(dir, ".magister", "state"), { recursive: true });
+    await writeFile(
+      join(dir, ".magister", "state", "marketing-context.json"),
+      JSON.stringify({ revision: 1, rendered: "Fact 1\nFact 2" }),
+    );
+    await writeFile(memoryPath, "Legacy fact");
     await writeFile(userPath, "User likes X");
     await writeFile(projectPath, "Acme assignment");
     const engine = new MagisterMemoryContextEngine({
@@ -52,8 +124,9 @@ describe("MagisterMemoryContextEngine", () => {
       inner: new LegacyContextEngine(),
     });
     const res = await engine.assemble({ sessionId: "s1", messages: [] });
-    expect(res.systemPromptAddition).toContain("## Memory (about the project)");
+    expect(res.systemPromptAddition).toContain("## Shared Marketing Context");
     expect(res.systemPromptAddition).toContain("Fact 1");
+    expect(res.systemPromptAddition).not.toContain("Legacy fact");
     expect(res.systemPromptAddition).toContain("## User Profile");
     expect(res.systemPromptAddition).toContain("User likes X");
     expect(res.systemPromptAddition).toContain("## Project Assignment");
@@ -62,7 +135,7 @@ describe("MagisterMemoryContextEngine", () => {
   });
 
   it("holds one snapshot for the model calls of a run", async () => {
-    await writeFile(memoryPath, "Original");
+    await writeFile(userPath, "Original");
     const engine = new MagisterMemoryContextEngine({
       memoryPath,
       userPath,
@@ -75,7 +148,7 @@ describe("MagisterMemoryContextEngine", () => {
     expect(first.systemPromptAddition).toContain("Original");
 
     // The file changes during the run; this run's later calls keep its snapshot.
-    await writeFile(memoryPath, "Updated");
+    await writeFile(userPath, "Updated");
     const second = await engine.assemble({ sessionId: "s1", messages: [] });
     expect(second.systemPromptAddition).toContain("Original");
     expect(second.systemPromptAddition).not.toContain("Updated");
@@ -95,14 +168,14 @@ describe("MagisterMemoryContextEngine", () => {
     expect(first.systemPromptAddition ?? "").not.toContain("Seeded memory entry");
 
     // Files appear after the session already started (the provision race).
-    await writeFile(memoryPath, "Seeded memory entry");
+    await writeFile(userPath, "Seeded memory entry");
 
     // Second assemble on the SAME session must pick the content up.
     const second = await engine.assemble({ sessionId: "s1", messages: [] });
     expect(second.systemPromptAddition).toContain("Seeded memory entry");
 
     // And once non-empty, the run holds it: later writes do not appear.
-    await writeFile(memoryPath, "Rewritten later");
+    await writeFile(userPath, "Rewritten later");
     const third = await engine.assemble({ sessionId: "s1", messages: [] });
     expect(third.systemPromptAddition).toContain("Seeded memory entry");
     expect(third.systemPromptAddition).not.toContain("Rewritten later");
@@ -119,17 +192,17 @@ describe("MagisterMemoryContextEngine", () => {
         brandPath,
         inner: new LegacyContextEngine(),
       }).assemble({ sessionId: "s1", messages: [] });
-    await writeFile(memoryPath, "Original");
+    await writeFile(userPath, "Original");
     expect((await turn()).systemPromptAddition).toContain("Original");
 
-    await writeFile(memoryPath, "Updated");
+    await writeFile(userPath, "Updated");
     const next = await turn();
     expect(next.systemPromptAddition).toContain("Updated");
     expect(next.systemPromptAddition).not.toContain("Original");
   });
 
   it("re-reads for a new session", async () => {
-    await writeFile(memoryPath, "Original");
+    await writeFile(userPath, "Original");
     const engine = new MagisterMemoryContextEngine({
       memoryPath,
       userPath,
@@ -139,7 +212,7 @@ describe("MagisterMemoryContextEngine", () => {
     });
     await engine.assemble({ sessionId: "s1", messages: [] });
 
-    await writeFile(memoryPath, "Updated");
+    await writeFile(userPath, "Updated");
     const fresh = await engine.assemble({ sessionId: "s2", messages: [] });
     expect(fresh.systemPromptAddition).toContain("Updated");
   });
@@ -147,7 +220,7 @@ describe("MagisterMemoryContextEngine", () => {
   it("production factory scopes file paths to the provided workspaceDir", async () => {
     // Simulates an agent with its own workspace (e.g. heartbeat): the engine
     // must read that workspace's files, not the hardcoded marketing root.
-    await writeFile(memoryPath, "Workspace-scoped memory");
+    await writeFile(userPath, "Workspace-scoped memory");
     const engine = createMagisterMemoryContextEngine({ workspaceDir: dir });
     const result = await engine.assemble({ sessionId: "ws1", messages: [] });
     expect(result.systemPromptAddition).toContain("Workspace-scoped memory");

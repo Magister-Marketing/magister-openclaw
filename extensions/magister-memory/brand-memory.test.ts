@@ -1,247 +1,10 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { registerWorkspaceFileAuthority } from "openclaw/plugin-sdk/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { applyBrandMemory, BrandMemorySessions, syncBrandMemory } from "./brand-memory.js";
 import { stubBrandMemoryGateway, useMachineGatewayEnv } from "./brand-memory.test-helpers.js";
 import plugin from "./index.js";
-
-const SEED = "[magister_seed:company] Company/Product: Artworks San Diego";
-
-describe("brand memory session-start sync", () => {
-  let dir: string;
-  let restoreEnv: () => void;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), "magister-brand-memory-"));
-    restoreEnv = useMachineGatewayEnv();
-  });
-
-  afterEach(async () => {
-    restoreEnv();
-    await rm(dir, { recursive: true, force: true });
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
-  });
-
-  const memoryPath = () => join(dir, "MEMORY.md");
-  const stampPath = () => join(dir, ".magister", "state", "brand-memory-import");
-  const readMemory = () => readFile(memoryPath(), "utf8");
-  const stamp = async (): Promise<void> => {
-    await mkdir(join(dir, ".magister", "state"), { recursive: true });
-    await writeFile(stampPath(), "2026-10-22T00:00:00.000Z\n", "utf8");
-  };
-
-  it("rewrites MEMORY.md with the Gateway's list within a 3 s read", async () => {
-    await stamp();
-    await writeFile(memoryPath(), "an old copy", "utf8");
-    const gateway = stubBrandMemoryGateway(["Never call it Magister Cloud", "Tone: plain"]);
-    const timeout = vi.spyOn(AbortSignal, "timeout");
-
-    await syncBrandMemory(dir);
-
-    expect(gateway.calls).toEqual([
-      {
-        method: "GET",
-        path: "/api/runtime/brand-memory",
-        body: undefined,
-        authorization: "Bearer broker-local",
-      },
-    ]);
-    expect(timeout).toHaveBeenCalledWith(3000);
-    expect(await readMemory()).toBe("Never call it Magister Cloud\n§\nTone: plain");
-  });
-
-  it("leaves an identical copy untouched", async () => {
-    stubBrandMemoryGateway(["Tone: plain"]);
-    await syncBrandMemory(dir);
-    const before = await stat(memoryPath());
-
-    await syncBrandMemory(dir);
-
-    expect((await stat(memoryPath())).ino).toBe(before.ino);
-  });
-
-  it("throws when the Gateway is unreachable, leaving the local file alone", async () => {
-    await writeFile(memoryPath(), "kept while the Gateway is down", "utf8");
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        throw new TypeError("fetch failed");
-      }),
-    );
-
-    await expect(syncBrandMemory(dir)).rejects.toThrow("fetch failed");
-
-    expect(await readMemory()).toBe("kept while the Gateway is down");
-    await expect(stat(stampPath())).rejects.toThrow();
-  });
-
-  it("imports the machine's own entries once, skipping Gateway seed records", async () => {
-    const original = `${SEED}\n§\n  Never call it Magister Cloud  \n§\nNo paid ads before March`;
-    await writeFile(memoryPath(), original, "utf8");
-    const gateway = stubBrandMemoryGateway();
-
-    await syncBrandMemory(dir);
-
-    expect(gateway.calls.map((call) => [call.method, call.path, call.body])).toEqual([
-      ["GET", "/api/runtime/brand-memory", undefined],
-      [
-        "POST",
-        "/api/runtime/brand-memory/import",
-        { entries: ["Never call it Magister Cloud", "No paid ads before March"] },
-      ],
-    ]);
-    expect(await readMemory()).toBe("Never call it Magister Cloud\n§\nNo paid ads before March");
-    expect(JSON.parse(await readFile(stampPath(), "utf8"))).toEqual({
-      imported_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
-      memory_md: original,
-    });
-
-    // Once per machine: after the user removes everything in the Library, the
-    // next session copies the empty list instead of importing again.
-    gateway.entries.splice(0);
-    gateway.calls.splice(0);
-    await syncBrandMemory(dir);
-
-    expect(gateway.calls.map((call) => call.path)).toEqual(["/api/runtime/brand-memory"]);
-    expect(await readMemory()).toBe("");
-  });
-
-  it("imports nothing when the machine only holds seed records, and drops them", async () => {
-    await writeFile(memoryPath(), SEED, "utf8");
-    const gateway = stubBrandMemoryGateway();
-
-    await syncBrandMemory(dir);
-
-    expect(gateway.calls.map((call) => call.path)).toEqual(["/api/runtime/brand-memory"]);
-    expect(await readMemory()).toBe("");
-    expect(await readFile(stampPath(), "utf8")).toBeTruthy();
-  });
-
-  it("retries the import next session when it fails", async () => {
-    await writeFile(memoryPath(), "No paid ads before March", "utf8");
-    const gateway = stubBrandMemoryGateway();
-    gateway.failing.add("/api/runtime/brand-memory/import");
-
-    await expect(syncBrandMemory(dir)).rejects.toThrow("HTTP 500");
-    expect(await readMemory()).toBe("No paid ads before March");
-    await expect(stat(stampPath())).rejects.toThrow();
-
-    gateway.failing.clear();
-    await syncBrandMemory(dir);
-
-    expect(gateway.entries).toEqual(["No paid ads before March"]);
-    expect(await readFile(stampPath(), "utf8")).toBeTruthy();
-  });
-
-  it("keeps an unimported MEMORY.md through a write until the next sync imports it", async () => {
-    const original = "Never call it Magister Cloud\n§\nNo paid ads before March";
-    await writeFile(memoryPath(), original, "utf8");
-    const gateway = stubBrandMemoryGateway();
-    // The first session's sync times out, so nothing was imported yet.
-    gateway.failing.add("/api/runtime/brand-memory");
-    await expect(syncBrandMemory(dir)).rejects.toThrow("HTTP 500");
-    gateway.failing.clear();
-
-    const added = await applyBrandMemory(dir, { action: "add", content: "Tone: plain" });
-
-    expect(added).toMatchObject({ success: true, entries: ["Tone: plain"] });
-    expect(await readMemory()).toBe(original);
-    await expect(stat(stampPath())).rejects.toThrow();
-
-    await syncBrandMemory(dir);
-
-    expect(gateway.entries).toEqual([
-      "Tone: plain",
-      "Never call it Magister Cloud",
-      "No paid ads before March",
-    ]);
-    expect(await readMemory()).toBe(gateway.entries.join("\n§\n"));
-    expect(JSON.parse(await readFile(stampPath(), "utf8"))).toMatchObject({
-      memory_md: original,
-    });
-
-    // Imported: a write now refreshes the copy straight away.
-    await applyBrandMemory(dir, { action: "remove", old_text: "Tone" });
-    expect(await readMemory()).toBe("Never call it Magister Cloud\n§\nNo paid ads before March");
-  });
-
-  it("imports into a list another agent wrote first, skipping what it already has", async () => {
-    await writeFile(
-      memoryPath(),
-      `${SEED}\n§\nNever call it Magister Cloud\n§\nNo paid ads before March`,
-      "utf8",
-    );
-    // An MCP client saved one of the same rules before this machine's first sync.
-    const gateway = stubBrandMemoryGateway(["Never call it Magister Cloud"]);
-
-    await syncBrandMemory(dir);
-
-    expect(gateway.calls.map((call) => [call.method, call.path, call.body])).toEqual([
-      ["GET", "/api/runtime/brand-memory", undefined],
-      [
-        "POST",
-        "/api/runtime/brand-memory/import",
-        { entries: ["Never call it Magister Cloud", "No paid ads before March"] },
-      ],
-    ]);
-    expect(await readMemory()).toBe("Never call it Magister Cloud\n§\nNo paid ads before March");
-  });
-
-  it("never brings back entries removed after an import whose reply was lost", async () => {
-    await writeFile(memoryPath(), "No paid ads before March\n§\nTone: plain", "utf8");
-    const gateway = stubBrandMemoryGateway();
-    // The Gateway commits the import, but the machine sees a failure.
-    gateway.failingAfterCommit.add("/api/runtime/brand-memory/import");
-
-    await expect(syncBrandMemory(dir)).rejects.toThrow("HTTP 500");
-    await expect(stat(stampPath())).rejects.toThrow();
-    expect(gateway.entries).toEqual(["No paid ads before March", "Tone: plain"]);
-
-    // The team removes one in the Library before the next session.
-    gateway.entries.splice(1);
-    gateway.failingAfterCommit.clear();
-    await syncBrandMemory(dir);
-
-    expect(gateway.entries).toEqual(["No paid ads before March"]);
-    expect(await readMemory()).toBe("No paid ads before March");
-    expect(await readFile(stampPath(), "utf8")).toBeTruthy();
-  });
-
-  it("finishes the migration when the Gateway refuses an entry, keeping it in the stamp", async () => {
-    // Retrying a refusal (here a duplicate in other letter case; equally a
-    // blocked threat or a full list) could never succeed and would leave the
-    // copy unsynced on every session.
-    const original = "never call it magister cloud";
-    await writeFile(memoryPath(), original, "utf8");
-    const gateway = stubBrandMemoryGateway(["Never call it Magister Cloud"]);
-
-    await syncBrandMemory(dir);
-
-    expect(gateway.calls.map((call) => call.body)).toContainEqual({ entries: [original] });
-    expect(await readMemory()).toBe("Never call it Magister Cloud");
-    expect(JSON.parse(await readFile(stampPath(), "utf8"))).toMatchObject({
-      memory_md: original,
-    });
-  });
-});
-
-describe("BrandMemorySessions", () => {
-  it("claims each session once", () => {
-    const sessions = new BrandMemorySessions();
-    expect(sessions.claim("/ws", "s1")).toBe(true);
-    expect(sessions.claim("/ws", "s1")).toBe(false);
-    expect(sessions.claim("/ws", "s2")).toBe(true);
-    expect(sessions.claim("/other", "s1")).toBe(true);
-  });
-
-  it("always syncs a run without a session id", () => {
-    const sessions = new BrandMemorySessions();
-    expect(sessions.claim("/ws", undefined)).toBe(true);
-    expect(sessions.claim("/ws", undefined)).toBe(true);
-  });
-});
 
 describe("before_model_resolve hook", () => {
   let dir: string;
@@ -281,19 +44,26 @@ describe("before_model_resolve hook", () => {
     };
   }
 
-  it("syncs once per session and never overrides the model", async () => {
+  it("refreshes every turn in the same session and never overrides the model", async () => {
     const gateway = stubBrandMemoryGateway(["Tone: plain"]);
     const { run } = registerHook();
 
     await expect(run("session-1")).resolves.toBeUndefined();
+    gateway.entries.splice(0, 1, "Tone: warm");
     await run("session-1");
+    expect(
+      JSON.parse(await readFile(join(dir, ".magister", "state", "marketing-context.json"), "utf8"))
+        .rendered,
+    ).toContain("Tone: warm");
     await run("session-2");
 
-    expect(gateway.calls.filter((call) => call.method === "GET")).toHaveLength(2);
-    expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("Tone: plain");
+    expect(gateway.calls.filter((call) => call.path.endsWith("marketing-context"))).toHaveLength(3);
+    // The legacy list, its MEMORY.md copy and the one-time import are retired.
+    expect(gateway.calls.filter((call) => call.path.includes("/brand-memory"))).toHaveLength(0);
+    await expect(stat(join(dir, "MEMORY.md"))).rejects.toThrow();
   });
 
-  it("keeps the local MEMORY.md and warns when the Gateway is unreachable", async () => {
+  it("leaves MEMORY.md alone and warns when the Gateway is unreachable", async () => {
     await writeFile(join(dir, "MEMORY.md"), "local copy", "utf8");
     vi.stubGlobal(
       "fetch",
@@ -307,7 +77,226 @@ describe("before_model_resolve hook", () => {
 
     expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("local copy");
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("brand memory sync failed, keeping the local MEMORY.md"),
+      expect.stringContaining("shared marketing context refresh failed, keeping the last snapshot"),
     );
+  });
+  it("keeps last good context on failure, marks stale, and retries in the same chat", async () => {
+    const gateway = stubBrandMemoryGateway(["Tone: plain"]);
+    const { run } = registerHook();
+    const path = join(dir, ".magister", "state", "marketing-context.json");
+    await run("same");
+    gateway.failing.add("/api/runtime/marketing-context");
+    await run("same");
+    expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
+      stale: true,
+      rendered: "Confirmed rules: Tone: plain",
+    });
+    gateway.failing.clear();
+    gateway.entries.splice(0, 1, "Tone: warm");
+    await run("same");
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
+      revision: 1,
+      rendered: "Confirmed rules: Tone: warm",
+    });
+  });
+  it("suppresses cached and legacy memory after an authorization denial", async () => {
+    const gateway = stubBrandMemoryGateway(["Private old brand rule"]);
+    await writeFile(join(dir, "MEMORY.md"), "Private old brand note", "utf8");
+    const { run } = registerHook();
+    await run("same");
+    gateway.forbidden.add("/api/runtime/marketing-context");
+    await run("same");
+    const context = JSON.parse(
+      await readFile(join(dir, ".magister", "state", "marketing-context.json"), "utf8"),
+    );
+    expect(context.available).toBe(false);
+    expect(context.rendered).not.toContain("Private old brand rule");
+    // Revoked: even a never-imported MEMORY.md is emptied, as before, with no copy kept.
+    expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("");
+    await expect(stat(join(dir, ".magister", "state", "memory-md-retired"))).rejects.toThrow();
+  });
+
+  it("says shared context is unavailable when the first refresh fails", async () => {
+    const gateway = stubBrandMemoryGateway(["Tone: plain"]);
+    gateway.failing.add("/api/runtime/marketing-context");
+    const { run } = registerHook();
+    await run("same");
+    const context = JSON.parse(
+      await readFile(join(dir, ".magister", "state", "marketing-context.json"), "utf8"),
+    );
+    expect(context).toMatchObject({ available: false, stale: true });
+    expect(context.rendered).toContain("could not be loaded");
+  });
+
+  it("leaves MEMORY.md to the Library's legacy-write gate but purges the state copies on revocation", async () => {
+    const gateway = stubBrandMemoryGateway(["Private old brand rule"]);
+    const state = join(dir, ".magister", "state");
+    await mkdir(state, { recursive: true });
+    await writeFile(join(dir, "MEMORY.md"), "Private old brand note", "utf8");
+    await writeFile(join(state, "memory-md-retired"), "Private earlier note\n", "utf8");
+    await writeFile(
+      join(state, "brand-memory-import"),
+      '{"memory_md":"Private original"}\n',
+      "utf8",
+    );
+    // Active or recovery: the Library refuses local projection writes.
+    const unregister = registerWorkspaceFileAuthority({
+      version: 1,
+      wrap: (tool) => tool,
+      admit: async () => true,
+      legacyWrite: async () => undefined,
+    });
+    try {
+      gateway.forbidden.add("/api/runtime/marketing-context");
+      const { run } = registerHook();
+      await run("same");
+      expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("Private old brand note");
+      await expect(stat(join(state, "memory-md-retired"))).rejects.toThrow();
+      expect(await readFile(join(state, "brand-memory-import"), "utf8")).toBe("{}\n");
+      const context = JSON.parse(await readFile(join(state, "marketing-context.json"), "utf8"));
+      expect(context.available).toBe(false);
+    } finally {
+      unregister();
+    }
+  });
+
+  it("still removes every copy on revocation when the unavailable marker cannot be written", async () => {
+    const gateway = stubBrandMemoryGateway(["Private old brand rule"]);
+    const state = join(dir, ".magister", "state");
+    // A directory here makes the marker's rename fail.
+    await mkdir(join(state, "marketing-context.json", "blocked"), { recursive: true });
+    await writeFile(join(dir, "MEMORY.md"), "Private old brand note", "utf8");
+    await writeFile(join(state, "memory-md-retired"), "Private earlier note\n", "utf8");
+    await writeFile(
+      join(state, "brand-memory-import"),
+      '{"memory_md":"Private original"}\n',
+      "utf8",
+    );
+    gateway.forbidden.add("/api/runtime/marketing-context");
+    const { run, warn } = registerHook();
+    await run("same");
+    expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("");
+    await expect(stat(join(state, "memory-md-retired"))).rejects.toThrow();
+    expect(await readFile(join(state, "brand-memory-import"), "utf8")).toBe("{}\n");
+    await expect(stat(join(state, "marketing-context.json"))).rejects.toThrow();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("the unavailable marker failed after access was denied"),
+    );
+  });
+
+  it("still empties MEMORY.md on revocation when a state copy cannot be purged", async () => {
+    const gateway = stubBrandMemoryGateway(["Private old brand rule"]);
+    // A directory here makes reading the stamp fail.
+    await mkdir(join(dir, ".magister", "state", "brand-memory-import"), { recursive: true });
+    await writeFile(join(dir, "MEMORY.md"), "Private old brand note", "utf8");
+    gateway.forbidden.add("/api/runtime/marketing-context");
+    const { run, warn } = registerHook();
+    await run("same");
+    expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("");
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("removing the local copies failed after access was denied"),
+    );
+  });
+
+  it("empties MEMORY.md on revocation when the Library admits the workspace but allows the write", async () => {
+    const gateway = stubBrandMemoryGateway(["Private old brand rule"]);
+    await writeFile(join(dir, "MEMORY.md"), "Private old brand note", "utf8");
+    const unregister = registerWorkspaceFileAuthority({
+      version: 1,
+      wrap: (tool) => tool,
+      admit: async () => true,
+    });
+    try {
+      gateway.forbidden.add("/api/runtime/marketing-context");
+      const { run } = registerHook();
+      await run("same");
+      expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("");
+    } finally {
+      unregister();
+    }
+  });
+
+  it("empties a MEMORY.md whose entries already reached the Gateway", async () => {
+    stubBrandMemoryGateway(["Tone: plain"]);
+    await mkdir(join(dir, ".magister", "state"), { recursive: true });
+    await writeFile(
+      join(dir, ".magister", "state", "brand-memory-import"),
+      '{"memory_md":"Tone: plain"}\n',
+    );
+    await writeFile(join(dir, "MEMORY.md"), "Tone: plain (stale copy)", "utf8");
+    const { run } = registerHook();
+    await run("same");
+    expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("");
+    // A later local edit reached no store: it is kept, not lost.
+    expect(await readFile(join(dir, ".magister", "state", "memory-md-retired"), "utf8")).toBe(
+      "Tone: plain (stale copy)\n",
+    );
+    await run("same");
+    expect(await readFile(join(dir, ".magister", "state", "memory-md-retired"), "utf8")).toBe(
+      "Tone: plain (stale copy)\n",
+    );
+  });
+
+  it("asks the Library whether it owns the files locally, never with a second turn admission", async () => {
+    stubBrandMemoryGateway(["Tone: plain"]);
+    await mkdir(join(dir, ".magister", "state"), { recursive: true });
+    await writeFile(join(dir, ".magister", "state", "brand-memory-import"), "{}\n");
+    await writeFile(join(dir, "MEMORY.md"), "Tone: plain (Library copy)", "utf8");
+    // Run setup already admitted the Library this turn: another admission
+    // would cost a state read, a /context-ready and a state read again.
+    const admit = vi.fn(async () => {
+      throw new Error("a hook must not admit the Library again");
+    });
+    const unregister = registerWorkspaceFileAuthority({
+      version: 1,
+      wrap: (tool) => tool,
+      admit,
+      authoritative: async () => true,
+    });
+    try {
+      const { run } = registerHook();
+      await run("same");
+      expect(admit).not.toHaveBeenCalled();
+      // The Library owns the files: a stamped copy is left alone, not retired.
+      expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("Tone: plain (Library copy)");
+    } finally {
+      unregister();
+    }
+  });
+
+  it("empties a stamped MEMORY.md even when the refresh fails", async () => {
+    const gateway = stubBrandMemoryGateway(["Tone: plain"]);
+    gateway.failing.add("/api/runtime/marketing-context");
+    await mkdir(join(dir, ".magister", "state"), { recursive: true });
+    await writeFile(join(dir, ".magister", "state", "brand-memory-import"), "{}\n");
+    await writeFile(join(dir, "MEMORY.md"), "Tone: plain (stale copy)", "utf8");
+    const { run } = registerHook();
+    await run("same");
+    expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("");
+  });
+
+  it("removes every copy of the notes on revocation, keeping only the stamp's presence", async () => {
+    const gateway = stubBrandMemoryGateway(["Tone: plain"]);
+    const state = join(dir, ".magister", "state");
+    await mkdir(state, { recursive: true });
+    await writeFile(join(state, "brand-memory-import"), '{"memory_md":"Private original"}\n');
+    await writeFile(join(dir, "MEMORY.md"), "Private later edit", "utf8");
+    const { run } = registerHook();
+    await run("same");
+    expect(await readFile(join(state, "memory-md-retired"), "utf8")).toBe("Private later edit\n");
+
+    gateway.forbidden.add("/api/runtime/marketing-context");
+    await run("same");
+    await expect(stat(join(state, "memory-md-retired"))).rejects.toThrow();
+    expect(await readFile(join(state, "brand-memory-import"), "utf8")).toBe("{}\n");
+    expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("");
+  });
+
+  it("leaves a never-imported MEMORY.md for the Gateway's migration", async () => {
+    stubBrandMemoryGateway(["Tone: plain"]);
+    await writeFile(join(dir, "MEMORY.md"), "Owner prefers short emails.", "utf8");
+    const { run } = registerHook();
+    await run("same");
+    expect(await readFile(join(dir, "MEMORY.md"), "utf8")).toBe("Owner prefers short emails.");
   });
 });

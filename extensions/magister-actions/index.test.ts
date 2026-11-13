@@ -856,6 +856,9 @@ describe("typed gateway execution", () => {
     expect(actionTimeoutMs("promote_artifact", 120_000)).toBe(120_000);
     expect(actionTimeoutMs("create_social_draft", 45_000)).toBe(300_000);
     expect(actionTimeoutMs("create_social_draft", 360_000)).toBe(360_000);
+    // Above the broker's 170s, which is above PageSpeed's 120s on the Gateway.
+    expect(actionTimeoutMs("integration_read", 45_000)).toBe(180_000);
+    expect(actionTimeoutMs("integration_change", 45_000)).toBe(180_000);
   });
 
   it("rejects a raw legacy result instead of inferring success", async () => {

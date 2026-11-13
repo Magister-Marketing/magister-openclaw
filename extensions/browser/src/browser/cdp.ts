@@ -453,8 +453,32 @@ export function formatAriaSnapshot(nodes: RawAXNode[], limit: number): AriaSnaps
   return out;
 }
 
+/**
+ * The session for reading one tab. A page socket already is that tab. A
+ * browser-level socket is not: on the extension relay, which gives every tab the
+ * same socket, a command with no session reaches the first attached tab, so the
+ * read came back labelled as this tab with another tab's content.
+ */
+async function resolveTabSession(
+  send: CdpSendFn,
+  wsUrl: string,
+  targetId?: string,
+): Promise<string | undefined> {
+  if (!targetId || /\/devtools\/page\//i.test(new URL(wsUrl).pathname)) {
+    return undefined;
+  }
+  const attached = (await send("Target.attachToTarget", { targetId, flatten: true })) as {
+    sessionId?: unknown;
+  };
+  if (typeof attached?.sessionId !== "string") {
+    throw new Error("CDP Target.attachToTarget returned no sessionId");
+  }
+  return attached.sessionId;
+}
+
 export async function snapshotAria(opts: {
   wsUrl: string;
+  targetId?: string;
   limit?: number;
   timeoutMs?: number;
 }): Promise<{ nodes: AriaSnapshotNode[] }> {
@@ -462,8 +486,9 @@ export async function snapshotAria(opts: {
   return await withCdpSocket(
     opts.wsUrl,
     async (send) => {
-      await prepareCdpPageSession(send);
-      const res = (await send("Accessibility.getFullAXTree")) as {
+      const sessionId = await resolveTabSession(send, opts.wsUrl, opts.targetId);
+      await prepareCdpPageSession(send, sessionId);
+      const res = (await send("Accessibility.getFullAXTree", undefined, sessionId)) as {
         nodes?: RawAXNode[];
       };
       const nodes = Array.isArray(res?.nodes) ? res.nodes : [];
@@ -920,6 +945,7 @@ async function buildCdpRoleSnapshot(params: {
 
 export async function snapshotRoleViaCdp(opts: {
   wsUrl: string;
+  targetId?: string;
   options?: CdpRoleSnapshotOptions;
   urls?: boolean;
   timeoutMs?: number;
@@ -931,9 +957,11 @@ export async function snapshotRoleViaCdp(opts: {
   return await withCdpSocket(
     opts.wsUrl,
     async (send) => {
-      await prepareCdpPageSession(send);
+      const sessionId = await resolveTabSession(send, opts.wsUrl, opts.targetId);
+      await prepareCdpPageSession(send, sessionId);
       const built = await buildCdpRoleSnapshot({
         send,
+        sessionId,
         options: opts.options ?? {},
         urls: opts.urls,
         recurseIframes: true,

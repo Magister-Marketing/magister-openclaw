@@ -37,6 +37,10 @@ export {
 export const OPENCLAW_MODEL_ID = "openclaw";
 export const OPENCLAW_DEFAULT_MODEL_ID = "openclaw/default";
 
+/** The Gateway's turn id: the run reuses the Library barrier the Gateway's own
+ * admission already crossed for this turn (magister-actions library-runtime). */
+const TURN_ID_HEADER = "x-magister-turn-id";
+
 function resolveAgentIdFromHeader(req: IncomingMessage): string | undefined {
   const raw =
     normalizeOptionalString(getHeader(req, "x-openclaw-agent-id")) ||
@@ -156,6 +160,8 @@ export function resolveGatewayRequestContext(params: {
   messageChannel: string;
   /** Deferred-schema tools this session should ship eagerly (x-magister-eager-schemas). */
   eagerSchemaTools: string[];
+  /** The Magister turn this request runs (x-magister-turn-id), when the Gateway sent one. */
+  libraryTurnId?: string;
 } {
   const agentId = resolveAgentIdForRequest({ req: params.req, model: params.model });
   const sessionKey = resolveSessionKey({
@@ -171,6 +177,8 @@ export function resolveGatewayRequestContext(params: {
     : params.defaultMessageChannel;
 
   const eagerSchemaTools = parseEagerSchemaTools(getHeader(params.req, EAGER_SCHEMAS_HEADER));
+  const turn = getHeader(params.req, TURN_ID_HEADER)?.trim();
+  const libraryTurnId = turn && /^[A-Za-z0-9_-]{1,64}$/u.test(turn) ? turn : undefined;
 
-  return { agentId, sessionKey, messageChannel, eagerSchemaTools };
+  return { agentId, sessionKey, messageChannel, eagerSchemaTools, libraryTurnId };
 }

@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_AI_SNAPSHOT_MAX_CHARS } from "./constants.js";
+import * as navigationGuardModule from "./navigation-guard.js";
+import { InvalidBrowserNavigationUrlError } from "./navigation-guard.js";
 import {
   installAgentContractHooks,
   postJson,
@@ -306,6 +308,7 @@ describe("browser control server", () => {
     expect(snapAria.format).toBe("aria");
     expect(cdpMocks.snapshotAria).toHaveBeenCalledWith({
       wsUrl: "ws://127.0.0.1/devtools/page/abcd1234",
+      targetId: "abcd1234",
       limit: 1,
     });
     expect(pwMocks.storeAriaSnapshotRefsViaPlaywright).toHaveBeenCalledWith({
@@ -352,6 +355,7 @@ describe("browser control server", () => {
     expect(fallback.snapshot).toContain("Fallback");
     expect(cdpMocks.snapshotRoleViaCdp).toHaveBeenCalledWith({
       wsUrl: "ws://127.0.0.1/devtools/page/abcd1234",
+      targetId: "abcd1234",
       urls: undefined,
       options: {
         interactive: true,
@@ -359,6 +363,82 @@ describe("browser control server", () => {
         maxDepth: undefined,
       },
     });
+  });
+
+  it("agent contract: a default snapshot falls back to the accessibility tree", async () => {
+    const base = await startServerAndBase();
+    const realFetch = getBrowserTestFetch();
+    const timeout = new Error("TimeoutError: page.ariaSnapshot: Timeout 5000ms exceeded.");
+
+    pwMocks.snapshotAiViaPlaywright.mockRejectedValueOnce(timeout);
+    const read = (await realFetch(`${base}/snapshot?format=ai`).then((r) => r.json())) as {
+      ok: boolean;
+      format?: string;
+      snapshot?: string;
+    };
+    expect(read.ok).toBe(true);
+    expect(read.format).toBe("ai");
+    expect(read.snapshot).toContain("Fallback");
+    expect(read.snapshot).toContain("these refs cannot be clicked");
+    expect(cdpMocks.snapshotRoleViaCdp).toHaveBeenLastCalledWith(
+      expect.objectContaining({ targetId: "abcd1234" }),
+    );
+
+    pwMocks.snapshotAiViaPlaywright.mockRejectedValueOnce(timeout);
+    const short = (await realFetch(`${base}/snapshot?format=ai&maxChars=20`).then((r) =>
+      r.json(),
+    )) as { truncated?: boolean; snapshot?: string };
+    expect(short.truncated).toBe(true);
+    expect(short.snapshot).toContain("[...TRUNCATED - page too large]");
+
+    // A fallback that also fails reports what stopped Playwright, not its own error.
+    pwMocks.snapshotAiViaPlaywright.mockRejectedValueOnce(timeout);
+    cdpMocks.snapshotRoleViaCdp.mockRejectedValueOnce(new Error("target not found"));
+    const failed = (await realFetch(`${base}/snapshot?format=ai`).then((r) => r.json())) as {
+      error?: string;
+    };
+    expect(failed.error).toContain("Timeout 5000ms exceeded");
+
+    // A page the navigation guard refused is never read some other way.
+    const readsBefore = cdpMocks.snapshotRoleViaCdp.mock.calls.length;
+    pwMocks.snapshotAiViaPlaywright.mockRejectedValueOnce(
+      new InvalidBrowserNavigationUrlError("Navigation blocked: private network"),
+    );
+    const denied = (await realFetch(`${base}/snapshot?format=ai`).then((r) => r.json())) as {
+      ok?: boolean;
+      error?: string;
+    };
+    expect(denied.ok).not.toBe(true);
+    expect(denied.error).toContain("Navigation blocked");
+    const quarantined = new Error("Browser target is unavailable after SSRF policy blocked it.");
+    quarantined.name = "BlockedBrowserTargetError";
+    pwMocks.snapshotAiViaPlaywright.mockRejectedValueOnce(quarantined);
+    await realFetch(`${base}/snapshot?format=ai`).then((r) => r.json());
+    expect(cdpMocks.snapshotRoleViaCdp.mock.calls.length).toBe(readsBefore);
+
+    // The page moved somewhere the policy refuses while Playwright was trying.
+    const startUrl = state.tabUrl;
+    const movedUrl = "https://moved.example/private";
+    const guard = vi
+      .spyOn(navigationGuardModule, "assertBrowserNavigationResultAllowed")
+      .mockImplementation(async ({ url }) => {
+        if (url === movedUrl) {
+          throw new InvalidBrowserNavigationUrlError("Navigation blocked: moved page");
+        }
+      });
+    pwMocks.snapshotAiViaPlaywright.mockImplementationOnce(async () => {
+      state.tabUrl = movedUrl;
+      throw timeout;
+    });
+    const moved = (await realFetch(`${base}/snapshot?format=ai`).then((r) => r.json())) as {
+      ok?: boolean;
+      error?: string;
+    };
+    state.tabUrl = startUrl;
+    guard.mockRestore();
+    expect(moved.ok).not.toBe(true);
+    expect(moved.error).toContain("Navigation blocked: moved page");
+    expect(cdpMocks.snapshotRoleViaCdp.mock.calls.length).toBe(readsBefore);
   });
 
   it("agent contract: doctor deep runs a live snapshot probe", async () => {
@@ -381,6 +461,7 @@ describe("browser control server", () => {
     );
     expect(cdpMocks.snapshotAria).toHaveBeenCalledWith({
       wsUrl: "ws://127.0.0.1/devtools/page/abcd1234",
+      targetId: "abcd1234",
       limit: 25,
     });
   });

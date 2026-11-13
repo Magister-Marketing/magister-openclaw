@@ -569,6 +569,7 @@ export function runAgentAttempt(params: {
     trigger: "user",
     messageChannel: params.messageChannel,
     eagerSchemaTools: params.opts.eagerSchemaTools,
+    libraryTurnId: params.opts.libraryTurnId,
     messageProvider: params.opts.messageProvider ?? params.messageChannel,
     agentAccountId: params.runContext.accountId,
     messageTo: params.opts.replyTo ?? params.opts.to,
