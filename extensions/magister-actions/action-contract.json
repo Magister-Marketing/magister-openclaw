@@ -5789,6 +5789,10 @@
             "maxLength": 160,
             "type": "string"
           },
+          "excerpt": {
+            "maxLength": 1000,
+            "type": "string"
+          },
           "idempotency_key": {
             "description": "Use one fresh key for each new logical operation. Reuse that key only when retrying the exact same arguments; a later user request, even with identical content, needs a new key.",
             "maxLength": 256,
@@ -5797,11 +5801,15 @@
             "type": "string"
           },
           "service": {
-            "enum": ["wordpress", "webflow", "wix"],
+            "enum": ["wordpress", "webflow", "wix", "magister_blog"],
             "type": "string"
           },
           "site_id": {
             "maxLength": 160,
+            "type": "string"
+          },
+          "slug": {
+            "maxLength": 120,
             "type": "string"
           },
           "tags": {
@@ -5844,6 +5852,10 @@
             "maxLength": 160,
             "type": "string"
           },
+          "excerpt": {
+            "maxLength": 1000,
+            "type": "string"
+          },
           "idempotency_key": {
             "description": "Use one fresh key for each new logical operation. Reuse that key only when retrying the exact same arguments; a later user request, even with identical content, needs a new key.",
             "maxLength": 256,
@@ -5857,12 +5869,23 @@
             "type": "string"
           },
           "service": {
-            "enum": ["wordpress", "webflow", "wix"],
+            "enum": ["wordpress", "webflow", "wix", "magister_blog"],
             "type": "string"
           },
           "site_id": {
             "maxLength": 160,
             "type": "string"
+          },
+          "slug": {
+            "maxLength": 120,
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "type": "array"
           },
           "title": {
             "maxLength": 500,
@@ -6022,7 +6045,7 @@
             "type": "string"
           },
           "service": {
-            "enum": ["wordpress", "webflow", "wix", "shopify"],
+            "enum": ["wordpress", "webflow", "wix", "shopify", "magister_blog"],
             "type": "string"
           },
           "site_id": {
@@ -6434,6 +6457,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "01096ede92b9b2ebf086b2e9c7623df039ef51e48a91e22f782ea9aae1495b14",
+  "registry_revision": "c62a86d9bda5380107f8d63766b81a4bf0e897c26fdcca9a6e414ea600f4251e",
   "schema_version": 1
 }
