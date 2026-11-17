@@ -3405,6 +3405,28 @@
       "transport_modes": ["json_v1"]
     },
     {
+      "capability_id": "public_research",
+      "connection_slug": null,
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:public_research"],
+      "minimum_native_action_registry_revision": "c62a86d9bda5380107f8d63766b81a4bf0e897c26fdcca9a6e414ea600f4251e",
+      "proxy_services": ["public_research"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-public-research",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
       "capability_id": "scrapecreators",
       "connection_slug": null,
       "delegation_safe_tools": [],
@@ -4558,6 +4580,6 @@
     }
   ],
   "native_action_registry_revision": "c62a86d9bda5380107f8d63766b81a4bf0e897c26fdcca9a6e414ea600f4251e",
-  "registry_revision": "624241b1da4bcf9276bdb3661ba8a3ae54d41f30dd9353fcedb1f0b9b60a0442",
+  "registry_revision": "65260afe9f03550edb709e8dd45006ad451d5013279abbce9618a07ddc7532c2",
   "schema_version": 1
 }
