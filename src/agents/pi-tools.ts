@@ -23,6 +23,7 @@ import { execSchemaFor, processSchema } from "./bash-tools.schemas.js";
 import { listChannelAgentTools } from "./channel-tools.js";
 import { shouldSuppressManagedWebSearchTool } from "./codex-native-web-search.js";
 import { resolveImageSanitizationLimits } from "./image-sanitization.js";
+import { resolveMagisterWriteRoots } from "./magister-write-roots.js";
 import type { ModelAuthMode } from "./model-auth.js";
 import { resolveOpenClawPluginToolsForOptions } from "./openclaw-plugin-tools.js";
 import { createOpenClawTools } from "./openclaw-tools.js";
@@ -494,6 +495,8 @@ export function createOpenClawCodingTools(options?: {
   const includeChannelTools = toolConstructionPlan.includeChannelTools;
   const includePluginTools = toolConstructionPlan.includePluginTools;
   const workspaceOnly = fsPolicy.workspaceOnly;
+  // Magister machines bound host-side writes without bounding reads (magister-write-roots.ts).
+  const magisterWriteRoots = resolveMagisterWriteRoots();
   const applyPatchConfig = execConfig.applyPatch;
   // Secure by default: apply_patch is workspace-contained unless explicitly disabled.
   // (tools.fs.workspaceOnly is a separate umbrella flag for read/write/edit/apply_patch.)
@@ -553,7 +556,10 @@ export function createOpenClawCodingTools(options?: {
           if (sandboxRoot) {
             return [];
           }
-          const wrapped = createHostWorkspaceWriteTool(workspaceRoot, { workspaceOnly });
+          const wrapped = createHostWorkspaceWriteTool(workspaceRoot, {
+            workspaceOnly,
+            writeRoots: magisterWriteRoots,
+          });
           return [
             wrapToolSessionStoreGuard(
               workspaceOnly ? wrapToolWorkspaceRootGuard(wrapped, workspaceRoot) : wrapped,
@@ -565,7 +571,10 @@ export function createOpenClawCodingTools(options?: {
           if (sandboxRoot) {
             return [];
           }
-          const wrapped = createHostWorkspaceEditTool(workspaceRoot, { workspaceOnly });
+          const wrapped = createHostWorkspaceEditTool(workspaceRoot, {
+            workspaceOnly,
+            writeRoots: magisterWriteRoots,
+          });
           return [
             wrapToolSessionStoreGuard(
               workspaceOnly ? wrapToolWorkspaceRootGuard(wrapped, workspaceRoot) : wrapped,

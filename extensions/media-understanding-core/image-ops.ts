@@ -48,7 +48,9 @@ async function loadSharp(maxInputPixels: number): Promise<SharpFactory> {
         return ((buffer, options) =>
           sharp(buffer, {
             ...options,
-            failOnError: false,
+            // sharp 0.35 removed `failOnError` (deprecated since 0.33); `failOn: "none"`
+            // is its replacement, and the pixel budget below still applies.
+            failOn: "none",
             limitInputPixels: maxInputPixels,
           })) as SharpFactory;
       })
