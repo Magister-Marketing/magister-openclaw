@@ -3439,6 +3439,75 @@
       "tool_name": "magister_list_ai_visibility_answers"
     },
     {
+      "action": "list_reddit_threads",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "List Reddit threads worth joining: those AI engines cite for the brand's prompts in answers that leave it out, and new ones web monitoring found. Magister never posts to Reddit.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "days": {
+            "default": 30,
+            "maximum": 365,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "limit": {
+            "default": 10,
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "schema_delivery": "eager",
+      "side_effect": "none",
+      "spend_limited": false,
+      "tool_name": "magister_list_reddit_threads"
+    },
+    {
+      "action": "prepare_reddit_post",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "Check a drafted Reddit reply (thread_url) or post (title) and get the reddit.com page the person opens to post it themselves, with the subreddit's rules and a checklist. Nothing is posted.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "maxLength": 40000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "subreddit": {
+            "maxLength": 64,
+            "minLength": 2,
+            "type": "string"
+          },
+          "thread_url": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 300,
+            "type": "string"
+          }
+        },
+        "required": ["subreddit", "body"],
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "schema_delivery": "eager",
+      "side_effect": "none",
+      "spend_limited": false,
+      "tool_name": "magister_prepare_reddit_post"
+    },
+    {
       "action": "run_ai_visibility_set",
       "approval_policy": "none",
       "async_status_adapter": "ai_visibility_round",
@@ -6457,6 +6526,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "c62a86d9bda5380107f8d63766b81a4bf0e897c26fdcca9a6e414ea600f4251e",
+  "registry_revision": "51fadd3146108674d329a7ebd2f5ed78df3293c3b48a578bfdc3169714c7c444",
   "schema_version": 1
 }
