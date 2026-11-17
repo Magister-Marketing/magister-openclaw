@@ -3439,10 +3439,10 @@
       "tool_name": "magister_list_ai_visibility_answers"
     },
     {
-      "action": "list_reddit_threads",
+      "action": "list_conversations",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
-      "description": "List Reddit threads worth joining: those AI engines cite for the brand's prompts in answers that leave it out, and new ones web monitoring found. Magister never posts to Reddit.",
+      "description": "List Reddit, LinkedIn, YouTube, Quora and X posts worth joining: those AI engines cite for the brand's prompts in answers that leave it out, and new ones web monitoring found. Magister never replies.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "safe_retry",
       "input_schema": {
@@ -3459,6 +3459,10 @@
             "maximum": 50,
             "minimum": 1,
             "type": "integer"
+          },
+          "network": {
+            "enum": ["reddit", "linkedin", "youtube", "quora", "x"],
+            "type": "string"
           }
         },
         "type": "object"
@@ -3467,13 +3471,13 @@
       "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
-      "tool_name": "magister_list_reddit_threads"
+      "tool_name": "magister_list_conversations"
     },
     {
-      "action": "prepare_reddit_post",
+      "action": "prepare_conversation_reply",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
-      "description": "Check a drafted Reddit reply (thread_url) or post (title) and get the reddit.com page the person opens to post it themselves, with the subreddit's rules and a checklist. Nothing is posted.",
+      "description": "Check a drafted reply (url of the post) or new post (network) and get the page the person opens to post it themselves, with a checklist. Nothing is posted.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "safe_retry",
       "input_schema": {
@@ -3484,28 +3488,31 @@
             "minLength": 1,
             "type": "string"
           },
-          "subreddit": {
-            "maxLength": 64,
-            "minLength": 2,
+          "network": {
+            "enum": ["reddit", "linkedin", "x"],
             "type": "string"
           },
-          "thread_url": {
-            "maxLength": 2000,
+          "subreddit": {
+            "maxLength": 64,
             "type": "string"
           },
           "title": {
             "maxLength": 300,
             "type": "string"
+          },
+          "url": {
+            "maxLength": 2000,
+            "type": "string"
           }
         },
-        "required": ["subreddit", "body"],
+        "required": ["body"],
         "type": "object"
       },
       "retry_policy": "backoff",
       "schema_delivery": "eager",
       "side_effect": "none",
       "spend_limited": false,
-      "tool_name": "magister_prepare_reddit_post"
+      "tool_name": "magister_prepare_conversation_reply"
     },
     {
       "action": "run_ai_visibility_set",
@@ -6526,6 +6533,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "51fadd3146108674d329a7ebd2f5ed78df3293c3b48a578bfdc3169714c7c444",
+  "registry_revision": "e774f7f4d6f066bb8ddbef0d407bb246c7a02167192ab02cf1cd35b99ea9762a",
   "schema_version": 1
 }
