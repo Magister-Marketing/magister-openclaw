@@ -16,6 +16,7 @@ import { hasEncodedFileUrlSeparator, trySafeFileURLToPath } from "../infra/local
 import { detectMime } from "../media/mime.js";
 import { sniffMimeFromBase64 } from "../media/sniff-mime-from-base64.js";
 import type { ImageSanitizationLimits } from "./image-sanitization.js";
+import { assertMagisterWritablePath } from "./magister-write-roots.js";
 import { toRelativeWorkspacePath } from "./path-policy.js";
 import { wrapEditToolWithRecovery } from "./pi-tools.host-edit.js";
 import {
@@ -653,14 +654,14 @@ export function createSandboxedEditTool(params: SandboxToolParams) {
   return wrapToolParamValidation(withRecovery, REQUIRED_PARAM_GROUPS.edit);
 }
 
-export function createHostWorkspaceWriteTool(root: string, options?: { workspaceOnly?: boolean }) {
+export function createHostWorkspaceWriteTool(root: string, options?: HostFileToolOptions) {
   const base = createWriteTool(root, {
     operations: createHostWriteOperations(root, options),
   }) as unknown as AnyAgentTool;
   return wrapToolParamValidation(base, REQUIRED_PARAM_GROUPS.write);
 }
 
-export function createHostWorkspaceEditTool(root: string, options?: { workspaceOnly?: boolean }) {
+export function createHostWorkspaceEditTool(root: string, options?: HostFileToolOptions) {
   const base = createEditTool(root, {
     operations: createHostEditOperations(root, options),
   }) as unknown as AnyAgentTool;
@@ -748,23 +749,49 @@ function expandTildeToOsHome(filePath: string): string {
   return home ? expandHomePrefix(filePath, { home }) : filePath;
 }
 
-async function writeHostFile(absolutePath: string, content: string) {
-  const resolved = path.resolve(expandTildeToOsHome(absolutePath));
-  await fs.mkdir(path.dirname(resolved), { recursive: true });
-  await fs.writeFile(resolved, content, "utf-8");
+type HostFileToolOptions = {
+  workspaceOnly?: boolean;
+  /** Magister: the only folders write and edit may change (magister-write-roots.ts). */
+  writeRoots?: readonly string[] | null;
+};
+
+/** Throws unless `writeRoots` is unset or `resolved` lies inside one of them. */
+async function assertHostWriteAllowed(
+  root: string,
+  options: HostFileToolOptions | undefined,
+  resolved: string,
+) {
+  if (options?.writeRoots) {
+    await assertMagisterWritablePath({
+      target: resolved,
+      roots: options.writeRoots,
+      workspaceRoot: root,
+    });
+  }
 }
 
-function createHostWriteOperations(root: string, options?: { workspaceOnly?: boolean }) {
+function createHostWriteFile(root: string, options?: HostFileToolOptions) {
+  return async (absolutePath: string, content: string) => {
+    const resolved = path.resolve(expandTildeToOsHome(absolutePath));
+    await assertHostWriteAllowed(root, options, resolved);
+    await fs.mkdir(path.dirname(resolved), { recursive: true });
+    await fs.writeFile(resolved, content, "utf-8");
+  };
+}
+
+function createHostWriteOperations(root: string, options?: HostFileToolOptions) {
   const workspaceOnly = options?.workspaceOnly ?? false;
 
   if (!workspaceOnly) {
-    // When workspaceOnly is false, allow writes anywhere on the host
+    // When workspaceOnly is false, allow writes anywhere on the host, or, on a
+    // Magister machine, anywhere inside its write roots.
     return {
       mkdir: async (dir: string) => {
         const resolved = path.resolve(expandTildeToOsHome(dir));
+        await assertHostWriteAllowed(root, options, resolved);
         await fs.mkdir(resolved, { recursive: true });
       },
-      writeFile: writeHostFile,
+      writeFile: createHostWriteFile(root, options),
     } as const;
   }
 
@@ -788,17 +815,18 @@ function createHostWriteOperations(root: string, options?: { workspaceOnly?: boo
   } as const;
 }
 
-function createHostEditOperations(root: string, options?: { workspaceOnly?: boolean }) {
+function createHostEditOperations(root: string, options?: HostFileToolOptions) {
   const workspaceOnly = options?.workspaceOnly ?? false;
 
   if (!workspaceOnly) {
-    // When workspaceOnly is false, allow edits anywhere on the host
+    // When workspaceOnly is false, allow edits anywhere on the host, or, on a
+    // Magister machine, anywhere inside its write roots.
     return {
       readFile: async (absolutePath: string) => {
         const resolved = path.resolve(expandTildeToOsHome(absolutePath));
         return await fs.readFile(resolved);
       },
-      writeFile: writeHostFile,
+      writeFile: createHostWriteFile(root, options),
       access: async (absolutePath: string) => {
         const resolved = path.resolve(expandTildeToOsHome(absolutePath));
         await fs.access(resolved);
