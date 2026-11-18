@@ -3405,6 +3405,28 @@
       "transport_modes": ["json_v1"]
     },
     {
+      "capability_id": "public_research",
+      "connection_slug": null,
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:public_research"],
+      "minimum_native_action_registry_revision": "e774f7f4d6f066bb8ddbef0d407bb246c7a02167192ab02cf1cd35b99ea9762a",
+      "proxy_services": ["public_research"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-public-research",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
       "capability_id": "scrapecreators",
       "connection_slug": null,
       "delegation_safe_tools": [],
