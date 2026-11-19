@@ -20,10 +20,11 @@ overrides:
   form-data: 2.5.6
   minimatch: 10.2.5
   path-to-regexp: 8.4.0
+  proxy-addr: 2.0.8
   qs: 6.15.2
   node-domexception: npm:@nolyfill/domexception@1.0.28
   typebox: 1.1.37
-  tar: 7.5.16
+  tar: 7.5.21
   tough-cookie: 4.1.3
   yauzl: 3.2.1
   protobufjs: 7.6.3
@@ -35,12 +36,12 @@ overrides:
   '@vitest/browser': 4.1.10
   '@whiskeysockets/baileys': 7.0.0-rc13
   brace-expansion@5.0.5: 5.0.6
-  dompurify: 3.4.12
+  dompurify: 3.4.17
   esbuild@0.27.7: 0.28.1
   fast-uri: 3.1.2
   ip-address: 10.1.1
   linkify-it: 5.0.1
-  markdown-it: 14.2.0
+  markdown-it: 14.3.3
   undici@7.25.0: 7.28.0
   undici@8.2.0: 8.5.0
   undici@8.3.0: 8.5.0
@@ -176,8 +177,8 @@ importers:
         specifier: ^0.18.12
         version: 0.18.12
       markdown-it:
-        specifier: 14.2.0
-        version: 14.2.0
+        specifier: 14.3.3
+        version: 14.3.3
       minimatch:
         specifier: 10.2.5
         version: 10.2.5
@@ -203,8 +204,8 @@ importers:
         specifier: 1.5.4
         version: 1.5.4
       tar:
-        specifier: 7.5.16
-        version: 7.5.16
+        specifier: 7.5.21
+        version: 7.5.21
       tokenjuice:
         specifier: 0.7.0
         version: 0.7.0
@@ -924,8 +925,8 @@ importers:
         specifier: ^6.2.5
         version: 6.2.5
       markdown-it:
-        specifier: 14.2.0
-        version: 14.2.0
+        specifier: 14.3.3
+        version: 14.3.3
       matrix-js-sdk:
         specifier: 41.4.0
         version: 41.4.0
@@ -1679,8 +1680,8 @@ importers:
         specifier: 3.1.0
         version: 3.1.0
       dompurify:
-        specifier: 3.4.12
-        version: 3.4.12
+        specifier: 3.4.17
+        version: 3.4.17
       json5:
         specifier: ^2.2.3
         version: 2.2.3
@@ -1688,8 +1689,8 @@ importers:
         specifier: ^3.3.2
         version: 3.3.2
       markdown-it:
-        specifier: 14.2.0
-        version: 14.2.0
+        specifier: 14.3.3
+        version: 14.3.3
       markdown-it-task-lists:
         specifier: ^2.1.1
         version: 2.1.1
@@ -5450,8 +5451,8 @@ packages:
     resolution: {integrity: sha512-cgwlv/1iFQiFnU96XXgROh8xTeetsnJiDsTc7TYCLFd9+/WNkIqPTxiM/8pSd8VIrhXGTf1Ny1q1hquVqDJB5w==}
     engines: {node: '>= 4'}
 
-  dompurify@3.4.12:
-    resolution: {integrity: sha512-zQvGet8Z2sWbQhCmfFz/T5QWH2oBmjnqK3qvOjaqaNLrLEF912WamU+ohnTp0TCep/MFVHpdJuCZEdFOdTnEFg==}
+  dompurify@3.4.17:
+    resolution: {integrity: sha512-B/pSlYVHQ58kqISD/yDjuJ1yfzI34m1gF4lAod2bwSRhiN4K5Cl3H8Af7hqB2PmTL911tdEudnnXn5FnhRoz0w==}
 
   domutils@3.2.2:
     resolution: {integrity: sha512-6kZKyUajlDuqlHKVX1w7gyslj9MPIXzIFiz/rGu35uC1wMi+kMhQwGhl4lt9unC9Vb9INnY9Z3/ZA3+FhASLaw==}
@@ -6432,8 +6433,8 @@ packages:
   markdown-it-task-lists@2.1.1:
     resolution: {integrity: sha512-TxFAc76Jnhb2OUu+n3yz9RMu4CwGfaT788br6HhEDlvWfdeJcLUsxk1Hgw2yJio0OXsxv7pyIPmvECY7bMbluA==}
 
-  markdown-it@14.2.0:
-    resolution: {integrity: sha512-1TGiQiJVRQ3NPmZH6sx5Cfnmg6GQm9jvC1ch4TK511NjSJvjzKLzn5pPfZRNZkRPZP0HqCioSndqH8v2nRaWVQ==}
+  markdown-it@14.3.3:
+    resolution: {integrity: sha512-L//tDAkjTjJCU6pBUSBTgs3Kg4InVaZuUZog/b6V12UKhcDQ7S78877ibbCanRExwPuYP1CZD7Gd2dxSy1GXRg==}
     hasBin: true
 
   markdown-table@2.0.0:
@@ -7082,8 +7083,8 @@ packages:
     resolution: {integrity: sha512-+k0vdJKNdW+Vu+dYe8tZA/VvQb6XKNWexC6URwBFXxNnjLJz9nQJCemGyNgRAWD+B7+nGNc9qMPGwcD7s4nzUw==}
     engines: {node: '>=12.0.0'}
 
-  proxy-addr@2.0.7:
-    resolution: {integrity: sha512-llQsMLSUDUPT44jdrU/O37qlnifitDP+ZwrmmZcoSKyLKvtZxpyV0n2/bD/N4tBAAZ/gJEdZU7KMraoK1+XYAg==}
+  proxy-addr@2.0.8:
+    resolution: {integrity: sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==}
     engines: {node: '>= 0.10'}
 
   proxy-agent@6.5.0:
@@ -7638,8 +7639,8 @@ packages:
   tar-stream@3.2.0:
     resolution: {integrity: sha512-ojzvCvVaNp6aOTFmG7jaRD0meowIAuPc3cMMhSgKiVWws1GyHbGd/xvnyuRKcKlMpt3qvxx6r0hreCNITP9hIg==}
 
-  tar@7.5.16:
-    resolution: {integrity: sha512-56adEpPMouktRlBLXiaYFFzZ/3+JXa8P9n7WbR+ibIjtviN55mEaOkiysCnPnWm+7kkui1Dn8J9l+g6zV8731w==}
+  tar@7.5.21:
+    resolution: {integrity: sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==}
     engines: {node: '>=18'}
 
   teex@1.0.1:
@@ -9252,8 +9253,8 @@ snapshots:
       nopt: 5.0.0
       npmlog: 5.0.1
       rimraf: 3.0.2
-      semver: 7.8.0
-      tar: 7.5.16
+      semver: 7.8.6
+      tar: 7.5.21
     transitivePeerDependencies:
       - encoding
       - supports-color
@@ -12606,7 +12607,7 @@ snapshots:
     dependencies:
       domelementtype: 2.3.0
 
-  dompurify@3.4.12:
+  dompurify@3.4.17:
     optionalDependencies:
       '@types/trusted-types': 2.0.7
 
@@ -12827,7 +12828,7 @@ snapshots:
       on-finished: 2.4.1
       once: 1.4.0
       parseurl: 1.3.3
-      proxy-addr: 2.0.7
+      proxy-addr: 2.0.8
       qs: 6.15.2
       range-parser: 1.2.1
       router: 2.2.0
@@ -13798,7 +13799,7 @@ snapshots:
 
   markdown-it-task-lists@2.1.1: {}
 
-  markdown-it@14.2.0:
+  markdown-it@14.3.3:
     dependencies:
       argparse: 2.0.1
       entities: 4.5.0
@@ -14668,7 +14669,7 @@ snapshots:
       '@types/node': 25.6.0
       long: 5.3.2
 
-  proxy-addr@2.0.7:
+  proxy-addr@2.0.8:
     dependencies:
       forwarded: 0.2.0
       ipaddr.js: 1.9.1
@@ -15372,7 +15373,7 @@ snapshots:
       - bare-buffer
       - react-native-b4a
 
-  tar@7.5.16:
+  tar@7.5.21:
     dependencies:
       '@isaacs/fs-minipass': 4.0.1
       chownr: 3.0.0
