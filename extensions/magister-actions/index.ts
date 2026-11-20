@@ -879,6 +879,17 @@ const HOLD_DEFAULT_POLL_SECONDS = 5;
 const HOLD_POLL_TIMEOUT_MS = 20_000;
 const HOLD_MAX_TOTAL_MS = 25 * 60 * 1000;
 
+// The core's command queue keeps its state on a process-global singleton, so
+// every bundle sees the same draining flag (src/process/command-queue.ts,
+// markGatewayDraining). It is true from the moment a restart starts waiting
+// for in-flight work until the restart is done. Read here, never written.
+const COMMAND_QUEUE_STATE_KEY = Symbol.for("openclaw.commandQueueState");
+
+export function gatewayIsDrainingForRestart(): boolean {
+  const state = (globalThis as Record<PropertyKey, unknown>)[COMMAND_QUEUE_STATE_KEY];
+  return isRecord(state) && state["gatewayDraining"] === true;
+}
+
 function holdSleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     if (signal?.aborted) {
@@ -908,6 +919,7 @@ export async function holdForApprovalDecision(options: {
   signal?: AbortSignal;
   now?: () => number;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  gatewayDraining?: () => boolean;
 }): Promise<ActionEnvelope | null> {
   const { envelope } = options;
   if (envelope.status.terminal || envelope.receipt["permission_hold"] !== true) {
@@ -915,6 +927,7 @@ export async function holdForApprovalDecision(options: {
   }
   const now = options.now ?? Date.now;
   const sleep = options.sleep ?? holdSleep;
+  const gatewayDraining = options.gatewayDraining ?? gatewayIsDrainingForRestart;
   const deadlineRaw =
     typeof envelope.receipt["hold_deadline"] === "string"
       ? Date.parse(envelope.receipt["hold_deadline"])
@@ -943,9 +956,21 @@ export async function holdForApprovalDecision(options: {
   };
 
   while (now() < deadline && !options.signal?.aborted) {
+    // Stand down for a restart: a held call is in-flight work, and a restart
+    // waits for in-flight work with no time limit while it refuses every new
+    // turn. One card nobody decided held a machine's restart open for 18
+    // minutes that way (2026-11-20). The pending envelope goes to the model,
+    // the turn ends, and the decision is delivered by the follow-up turn, as
+    // it is when the user sends a new message.
+    if (gatewayDraining()) {
+      return null;
+    }
     await sleep(pollSeconds * 1000, options.signal);
     if (options.signal?.aborted || now() >= deadline) {
       break;
+    }
+    if (gatewayDraining()) {
+      return null;
     }
     let polled: ActionEnvelope | null = null;
     try {
