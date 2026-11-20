@@ -14,6 +14,7 @@ import {
   actionTimeoutMs,
   createContextualMagisterActionTool,
   createMagisterActionTool,
+  gatewayIsDrainingForRestart,
   holdForApprovalDecision,
   magisterStandaloneToolNames,
   nativeActionContract,
@@ -1479,6 +1480,69 @@ describe("hold-the-turn approvals", () => {
     };
 
     expect(await holdForApprovalDecision(holdOptions(fetchImpl))).toBeNull();
+  });
+
+  it("stands down when the machine starts draining for a restart, without another poll", async () => {
+    let polls = 0;
+    let draining = false;
+    const fetchImpl = async (input: unknown) => {
+      const url = requestUrl(input as string);
+      if (url.endsWith("/approval_resolution_ack")) {
+        throw new Error("must not ack a hold it stood down from");
+      }
+      polls += 1;
+      draining = true; // the restart is requested while the card is still pending
+      return new Response(
+        JSON.stringify(
+          envelope({
+            status: { state: "running", terminal: false, poll_after_seconds: 5, stale_seconds: 0 },
+            receipt: { approval: { state: "pending", terminal: false } },
+          }),
+        ),
+        { status: 200 },
+      );
+    };
+
+    const result = await holdForApprovalDecision({
+      ...holdOptions(fetchImpl),
+      gatewayDraining: () => draining,
+    });
+
+    expect(result).toBeNull();
+    expect(polls).toBe(1);
+  });
+
+  it("does not enter a hold while the machine is already draining", async () => {
+    const fetchImpl = async () => {
+      throw new Error("a draining machine must not poll");
+    };
+
+    expect(
+      await holdForApprovalDecision({
+        ...holdOptions(fetchImpl as never),
+        gatewayDraining: () => true,
+      }),
+    ).toBeNull();
+  });
+
+  it("reads the core queue's draining flag from the process-global state", () => {
+    const key = Symbol.for("openclaw.commandQueueState");
+    const store = globalThis as Record<PropertyKey, unknown>;
+    const before = store[key];
+    try {
+      store[key] = { gatewayDraining: false };
+      expect(gatewayIsDrainingForRestart()).toBe(false);
+      store[key] = { gatewayDraining: true };
+      expect(gatewayIsDrainingForRestart()).toBe(true);
+      delete store[key];
+      expect(gatewayIsDrainingForRestart()).toBe(false);
+    } finally {
+      if (before === undefined) {
+        delete store[key];
+      } else {
+        store[key] = before;
+      }
+    }
   });
 
   it("stands down when delivery belongs to the continuation", async () => {

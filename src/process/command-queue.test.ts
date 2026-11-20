@@ -504,6 +504,18 @@ describe("command queue", () => {
     );
   });
 
+  it("keeps the draining flag where the hosted-action extension reads it", () => {
+    // extensions/magister-actions stands a held approval down when this is
+    // true (gatewayIsDrainingForRestart); it reads the process-global state
+    // by this key and field, without importing the core.
+    const state = (globalThis as Record<PropertyKey, unknown>)[
+      Symbol.for("openclaw.commandQueueState")
+    ] as { gatewayDraining?: boolean } | undefined;
+    expect(state?.gatewayDraining).toBe(false);
+    markGatewayDraining();
+    expect(state?.gatewayDraining).toBe(true);
+  });
+
   it("does not affect already-active tasks after markGatewayDraining", async () => {
     const { task, release } = enqueueBlockedMainTask(async () => "ok");
     markGatewayDraining();
