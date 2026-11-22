@@ -897,7 +897,7 @@
             "type": "string"
           },
           "waiting_for_repository": {
-            "description": "With blocked, only when checkout_repo refused because another chat is working in the repository: the task waits, nobody is asked, and Magister continues it once the checkout is free.",
+            "description": "With blocked, only when checkout_repo, a commit or an install was refused because another chat is working in the repository: the task waits, nobody is asked, and Magister continues it once the checkout is free.",
             "type": "boolean"
           }
         },
@@ -6544,6 +6544,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "b6e7813f0ef9c2a057d655d1566c8b3a87a2f98227a62cbf5a77313697fb662a",
+  "registry_revision": "666a8b0c6717ab4330eaf09db5564a3c839b325f271af72b93ff3b2b1b9e32c8",
   "schema_version": 1
 }
