@@ -77,7 +77,7 @@ function admissionCaller(
   const caller: AdmissionCaller = {
     refresh,
     turn,
-    deadline: Date.now() + waitMs,
+    deadline: performance.now() + waitMs,
     get done() {
       return done;
     },
@@ -430,7 +430,7 @@ export class LibraryRuntime {
     }
     // The pass waits in the lock's queue only while one of its callers does:
     // a pass nobody waits for would hold up every read queued behind it.
-    const waitMs = Math.max(...callers.map((caller) => caller.deadline)) - Date.now();
+    const waitMs = Math.max(...callers.map((caller) => caller.deadline)) - performance.now();
     if (waitMs <= 0) {
       return;
     }
@@ -490,13 +490,16 @@ export class LibraryRuntime {
     const needing = callers.filter((caller) => caller.refresh && !crossed(caller));
     let served = callers;
     if (needing.length > 0) {
+      let next: LibraryState | undefined;
       let published = false;
       try {
         await this.bridge.request("POST", "/context-ready", { project_id: state.project_id });
+        next = await this.state();
         published = true;
       } catch (error) {
         // A run setup whose turn already crossed needs none of this: it is
-        // served from the state its barrier was checked against.
+        // served from the state its barrier was checked against. A failed
+        // read after the crossing says nothing about where the Library went.
         for (const caller of needing) {
           caller.fail(error);
         }
@@ -506,7 +509,6 @@ export class LibraryRuntime {
         }
       }
       if (published) {
-        const next = await this.state();
         if (!next || next.mode !== "active") {
           // The Library left active: nobody is served from the state before.
           const changed = new Error("Library state changed during context admission");

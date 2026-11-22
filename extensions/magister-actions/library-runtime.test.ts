@@ -1690,3 +1690,47 @@ describe("the burst fix, reviewed again", () => {
     await expect(setup).resolves.toBe(false);
   });
 });
+
+describe("the burst fix, reviewed a third time", () => {
+  it("serves a crossed run setup when the read after another turn's crossing fails", async () => {
+    await runtime.admit({ fromGateway: true, turnId: "crossed" });
+    let crossings = 0;
+    let failNextState = false;
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const original = gateway.request;
+    gateway.request = (async (
+      method: "GET" | "POST",
+      endpoint: string,
+      values?: Record<string, unknown>,
+    ) => {
+      if (endpoint === "/context-ready") {
+        crossings += 1;
+        const call = crossings;
+        await gate;
+        const answer = await original(method, endpoint, values);
+        // The read right after the second crossing fails once.
+        if (call === 2) {
+          failNextState = true;
+        }
+        return answer;
+      }
+      if (endpoint === "/state" && failNextState) {
+        failNextState = false;
+        throw new LibraryHttpError(502, {});
+      }
+      return original(method, endpoint, values);
+    }) as typeof gateway.request;
+    const running = runtime.admit({ fromGateway: true, turnId: "other" });
+    await vi.waitFor(() => expect(crossings).toBe(1));
+    const setup = runtime.admit({ turnId: "crossed" });
+    const later = runtime.admit({ fromGateway: true, turnId: "later" });
+    await sleep(20);
+    open();
+    await expect(running).resolves.toBe(true);
+    await expect(later).rejects.toThrow();
+    await expect(setup).resolves.toBe(true);
+  });
+});
