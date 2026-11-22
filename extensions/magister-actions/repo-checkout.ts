@@ -1564,13 +1564,20 @@ function anotherChatsLeftWorkError(full: string, seen: number, step: string): Ch
   );
 }
 
+/** Another chat is at work in the checkout: a wait, not anyone's decision.
+ *  A plan task started with nobody watching (Autopilot, a continue) used to
+ *  stop and ask the person to say when the other chat was done; it now waits,
+ *  and Magister continues it once the checkout is free. */
+const PLAN_TASK_WAITS =
+  "On a plan task, do not ask the user and do not take the checkout over: that chat is at work, so this one waits. Call magister_update_plan_item_status with status blocked, waiting_for_repository true and a blocked_reason saying what waits on the repository, then end your turn: Magister continues the task once the checkout is free.";
+
 function anotherChatWorkingError(full: string, seen: number, clean: boolean): CheckoutError {
   return new CheckoutError(
     `Another chat in this project is working in the checkout of ${full}; it last worked there ${since(seen)}.`,
     409,
     clean
-      ? `${SHARED_CHECKOUT} Tell the user, and wait for that chat to finish. If the user confirms it has, retry checkout_repo with discard_local_changes=true to take the checkout over: it holds no uncommitted or unpushed work.`
-      : `${SHARED_CHECKOUT} Tell the user another chat is working in this repository, and wait for it to finish. ${UNATTRIBUTED_CHANGES}`,
+      ? `${SHARED_CHECKOUT} ${PLAN_TASK_WAITS} In a conversation with the user, tell them, and wait for that chat to finish. If the user confirms it has, retry checkout_repo with discard_local_changes=true to take the checkout over: it holds no uncommitted or unpushed work.`
+      : `${SHARED_CHECKOUT} ${PLAN_TASK_WAITS} In a conversation with the user, tell them another chat is working in this repository, and wait for it to finish. ${UNATTRIBUTED_CHANGES}`,
   );
 }
 

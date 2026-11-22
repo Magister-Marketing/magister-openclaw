@@ -953,9 +953,15 @@ describe("two chats sharing one checkout", () => {
     await checkoutRepository(request({ session: "chat-a" }));
 
     // Clean, but chat A checked it out moments ago and is about to edit it.
+    // A plan task waits for it, and Magister continues the task later: nobody
+    // is asked to say when chat A is done.
+    const waits = expect.stringMatching(
+      /plan task.*waiting_for_repository true.*Magister continues the task/s,
+    );
     await expect(checkoutRepository(request({ session: "chat-b" }))).rejects.toMatchObject({
       statusCode: 409,
       message: expect.stringMatching(/another chat/i),
+      userAction: waits,
     });
 
     fs.writeFileSync(path.join(repoDir, "README.md"), "chat A's edit\n");
@@ -963,7 +969,11 @@ describe("two chats sharing one checkout", () => {
     // explicit discard from chat B may take.
     await expect(
       prepareRepoCommit(prepare({ message: "Chat B", session: "chat-b" })),
-    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/another chat/i) });
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringMatching(/another chat/i),
+      userAction: waits,
+    });
     await expect(
       checkoutRepository(request({ discard_local_changes: true, session: "chat-b" })),
     ).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/another chat/i) });
