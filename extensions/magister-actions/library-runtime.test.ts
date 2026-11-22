@@ -1328,3 +1328,179 @@ describe("review fixes (PR 2210)", () => {
     expect(gateway.commits).toHaveLength(0);
   });
 });
+
+describe("the lock's queue (2026-11-22: sixteen tasks started at once)", () => {
+  function deferred() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  }
+
+  it("lets a waiting writer in before readers that came after it", async () => {
+    const directory = path.join(workspace, "lock-order");
+    const order: string[] = [];
+    const firstIn = deferred();
+    const releaseFirst = deferred();
+    const first = withLibraryLock(directory, "shared", async () => {
+      order.push("reader-1");
+      firstIn.resolve();
+      await releaseFirst.promise;
+    });
+    await firstIn.promise;
+    const writer = withLibraryLock(directory, "exclusive", async () => {
+      order.push("writer");
+    });
+    await sleep(20);
+    // Overlapping readers used to keep a polling writer out for good.
+    const second = withLibraryLock(directory, "shared", async () => {
+      order.push("reader-2");
+    });
+    await sleep(20);
+    expect(order).toEqual(["reader-1"]);
+    releaseFirst.resolve();
+    await Promise.all([first, writer, second]);
+    expect(order).toEqual(["reader-1", "writer", "reader-2"]);
+  });
+
+  it("drops a writer that gave up, and lets the readers behind it in", async () => {
+    const directory = path.join(workspace, "lock-timeout");
+    const firstIn = deferred();
+    const releaseFirst = deferred();
+    const first = withLibraryLock(directory, "shared", async () => {
+      firstIn.resolve();
+      await releaseFirst.promise;
+    });
+    await firstIn.promise;
+    const writer = withLibraryLock(directory, "exclusive", async () => {}, 50);
+    const reader = withLibraryLock(directory, "shared", async () => "read");
+    await expect(writer).rejects.toThrow("Library lock timed out");
+    await expect(reader).resolves.toBe("read");
+    releaseFirst.resolve();
+    await first;
+  });
+
+  it("runs a holder's nested read under its own lock, and refuses an upgrade at once", async () => {
+    const directory = path.join(workspace, "lock-nest");
+    const inside = deferred();
+    const proceed = deferred();
+    const reader = withLibraryLock(directory, "shared", async () => {
+      inside.resolve();
+      await proceed.promise;
+      // A writer is waiting now: a nested read must not queue behind it.
+      const nested = await withLibraryLock(directory, "shared", async () => "nested", 200);
+      await expect(withLibraryLock(directory, "exclusive", async () => {}, 200)).rejects.toThrow(
+        "held for reading by this task",
+      );
+      return nested;
+    });
+    await inside.promise;
+    const writer = withLibraryLock(directory, "exclusive", async () => "wrote");
+    await sleep(20);
+    proceed.resolve();
+    await expect(reader).resolves.toBe("nested");
+    await expect(writer).resolves.toBe("wrote");
+  });
+
+  it("queues work its holder left running after it returned", async () => {
+    const directory = path.join(workspace, "lock-late");
+    const order: string[] = [];
+    let late!: Promise<void>;
+    await withLibraryLock(directory, "exclusive", async () => {
+      late = new Promise<void>((resolve, reject) => {
+        setTimeout(() => {
+          withLibraryLock(directory, "exclusive", async () => {
+            order.push("late");
+          }).then(resolve, reject);
+        }, 30);
+      });
+    });
+    const other = withLibraryLock(directory, "exclusive", async () => {
+      order.push("other-start");
+      await sleep(60);
+      order.push("other-end");
+    });
+    await Promise.all([late, other]);
+    expect(order).toEqual(["other-start", "other-end", "late"]);
+  });
+});
+
+describe("a burst of turns (2026-11-22)", () => {
+  function contextReadyCalls(gate?: Promise<void>) {
+    let calls = 0;
+    const original = gateway.request;
+    gateway.request = (async (
+      method: "GET" | "POST",
+      endpoint: string,
+      values?: Record<string, unknown>,
+    ) => {
+      if (endpoint === "/context-ready") {
+        calls += 1;
+        await gate;
+      }
+      return original(method, endpoint, values);
+    }) as typeof gateway.request;
+    return () => calls;
+  }
+
+  it("admits sixteen turns with at most two crossings, and each run setup reuses its own", async () => {
+    const count = contextReadyCalls();
+    const turns = Array.from({ length: 16 }, (_, index) => `turn-${index}`);
+    const admitted = await Promise.all(
+      turns.map((turnId) => runtime.admit({ fromGateway: true, turnId })),
+    );
+    expect(admitted.every(Boolean)).toBe(true);
+    expect(count()).toBeLessThanOrEqual(2);
+    const crossings = count();
+    await Promise.all(turns.map((turnId) => runtime.admit({ turnId })));
+    expect(count()).toBe(crossings);
+  });
+
+  it("serves turns that ask during a crossing with one crossing that starts after them", async () => {
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const count = contextReadyCalls(gate);
+    const early = runtime.admit({ fromGateway: true, turnId: "early" });
+    await vi.waitFor(() => expect(count()).toBe(1));
+    const late = Promise.all([
+      runtime.admit({ fromGateway: true, turnId: "late-1" }),
+      runtime.admit({ fromGateway: true, turnId: "late-2" }),
+    ]);
+    await sleep(20);
+    expect(count()).toBe(1);
+    open();
+    await expect(early).resolves.toBe(true);
+    await expect(late).resolves.toEqual([true, true]);
+    expect(count()).toBe(2);
+  });
+
+  it("does not fail a file read when a turn's publication fails", async () => {
+    gateway.put("resources/a.md", "hello");
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const original = gateway.request;
+    gateway.request = (async (
+      method: "GET" | "POST",
+      endpoint: string,
+      values?: Record<string, unknown>,
+    ) => {
+      if (endpoint === "/context-ready") {
+        await gate;
+        throw new LibraryHttpError(503, { detail: { code: "publication_pending" } });
+      }
+      return original(method, endpoint, values);
+    }) as typeof gateway.request;
+    const turn = runtime.admit({ fromGateway: true, turnId: "turn-1" });
+    const reading = read("resources/a.md");
+    await sleep(20);
+    open();
+    await expect(turn).rejects.toThrow();
+    const result = await reading;
+    expect(JSON.stringify(result.content)).toContain("hello");
+  });
+});
