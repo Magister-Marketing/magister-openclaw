@@ -930,6 +930,9 @@ describe("two chats sharing one checkout", () => {
     });
     expect(refusal?.message).toContain(frozen.commit_sha.slice(0, 12));
     expect(refusal?.userAction).not.toContain("discard_local_changes=true");
+    // Chat B is still at work between preparing and pushing: a plan task
+    // waits for it, as for any chat at work there.
+    expect(refusal?.userAction).toMatch(/plan task.*waiting_for_repository true/s);
   });
 
   it("refuses chat A's discard, so chat B's prepared commit survives and still pushes", async () => {
@@ -1171,9 +1174,11 @@ describe("two chats sharing one checkout", () => {
     );
     expect(refusal).toMatchObject({
       statusCode: 409,
-      message: expect.stringMatching(/another chat/i),
+      message: expect.stringMatching(/another chat.*has not worked there/i),
     });
     expect(refusal?.userAction).toContain("discard_local_changes=true");
+    // Abandoned work is the user's to decide: a plan task does not just wait.
+    expect(refusal?.userAction).not.toContain("waiting_for_repository");
 
     await expect(
       checkoutRepository(request({ discard_local_changes: true, session: "chat-b" })),

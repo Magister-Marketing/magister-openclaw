@@ -1526,15 +1526,20 @@ function anotherChatsCommitsError(
   const consequence = freezing
     ? "A commit here would be stacked on that chat's work and would push it too."
     : "Checking out again here would destroy that chat's work.";
+  // A chat still at work between preparing and pushing is a wait, as
+  // `anotherChatWorkingError` is; one that went quiet with its commits
+  // unpushed needs the user's decision.
   const remedy = live
-    ? `Tell the user that ${describeCommits(commits)} must first be pushed or discarded from the chat that prepared ${plural}, then retry.`
+    ? `${PLAN_TASK_WAITS} In a conversation with the user, tell them that ${describeCommits(commits)} must first be pushed or discarded from the chat that prepared ${plural}, then retry.`
     : `That chat has not worked here for over ${QUIET}. Ask the user whether to push ${describeCommits(commits)} from that chat or to drop ${plural}. Only if they choose to drop ${plural}, ${
         freezing
           ? "set aside anything this chat still needs from the checkout, because checkout_repo with discard_local_changes=true also discards every uncommitted edit; then run it, re-apply this chat's changes and prepare again."
           : "retry checkout_repo with discard_local_changes=true."
       }`;
   return new CheckoutError(
-    `Another chat in this project is working in ${full}: it prepared ${shortShas(commits)} there and has not pushed ${plural}.`,
+    live
+      ? `Another chat in this project is working in ${full}: it prepared ${shortShas(commits)} there and has not pushed ${plural} yet.`
+      : `Another chat in this project prepared ${shortShas(commits)} in ${full} and has not pushed ${plural}; it has not worked there for over ${QUIET}.`,
     409,
     `${SHARED_CHECKOUT} ${consequence} ${remedy}`,
   );
