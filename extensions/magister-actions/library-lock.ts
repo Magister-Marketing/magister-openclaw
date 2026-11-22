@@ -85,9 +85,16 @@ async function enter(key: string, mode: LockMode, deadline: number): Promise<() 
 }
 
 /** The locks the current task holds, so a nested call does not queue behind
- * itself. A holder that has returned no longer counts. */
-type Held = { mode: LockMode; released: boolean };
+ * itself. A hold ends only once nested work started under it has finished,
+ * so work left running cannot overlap the next holder. */
+type Held = { mode: LockMode; released: boolean; nested: Set<Promise<unknown>> };
 const holding = new AsyncLocalStorage<Map<string, Held>>();
+
+/** Run `fn` as if no Library lock were held: work that serves other callers
+ * (a shared admission) must not inherit the hold of whoever started it. */
+export function outsideLibraryHold<T>(fn: () => T): T {
+  return holding.exit(fn);
+}
 
 /** SQLite's OS locks supply real cross-process readers/writer exclusion and
  * release on process death (the context materializer takes the same lock). No
@@ -105,7 +112,11 @@ export async function withLibraryLock<T>(
     // A task already inside the lock runs nested work under it: a shared hold
     // covers reads, an exclusive one covers everything.
     if (current.mode === "exclusive" || mode === "shared") {
-      return run();
+      const nested = (async () => run())();
+      current.nested.add(nested);
+      const forget = () => current.nested.delete(nested);
+      nested.then(forget, forget);
+      return nested;
     }
     // Upgrading would wait for this task's own read to end: it never can.
     throw new Error("temporarily_unavailable: Library lock is held for reading by this task");
@@ -153,19 +164,30 @@ export async function withLibraryLock<T>(
       }
     });
     held = true;
-    const marker: Held = { mode, released: false };
+    const marker: Held = { mode, released: false, nested: new Set() };
     const scope = new Map(holding.getStore() ?? []);
     scope.set(key, marker);
     try {
       return await holding.run(scope, run);
     } finally {
+      while (marker.nested.size > 0) {
+        await Promise.allSettled(marker.nested);
+      }
       marker.released = true;
     }
   } finally {
-    if (held) {
-      db?.exec("ROLLBACK");
+    // The queue slot is freed whatever SQLite does: a leaked slot would block
+    // this lock for the rest of the process.
+    try {
+      if (held) {
+        db?.exec("ROLLBACK");
+      }
+    } finally {
+      try {
+        db?.close();
+      } finally {
+        leave();
+      }
     }
-    db?.close();
-    leave();
   }
 }

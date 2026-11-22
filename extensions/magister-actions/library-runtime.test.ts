@@ -3,6 +3,7 @@ import { once } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { createReadTool, createWriteTool, createEditTool } from "@mariozechner/pi-coding-agent";
 import type {
   AnyAgentTool,
@@ -1502,5 +1503,106 @@ describe("a burst of turns (2026-11-22)", () => {
     await expect(turn).rejects.toThrow();
     const result = await reading;
     expect(JSON.stringify(result.content)).toContain("hello");
+  });
+});
+
+describe("the burst fix, reviewed", () => {
+  function gatedContextReady(fail: () => boolean) {
+    let calls = 0;
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const original = gateway.request;
+    gateway.request = (async (
+      method: "GET" | "POST",
+      endpoint: string,
+      values?: Record<string, unknown>,
+    ) => {
+      if (endpoint === "/context-ready") {
+        calls += 1;
+        await gate;
+        if (fail()) {
+          throw new LibraryHttpError(503, { detail: { code: "publication_pending" } });
+        }
+      }
+      return original(method, endpoint, values);
+    }) as typeof gateway.request;
+    return { count: () => calls, open };
+  }
+
+  it("serves a run setup whose turn already crossed when another turn's crossing fails", async () => {
+    await runtime.admit({ fromGateway: true, turnId: "crossed" });
+    const crossing = gatedContextReady(() => true);
+    const running = runtime.admit({ fromGateway: true, turnId: "other" });
+    await vi.waitFor(() => expect(crossing.count()).toBe(1));
+    // Both join the next pass: one needs a crossing, the other already has its own.
+    const setup = runtime.admit({ turnId: "crossed" });
+    const later = runtime.admit({ fromGateway: true, turnId: "later" });
+    await sleep(20);
+    crossing.open();
+    await expect(running).rejects.toThrow();
+    await expect(later).rejects.toThrow();
+    await expect(setup).resolves.toBe(true);
+  });
+
+  it("runs a pass started inside a read hold outside that hold", async () => {
+    let inside!: Promise<boolean>;
+    await withLibraryLock(path.join(runtime.store.directory, "lock"), "shared", async () => {
+      inside = runtime.admit({ turnId: "started-under-a-read" });
+      await sleep(20);
+    });
+    await expect(inside).resolves.toBe(true);
+  });
+
+  it("stops a caller waiting after its own deadline, however long the pass ahead runs", async () => {
+    runtime.admissionWaitMs = 50;
+    const crossing = gatedContextReady(() => false);
+    const first = runtime.admit({ fromGateway: true, turnId: "slow" });
+    await vi.waitFor(() => expect(crossing.count()).toBe(1));
+    await expect(runtime.admit({ fromGateway: true, turnId: "patient" })).rejects.toThrow(
+      "Library lock timed out",
+    );
+    crossing.open();
+    await expect(first).resolves.toBe(true);
+  });
+
+  it("ends a hold only after nested work started under it", async () => {
+    const directory = path.join(workspace, "lock-drain");
+    const order: string[] = [];
+    await withLibraryLock(directory, "exclusive", async () => {
+      void withLibraryLock(directory, "exclusive", async () => {
+        order.push("nested-start");
+        await sleep(50);
+        order.push("nested-end");
+      });
+    });
+    await withLibraryLock(directory, "exclusive", async () => {
+      order.push("next");
+    });
+    expect(order).toEqual(["nested-start", "nested-end", "next"]);
+  });
+
+  it("frees its place in the queue when SQLite cannot roll back", async () => {
+    const directory = path.join(workspace, "lock-rollback");
+    const exec = DatabaseSync.prototype.exec;
+    let failed = false;
+    vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function (
+      this: DatabaseSync,
+      sql: string,
+    ) {
+      if (sql === "ROLLBACK" && !failed) {
+        failed = true;
+        throw new Error("disk I/O error");
+      }
+      return exec.call(this, sql);
+    });
+    await expect(withLibraryLock(directory, "exclusive", async () => "first")).rejects.toThrow(
+      "disk I/O error",
+    );
+    vi.restoreAllMocks();
+    await expect(withLibraryLock(directory, "exclusive", async () => "next", 200)).resolves.toBe(
+      "next",
+    );
   });
 });
