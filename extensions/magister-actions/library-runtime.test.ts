@@ -1606,3 +1606,87 @@ describe("the burst fix, reviewed", () => {
     );
   });
 });
+
+describe("the burst fix, reviewed again", () => {
+  it("takes a pass out of the lock's queue once every caller stopped waiting", async () => {
+    runtime.admissionWaitMs = 50;
+    const lockDir = path.join(runtime.store.directory, "lock");
+    let states = 0;
+    const original = gateway.request;
+    gateway.request = (async (
+      method: "GET" | "POST",
+      endpoint: string,
+      values?: Record<string, unknown>,
+    ) => {
+      if (endpoint === "/state") {
+        states += 1;
+      }
+      return original(method, endpoint, values);
+    }) as typeof gateway.request;
+    let release!: () => void;
+    const releaseHolder = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered!: () => void;
+    const holderIn = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const holder = withLibraryLock(lockDir, "shared", async () => {
+      entered();
+      await releaseHolder;
+    });
+    await holderIn;
+    await expect(runtime.readSnapshot(async () => "read")).rejects.toThrow(
+      "Library lock timed out",
+    );
+    await sleep(20);
+    // Nobody waits for that pass: it no longer stands between a read and the holder.
+    let readerIn = false;
+    const reader = withLibraryLock(lockDir, "shared", async () => {
+      readerIn = true;
+    });
+    await sleep(20);
+    expect(readerIn).toBe(true);
+    release();
+    await Promise.all([holder, reader]);
+    await sleep(20);
+    expect(states).toBe(0);
+  });
+
+  it("does not serve a crossed run setup as active once its pass saw the Library leave active", async () => {
+    await runtime.admit({ fromGateway: true, turnId: "crossed" });
+    let calls = 0;
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const original = gateway.request;
+    gateway.request = (async (
+      method: "GET" | "POST",
+      endpoint: string,
+      values?: Record<string, unknown>,
+    ) => {
+      if (endpoint === "/context-ready") {
+        calls += 1;
+        const call = calls;
+        await gate;
+        const answer = await original(method, endpoint, values);
+        // The second crossing publishes as the brand goes into recovery.
+        if (call === 2) {
+          gateway.state.mode = "recovery";
+        }
+        return answer;
+      }
+      return original(method, endpoint, values);
+    }) as typeof gateway.request;
+    const running = runtime.admit({ fromGateway: true, turnId: "other" });
+    await vi.waitFor(() => expect(calls).toBe(1));
+    const setup = runtime.admit({ turnId: "crossed" });
+    const later = runtime.admit({ fromGateway: true, turnId: "later" });
+    await sleep(20);
+    open();
+    await expect(running).resolves.toBe(true);
+    await expect(later).rejects.toThrow("Library state changed");
+    await expect(setup).resolves.toBe(false);
+  });
+});

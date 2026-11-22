@@ -44,6 +44,8 @@ type AdmissionCaller = {
   refresh: boolean;
   turn: TurnAdmission;
   readonly done: boolean;
+  /** When this caller stops waiting for its pass to take the lock. */
+  readonly deadline: number;
   /** The pass holds the lock: this caller's wait is over. */
   started(): void;
   serve(admission: Admission | undefined): void;
@@ -75,6 +77,7 @@ function admissionCaller(
   const caller: AdmissionCaller = {
     refresh,
     turn,
+    deadline: Date.now() + waitMs,
     get done() {
       return done;
     },
@@ -236,8 +239,12 @@ export class LibraryRuntime {
   ) {
     this.store = new LibraryStore(workspace, bridge);
   }
-  private lock<T>(mode: "shared" | "exclusive", run: () => Promise<T>): Promise<T> {
-    return withLibraryLock(path.join(this.store.directory, "lock"), mode, run);
+  private lock<T>(
+    mode: "shared" | "exclusive",
+    run: () => Promise<T>,
+    timeoutMs?: number,
+  ): Promise<T> {
+    return withLibraryLock(path.join(this.store.directory, "lock"), mode, run, timeoutMs);
   }
   private marker(name: "activation" | "shadow"): string {
     return path.join(this.store.directory, `${name}.json`);
@@ -421,14 +428,27 @@ export class LibraryRuntime {
     if (callers.length === 0) {
       return;
     }
+    // The pass waits in the lock's queue only while one of its callers does:
+    // a pass nobody waits for would hold up every read queued behind it.
+    const waitMs = Math.max(...callers.map((caller) => caller.deadline)) - Date.now();
+    if (waitMs <= 0) {
+      return;
+    }
     try {
-      await this.lock("exclusive", async () => {
-        const waiting = callers.filter((caller) => !caller.done);
-        for (const caller of waiting) {
-          caller.started();
-        }
-        await this.crossBarrier(waiting);
-      });
+      await this.lock(
+        "exclusive",
+        async () => {
+          const waiting = callers.filter((caller) => !caller.done);
+          if (waiting.length === 0) {
+            return;
+          }
+          for (const caller of waiting) {
+            caller.started();
+          }
+          await this.crossBarrier(waiting);
+        },
+        waitMs,
+      );
     } catch (error) {
       for (const caller of callers) {
         caller.fail(error);
@@ -457,14 +477,8 @@ export class LibraryRuntime {
       serveAll(undefined);
       return;
     }
-    if (state?.mode === "recovery") {
-      this.active = false;
-      serveAll({ mode: "recovery", state, cache: await this.store.cache() });
-      return;
-    }
     if (!state || state.mode !== "active") {
-      this.active = false;
-      serveAll(undefined);
+      await this.serveInactive(callers, state);
       return;
     }
     // Run setup of a turn the Gateway already admitted: that admission
@@ -476,13 +490,10 @@ export class LibraryRuntime {
     const needing = callers.filter((caller) => caller.refresh && !crossed(caller));
     let served = callers;
     if (needing.length > 0) {
+      let published = false;
       try {
         await this.bridge.request("POST", "/context-ready", { project_id: state.project_id });
-        const next = await this.state();
-        if (!next || next.mode !== "active") {
-          throw new Error("Library state changed during context admission");
-        }
-        state = next;
+        published = true;
       } catch (error) {
         // A run setup whose turn already crossed needs none of this: it is
         // served from the state its barrier was checked against.
@@ -493,6 +504,22 @@ export class LibraryRuntime {
         if (served.length === 0) {
           return;
         }
+      }
+      if (published) {
+        const next = await this.state();
+        if (!next || next.mode !== "active") {
+          // The Library left active: nobody is served from the state before.
+          const changed = new Error("Library state changed during context admission");
+          for (const caller of needing) {
+            caller.fail(changed);
+          }
+          await this.serveInactive(
+            callers.filter((caller) => !needing.includes(caller)),
+            next,
+          );
+          return;
+        }
+        state = next;
       }
     }
     // /context-ready publishes the required context (audit, brand, plan,
@@ -514,6 +541,21 @@ export class LibraryRuntime {
     this.active = true;
     const admission: Admission = { mode: "active", state, cache };
     for (const caller of served) {
+      caller.serve(admission);
+    }
+  }
+  /** Callers admitted while the Library is not active: recovery admits the
+   * turn without Library authority; legacy or shadow storage answers none. */
+  private async serveInactive(
+    callers: AdmissionCaller[],
+    state: LibraryState | undefined,
+  ): Promise<void> {
+    this.active = false;
+    const admission: Admission | undefined =
+      state?.mode === "recovery"
+        ? { mode: "recovery", state, cache: await this.store.cache() }
+        : undefined;
+    for (const caller of callers) {
       caller.serve(admission);
     }
   }
