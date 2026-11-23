@@ -455,16 +455,27 @@ describe("brokered checkout against a real repository", () => {
     );
     expect(refusal).toMatchObject({
       statusCode: 409,
-      message: expect.stringMatching(/this chat holds it.*Changed: .*README\.md.*pages\//s),
+      message: expect.stringMatching(/uncommitted changes in 2 paths, and this chat holds it/),
     });
     expect(refusal?.message).not.toMatch(/own edits/);
     expect(refusal?.userAction).toMatch(
-      /If every path listed is one this chat created or edited.*do not ask the user.*magister_prepare_repo_commit/s,
+      /^Changed \(2 paths\): README\.md, pages\/automation\/page\.tsx\. .*If every one of the 2 paths listed is one this chat created or edited.*do not ask the user.*magister_prepare_repo_commit/s,
     );
-    expect(refusal?.userAction).toMatch(
-      /If any path is not one this chat created or edited, ask the user/,
-    );
+    expect(refusal?.userAction).toMatch(/If any is not, or fewer are listed, ask the user/);
+    // Whole, as the Gateway passes it on (it cuts the rest silently).
+    expect(refusal?.message.length).toBeLessThanOrEqual(300);
+    expect(refusal?.userAction?.length).toBeLessThanOrEqual(1000);
     expect(fs.readFileSync(path.join(page, "page.tsx"), "utf8")).toBe("export default 1;\n");
+
+    // A list the Gateway could not pass on whole is never offered: a commit
+    // takes every change, so the chat must have seen each one.
+    for (let i = 0; i < 30; i += 1) {
+      fs.writeFileSync(path.join(repoDir, `generated-report-section-${i}.md`), "x\n");
+    }
+    await expect(checkoutRepository(request({ session: "chat-a" }))).rejects.toMatchObject({
+      statusCode: 409,
+      userAction: expect.stringMatching(/^Ask the user whether to keep or discard/),
+    });
 
     // A call that names no chat cannot be placed: the person decides.
     await expect(checkoutRepository(request())).rejects.toMatchObject({

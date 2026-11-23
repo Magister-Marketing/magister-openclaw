@@ -1568,22 +1568,31 @@ function since(seen: number): string {
   return minutes < 1 ? "less than a minute ago" : `${minutes} minute(s) ago`;
 }
 
-/** The most changed paths a refusal lists for the caller to check one by one;
- *  past it the caller cannot check them all, and the person decides. */
-const HELD_CHANGES_LISTED = 100;
+/** What the Gateway passes on of a refusal (`_failed` and the `user_action`
+ *  bound in gateway/app/actions/repo_checkout.py): the rest is cut, silently. */
+const RELAYED_MESSAGE_CHARS = 300;
+const RELAYED_USER_ACTION_CHARS = 1000;
 
-/** A refresh refused over uncommitted edits in a checkout this chat holds.
+/** A refresh refused over uncommitted edits in a checkout this chat holds, or
+ *  null when the whole list would not reach the model (the person decides).
  *  No other chat has taken a repository step there since, but a file edit
  *  names no chat (see "Chats sharing a checkout"), so this never says whose
- *  the edits are: it lists them for the chat to check against what it edited
- *  itself. Telling every chat to ask the person stopped a plan task that had
- *  just been approved, on its own new page (2026-11-23). */
-function heldChangesError(full: string, holder: CheckoutHolder, changed: string[]): CheckoutError {
-  return new CheckoutError(
-    `The existing checkout of ${full} has uncommitted changes, and this chat holds it: no other chat has taken a repository step there since this chat did, ${since(Date.parse(holder.at))}. Changed: ${changed.join(", ")}.`,
-    409,
-    "File edits do not record which chat made them, so check the list against what this chat did. If every path listed is one this chat created or edited in an earlier turn, keep them and carry on: do not ask the user, do not check out again before they are pushed, and commit them with magister_prepare_repo_commit and push them with magister_push_repo_branch as the task needs. If any path is not one this chat created or edited, ask the user whether to keep or discard that work; retry with discard_local_changes=true only if they choose to discard it.",
-  );
+ *  the edits are: it lists every one for the chat to check against what it
+ *  did, and the commit takes them all, so a list cut short would hand it
+ *  paths it never saw. Telling every chat to ask the person stopped a plan
+ *  task that had just been approved, on its own new page (2026-11-23). */
+function heldChangesError(
+  full: string,
+  holder: CheckoutHolder,
+  changed: string[],
+): CheckoutError | null {
+  const count = changed.length === 1 ? "1 path" : `${changed.length} paths`;
+  const message = `The existing checkout of ${full} has uncommitted changes in ${count}, and this chat holds it: no other chat has taken a repository step there since this chat did, ${since(Date.parse(holder.at))}.`;
+  const userAction = `Changed (${count}): ${changed.join(", ")}. File edits do not record which chat made them. If every one of the ${count} listed is one this chat created or edited in an earlier turn, keep them and carry on: do not ask the user or check out again before they are pushed; commit them with magister_prepare_repo_commit and push with magister_push_repo_branch. If any is not, or fewer are listed, ask the user whether to keep or discard that work; retry with discard_local_changes=true only if they choose to discard it.`;
+  if (message.length > RELAYED_MESSAGE_CHARS || userAction.length > RELAYED_USER_ACTION_CHARS) {
+    return null;
+  }
+  return new CheckoutError(message, 409, userAction);
 }
 
 /** How a chat takes over a checkout that has changes nobody can attribute.
@@ -2265,15 +2274,18 @@ async function performCheckout(request: CheckoutRequest): Promise<CheckoutReceip
       }
       if (changed.length > 0) {
         if (!request.discard_local_changes) {
-          throw session !== undefined &&
-            marker?.holder?.session === session &&
-            changed.length <= HELD_CHANGES_LISTED
-            ? heldChangesError(full, marker.holder, changed)
-            : new CheckoutError(
-                `The existing checkout of ${full} has uncommitted changes.`,
-                409,
-                "Ask the user whether to keep or discard that work; retry with discard_local_changes=true only if they choose to discard it.",
-              );
+          const held =
+            session !== undefined && marker?.holder?.session === session
+              ? heldChangesError(full, marker.holder, changed)
+              : null;
+          throw (
+            held ??
+            new CheckoutError(
+              `The existing checkout of ${full} has uncommitted changes.`,
+              409,
+              "Ask the user whether to keep or discard that work; retry with discard_local_changes=true only if they choose to discard it.",
+            )
+          );
         }
         await runGit(["reset", "--hard"], { cwd: repoDir, timeoutMs: GIT_COMMAND_TIMEOUT_MS });
         await runGit(["clean", "-fdx"], { cwd: repoDir, timeoutMs: GIT_COMMAND_TIMEOUT_MS });
@@ -3554,7 +3566,7 @@ async function performInstall(request: InstallRequest): Promise<InstallReceipt> 
   // hold over it would make it read as this chat's.
   const takesHold =
     session !== undefined &&
-    (marker?.holder !== undefined ||
+    (typeof marker?.holder?.session === "string" ||
       (unpushedCommits(marker).length === 0 && (await changedPaths(repoDir)).length === 0));
   const { project, projectDir } = await projectDirectory(repoDir, full, request.path ?? "");
   const others = (await findPackageProjects(repoDir)).filter((rel) => rel !== project);
