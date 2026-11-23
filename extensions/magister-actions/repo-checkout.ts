@@ -1568,19 +1568,21 @@ function since(seen: number): string {
   return minutes < 1 ? "less than a minute ago" : `${minutes} minute(s) ago`;
 }
 
-/** A refresh refused over uncommitted edits in a checkout this chat holds:
- *  no other chat has checked it out, prepared, pushed or installed in it
- *  since this one did, so the edits are this chat's own from an earlier
- *  turn. Telling it to ask the person whether to keep them stopped a plan
- *  task that had just been approved: its own new page read as somebody
- *  else's work (2026-11-23). */
-function ownEditsError(full: string, holder: CheckoutHolder, changed: string[]): CheckoutError {
-  const shown = changed.slice(0, 5).join(", ");
-  const more = changed.length > 5 ? ` and ${changed.length - 5} more` : "";
+/** The most changed paths a refusal lists for the caller to check one by one;
+ *  past it the caller cannot check them all, and the person decides. */
+const HELD_CHANGES_LISTED = 100;
+
+/** A refresh refused over uncommitted edits in a checkout this chat holds.
+ *  No other chat has taken a repository step there since, but a file edit
+ *  names no chat (see "Chats sharing a checkout"), so this never says whose
+ *  the edits are: it lists them for the chat to check against what it edited
+ *  itself. Telling every chat to ask the person stopped a plan task that had
+ *  just been approved, on its own new page (2026-11-23). */
+function heldChangesError(full: string, holder: CheckoutHolder, changed: string[]): CheckoutError {
   return new CheckoutError(
-    `The existing checkout of ${full} has uncommitted changes (${shown}${more}), and this chat holds it: no other chat has taken it since this one did, ${since(Date.parse(holder.at))}.`,
+    `The existing checkout of ${full} has uncommitted changes, and this chat holds it: no other chat has taken a repository step there since this chat did, ${since(Date.parse(holder.at))}. Changed: ${changed.join(", ")}.`,
     409,
-    "These are this chat's own edits from an earlier turn. Keep them and carry on from them: do not ask the user whether to keep them, and do not check out again before they are pushed. Commit them with magister_prepare_repo_commit and push them with magister_push_repo_branch as the task needs. Retry with discard_local_changes=true only to throw this chat's own edits away.",
+    "File edits do not record which chat made them, so check the list against what this chat did. If every path listed is one this chat created or edited in an earlier turn, keep them and carry on: do not ask the user, do not check out again before they are pushed, and commit them with magister_prepare_repo_commit and push them with magister_push_repo_branch as the task needs. If any path is not one this chat created or edited, ask the user whether to keep or discard that work; retry with discard_local_changes=true only if they choose to discard it.",
   );
 }
 
@@ -2263,8 +2265,10 @@ async function performCheckout(request: CheckoutRequest): Promise<CheckoutReceip
       }
       if (changed.length > 0) {
         if (!request.discard_local_changes) {
-          throw session !== undefined && marker?.holder?.session === session
-            ? ownEditsError(full, marker.holder, changed)
+          throw session !== undefined &&
+            marker?.holder?.session === session &&
+            changed.length <= HELD_CHANGES_LISTED
+            ? heldChangesError(full, marker.holder, changed)
             : new CheckoutError(
                 `The existing checkout of ${full} has uncommitted changes.`,
                 409,
@@ -3076,8 +3080,14 @@ async function pushFrozenCommit(
   const recordPush = async () => {
     const pushedAt = new Date().toISOString();
     // Pushing its own commit keeps a chat's hold, marked as a push so the
-    // checkout frees itself once nothing is left uncommitted or unpushed.
-    const own = request.session !== undefined && frozen.session === request.session;
+    // checkout frees itself once nothing is left uncommitted or unpushed. It
+    // never takes the hold back: another chat may have checked out since (a
+    // retried push of an earlier commit), and its edits would then count as
+    // this chat's.
+    const own =
+      request.session !== undefined &&
+      frozen.session === request.session &&
+      marker?.holder?.session === request.session;
     await stampMarker(repoDir, full, {
       pushed: trimHistory([
         ...(marker?.pushed ?? []).filter((entry) => entry.branch !== request.branch),
@@ -3538,6 +3548,14 @@ async function performInstall(request: InstallRequest): Promise<InstallReceipt> 
       throw anotherChatsLeftWorkError(full, others.seen, "Installing dependencies");
     }
   }
+  // The install takes the hold: past the check above, the caller holds it or
+  // its holder has finished. With no holder recorded, any uncommitted or
+  // unpushed work here was made by calls nobody could place, and taking the
+  // hold over it would make it read as this chat's.
+  const takesHold =
+    session !== undefined &&
+    (marker?.holder !== undefined ||
+      (unpushedCommits(marker).length === 0 && (await changedPaths(repoDir)).length === 0));
   const { project, projectDir } = await projectDirectory(repoDir, full, request.path ?? "");
   const others = (await findPackageProjects(repoDir)).filter((rel) => rel !== project);
   const otherProjects = others.slice(0, OTHER_PROJECTS_SHOWN);
@@ -3678,7 +3696,7 @@ async function performInstall(request: InstallRequest): Promise<InstallReceipt> 
       started_at: startedAt,
     },
     ...keep,
-    ...(session ? { holder: { session, at: startedAt, op: "install" as const } } : {}),
+    ...(session && takesHold ? { holder: { session, at: startedAt, op: "install" as const } } : {}),
   });
   // Detached on purpose — see runInstall. The in-process repository lock is
   // held for the install's whole duration so a freeze or push cannot start

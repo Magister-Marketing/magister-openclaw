@@ -438,25 +438,32 @@ describe("brokered checkout against a real repository", () => {
     expect(fs.readFileSync(path.join(repoDir, "README.md"), "utf8")).toBe("local edit\n");
   });
 
-  it("tells the chat holding the checkout that its uncommitted edits are its own", async () => {
+  it("lists the changes in a checkout the caller holds for it to check against its own", async () => {
     const { repoDir } = upstreamAndCheckout();
     await checkoutRepository(request({ session: "chat-a" }));
     const page = path.join(repoDir, "pages", "automation");
     fs.mkdirSync(page, { recursive: true });
     fs.writeFileSync(path.join(page, "page.tsx"), "export default 1;\n");
+    fs.writeFileSync(path.join(repoDir, "README.md"), "edited\n");
 
     // A later turn of the same chat (an approved plan task) checks out again.
-    // The edits are its own: carry on from them, never ask the person.
+    // A file edit names no chat, so the refusal never says whose these are:
+    // it lists every path, and the chat carries on only if all are its own.
     const refusal = await checkoutRepository(request({ session: "chat-a" })).then(
       () => null,
       (err: unknown) => err as CheckoutError,
     );
     expect(refusal).toMatchObject({
       statusCode: 409,
-      message: expect.stringMatching(/uncommitted changes \(pages\/.*this chat holds it/s),
+      message: expect.stringMatching(/this chat holds it.*Changed: .*README\.md.*pages\//s),
     });
-    expect(refusal?.userAction).toMatch(/this chat's own edits.*magister_prepare_repo_commit/s);
-    expect(refusal?.userAction).not.toMatch(/Ask the user whether/);
+    expect(refusal?.message).not.toMatch(/own edits/);
+    expect(refusal?.userAction).toMatch(
+      /If every path listed is one this chat created or edited.*do not ask the user.*magister_prepare_repo_commit/s,
+    );
+    expect(refusal?.userAction).toMatch(
+      /If any path is not one this chat created or edited, ask the user/,
+    );
     expect(fs.readFileSync(path.join(page, "page.tsx"), "utf8")).toBe("export default 1;\n");
 
     // A call that names no chat cannot be placed: the person decides.
@@ -1277,6 +1284,79 @@ describe("two chats sharing one checkout", () => {
     await expect(
       checkoutRepository(request({ discard_local_changes: true, session: "chat-b" })),
     ).resolves.toMatchObject({ repo: "acme/site" });
+  });
+
+  it("never gives the hold back to a chat that pushes again after another chat checked out", async () => {
+    const { repoDir } = bareUpstreamAndCheckout();
+    const holder = () =>
+      JSON.parse(fs.readFileSync(path.join(repoDir, ".git", "magister-checkout.json"), "utf8"))
+        .holder?.session;
+    await checkoutRepository(request({ session: "chat-a" }));
+    fs.writeFileSync(path.join(repoDir, "a.md"), "chat A's edit\n");
+    const frozen = await prepareRepoCommit(prepare({ message: "Chat A", session: "chat-a" }));
+    const pushA = push({
+      commit_sha: frozen.commit_sha,
+      branch: "magister/feat",
+      session: "chat-a",
+    });
+    await pushRepoBranch(pushA);
+
+    // Pushed and clean, so chat B may take the checkout at once.
+    await checkoutRepository(request({ session: "chat-b", ref: "magister/feat" }));
+    expect(holder()).toBe("chat-b");
+    fs.writeFileSync(path.join(repoDir, "b.md"), "chat B's edit\n");
+
+    // A retry of chat A's push finds its commit there: it keeps no hold it
+    // lost, so chat B's edit never reads as chat A's.
+    await expect(pushRepoBranch(pushA)).resolves.toMatchObject({ status: "already_pushed" });
+    expect(holder()).toBe("chat-b");
+    await expect(checkoutRepository(request({ session: "chat-a" }))).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringMatching(/another chat/i),
+    });
+  });
+
+  it("takes no hold with an install over work no chat is recorded for", async () => {
+    const { repoDir, root } = upstreamAndCheckout();
+    fakeLauncher(root);
+    const holder = () =>
+      JSON.parse(fs.readFileSync(path.join(repoDir, ".git", "magister-checkout.json"), "utf8"))
+        .holder?.session;
+    fs.writeFileSync(path.join(repoDir, "package-lock.json"), '{"lockfileVersion":3}');
+    git(repoDir, "add", "package-lock.json");
+    git(repoDir, "commit", "--quiet", "-m", "lockfile");
+    // An edit made by a call the host could not place: nobody holds the checkout.
+    fs.writeFileSync(path.join(repoDir, "unplaced.md"), "whose?\n");
+
+    try {
+      await expect(
+        installRepoDependencies({ ...install(), session: "chat-a" } as Parameters<
+          typeof installRepoDependencies
+        >[0]),
+      ).resolves.toMatchObject({ status: "installing" });
+    } finally {
+      await awaitRepositoryIdle("github", "acme/site");
+    }
+    expect(holder()).toBeUndefined();
+    // So chat A's refresh is not told the edit may be its own: the person decides.
+    await expect(checkoutRepository(request({ session: "chat-a" }))).rejects.toMatchObject({
+      statusCode: 409,
+      userAction: expect.stringMatching(/^Ask the user whether to keep or discard/),
+    });
+
+    // Over a clean tree an install takes the hold as before (a new lockfile,
+    // so it is not answered from the finished one).
+    fs.rmSync(path.join(repoDir, "unplaced.md"));
+    fs.writeFileSync(path.join(repoDir, "package-lock.json"), '{"lockfileVersion":3,"v":2}');
+    git(repoDir, "commit", "--quiet", "-am", "lockfile 2");
+    try {
+      await installRepoDependencies({ ...install(), session: "chat-a" } as Parameters<
+        typeof installRepoDependencies
+      >[0]);
+    } finally {
+      await awaitRepositoryIdle("github", "acme/site");
+    }
+    expect(holder()).toBe("chat-a");
   });
 
   it("keeps another chat's dependency install out while the holder works", async () => {
