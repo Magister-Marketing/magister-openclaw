@@ -6571,13 +6571,19 @@
       "action": "install_repo_dependencies",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
-      "description": "Install a checked-out repository's dependencies from its lockfile (pnpm, npm, yarn, uv, or requirements.txt) so its tests and build can run. Answers 'installing' while the work continues; call again after poll_after_seconds until it reports installed.",
+      "description": "Install a checked-out repository's dependencies from its lockfile (pnpm, npm, yarn, uv, or requirements.txt) so its tests and build can run; path installs a package project below the root that has its own lockfile. Answers 'installing' while the work continues; call again after poll_after_seconds until it reports installed.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "natural",
       "input_schema": {
         "additionalProperties": false,
         "description": "Arguments for installing a checkout's dependencies from its lockfile.\n\nNaturally idempotent: the same lockfile installs once and every later\ncall reports ``installed``; a call while an install runs reports\n``installing`` with a poll interval rather than starting a second one.",
         "properties": {
+          "path": {
+            "description": "A package project inside the repository with its own lockfile, relative to the root (for example webapp); omit for the root. Every answer lists other_projects.",
+            "maxLength": 300,
+            "pattern": "^[^/\\x00-\\x1f\\x7f][^\\x00-\\x1f\\x7f]*$",
+            "type": "string"
+          },
           "provider": {
             "description": "Only needed when both GitHub and GitLab are connected and neither grant settles which host holds this path. Otherwise the Gateway resolves the host from the project's connections.",
             "pattern": "^(github|gitlab)$",
@@ -6658,6 +6664,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "47ce3d197523b7a0877bef13ad64a0b2e357917f52efb1940431bdba8b7e721b",
+  "registry_revision": "21e9248d54daf650e5e5b1c7fd4e5d63495e4b10f3dc791d3b49c70b9e6af984",
   "schema_version": 1
 }
