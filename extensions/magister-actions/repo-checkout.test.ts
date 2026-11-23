@@ -459,13 +459,24 @@ describe("brokered checkout against a real repository", () => {
     });
     expect(refusal?.message).not.toMatch(/own edits/);
     expect(refusal?.userAction).toMatch(
-      /^Changed \(2 paths\): README\.md, pages\/automation\/page\.tsx\. .*If every one of the 2 paths listed is one this chat created or edited.*do not ask the user.*magister_prepare_repo_commit/s,
+      /^Changed \(2 paths\): "README\.md", "pages\/automation\/page\.tsx"\. .*If every one of the 2 paths listed is one this chat created or edited.*do not ask the user.*magister_prepare_repo_commit/s,
     );
     expect(refusal?.userAction).toMatch(/If any is not, or fewer are listed, ask the user/);
     // Whole, as the Gateway passes it on (it cuts the rest silently).
     expect(refusal?.message.length).toBeLessThanOrEqual(300);
     expect(refusal?.userAction?.length).toBeLessThanOrEqual(1000);
     expect(fs.readFileSync(path.join(page, "page.tsx"), "utf8")).toBe("export default 1;\n");
+
+    // A name with ", " in it stays one quoted path, never two.
+    fs.writeFileSync(path.join(repoDir, "README.md, pages"), "x\n");
+    const tricky = await checkoutRepository(request({ session: "chat-a" })).then(
+      () => null,
+      (err: unknown) => err as CheckoutError,
+    );
+    expect(tricky?.userAction).toContain(
+      'Changed (3 paths): "README.md", "README.md, pages", "pages/automation/page.tsx".',
+    );
+    fs.rmSync(path.join(repoDir, "README.md, pages"));
 
     // A list the Gateway could not pass on whole is never offered: a commit
     // takes every change, so the chat must have seen each one.

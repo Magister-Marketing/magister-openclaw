@@ -1581,14 +1581,14 @@ const RELAYED_USER_ACTION_CHARS = 1000;
  *  did, and the commit takes them all, so a list cut short would hand it
  *  paths it never saw. Telling every chat to ask the person stopped a plan
  *  task that had just been approved, on its own new page (2026-11-23). */
-function heldChangesError(
-  full: string,
-  holder: CheckoutHolder,
-  changed: string[],
-): CheckoutError | null {
+function heldChangesError(holder: CheckoutHolder, changed: string[]): CheckoutError | null {
   const count = changed.length === 1 ? "1 path" : `${changed.length} paths`;
-  const message = `The existing checkout of ${full} has uncommitted changes in ${count}, and this chat holds it: no other chat has taken a repository step there since this chat did, ${since(Date.parse(holder.at))}.`;
-  const userAction = `Changed (${count}): ${changed.join(", ")}. File edits do not record which chat made them. If every one of the ${count} listed is one this chat created or edited in an earlier turn, keep them and carry on: do not ask the user or check out again before they are pushed; commit them with magister_prepare_repo_commit and push with magister_push_repo_branch. If any is not, or fewer are listed, ask the user whether to keep or discard that work; retry with discard_local_changes=true only if they choose to discard it.`;
+  // Without the repository's name, which the chat asked for: a long one
+  // left no room in the Gateway's 300 characters (review of a12a77708e0).
+  const message = `The checkout has uncommitted changes in ${count}, and this chat holds it: no other chat has taken a repository step there since this chat did, ${since(Date.parse(holder.at))}.`;
+  // Each path quoted: a name with ", " or a newline in it could otherwise
+  // read as more paths, or as words after the list.
+  const userAction = `Changed (${count}): ${changed.map((path) => JSON.stringify(path)).join(", ")}. File edits do not record which chat made them. If every one of the ${count} listed is one this chat created or edited in an earlier turn, keep them and carry on: do not ask the user or check out again before they are pushed; commit them with magister_prepare_repo_commit and push with magister_push_repo_branch. If any is not, or fewer are listed, ask the user whether to keep or discard that work; retry with discard_local_changes=true only if they choose to discard it.`;
   if (message.length > RELAYED_MESSAGE_CHARS || userAction.length > RELAYED_USER_ACTION_CHARS) {
     return null;
   }
@@ -2276,7 +2276,7 @@ async function performCheckout(request: CheckoutRequest): Promise<CheckoutReceip
         if (!request.discard_local_changes) {
           const held =
             session !== undefined && marker?.holder?.session === session
-              ? heldChangesError(full, marker.holder, changed)
+              ? heldChangesError(marker.holder, changed)
               : null;
           throw (
             held ??
