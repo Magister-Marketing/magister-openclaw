@@ -3,6 +3,7 @@ import { once } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { createReadTool, createWriteTool, createEditTool } from "@mariozechner/pi-coding-agent";
 import type {
   AnyAgentTool,
@@ -1326,5 +1327,410 @@ describe("review fixes (PR 2210)", () => {
     });
     await expect(attempt).rejects.toThrow(/^edit_text_not_found: /);
     expect(gateway.commits).toHaveLength(0);
+  });
+});
+
+describe("the lock's queue (2026-11-22: sixteen tasks started at once)", () => {
+  function deferred() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  }
+
+  it("lets a waiting writer in before readers that came after it", async () => {
+    const directory = path.join(workspace, "lock-order");
+    const order: string[] = [];
+    const firstIn = deferred();
+    const releaseFirst = deferred();
+    const first = withLibraryLock(directory, "shared", async () => {
+      order.push("reader-1");
+      firstIn.resolve();
+      await releaseFirst.promise;
+    });
+    await firstIn.promise;
+    const writer = withLibraryLock(directory, "exclusive", async () => {
+      order.push("writer");
+    });
+    await sleep(20);
+    // Overlapping readers used to keep a polling writer out for good.
+    const second = withLibraryLock(directory, "shared", async () => {
+      order.push("reader-2");
+    });
+    await sleep(20);
+    expect(order).toEqual(["reader-1"]);
+    releaseFirst.resolve();
+    await Promise.all([first, writer, second]);
+    expect(order).toEqual(["reader-1", "writer", "reader-2"]);
+  });
+
+  it("drops a writer that gave up, and lets the readers behind it in", async () => {
+    const directory = path.join(workspace, "lock-timeout");
+    const firstIn = deferred();
+    const releaseFirst = deferred();
+    const first = withLibraryLock(directory, "shared", async () => {
+      firstIn.resolve();
+      await releaseFirst.promise;
+    });
+    await firstIn.promise;
+    const writer = withLibraryLock(directory, "exclusive", async () => {}, 50);
+    const reader = withLibraryLock(directory, "shared", async () => "read");
+    await expect(writer).rejects.toThrow("Library lock timed out");
+    await expect(reader).resolves.toBe("read");
+    releaseFirst.resolve();
+    await first;
+  });
+
+  it("runs a holder's nested read under its own lock, and refuses an upgrade at once", async () => {
+    const directory = path.join(workspace, "lock-nest");
+    const inside = deferred();
+    const proceed = deferred();
+    const reader = withLibraryLock(directory, "shared", async () => {
+      inside.resolve();
+      await proceed.promise;
+      // A writer is waiting now: a nested read must not queue behind it.
+      const nested = await withLibraryLock(directory, "shared", async () => "nested", 200);
+      await expect(withLibraryLock(directory, "exclusive", async () => {}, 200)).rejects.toThrow(
+        "held for reading by this task",
+      );
+      return nested;
+    });
+    await inside.promise;
+    const writer = withLibraryLock(directory, "exclusive", async () => "wrote");
+    await sleep(20);
+    proceed.resolve();
+    await expect(reader).resolves.toBe("nested");
+    await expect(writer).resolves.toBe("wrote");
+  });
+
+  it("queues work its holder left running after it returned", async () => {
+    const directory = path.join(workspace, "lock-late");
+    const order: string[] = [];
+    let late!: Promise<void>;
+    await withLibraryLock(directory, "exclusive", async () => {
+      late = new Promise<void>((resolve, reject) => {
+        setTimeout(() => {
+          withLibraryLock(directory, "exclusive", async () => {
+            order.push("late");
+          }).then(resolve, reject);
+        }, 30);
+      });
+    });
+    const other = withLibraryLock(directory, "exclusive", async () => {
+      order.push("other-start");
+      await sleep(60);
+      order.push("other-end");
+    });
+    await Promise.all([late, other]);
+    expect(order).toEqual(["other-start", "other-end", "late"]);
+  });
+});
+
+describe("a burst of turns (2026-11-22)", () => {
+  function contextReadyCalls(gate?: Promise<void>) {
+    let calls = 0;
+    const original = gateway.request;
+    gateway.request = (async (
+      method: "GET" | "POST",
+      endpoint: string,
+      values?: Record<string, unknown>,
+    ) => {
+      if (endpoint === "/context-ready") {
+        calls += 1;
+        await gate;
+      }
+      return original(method, endpoint, values);
+    }) as typeof gateway.request;
+    return () => calls;
+  }
+
+  it("admits sixteen turns with at most two crossings, and each run setup reuses its own", async () => {
+    const count = contextReadyCalls();
+    const turns = Array.from({ length: 16 }, (_, index) => `turn-${index}`);
+    const admitted = await Promise.all(
+      turns.map((turnId) => runtime.admit({ fromGateway: true, turnId })),
+    );
+    expect(admitted.every(Boolean)).toBe(true);
+    expect(count()).toBeLessThanOrEqual(2);
+    const crossings = count();
+    await Promise.all(turns.map((turnId) => runtime.admit({ turnId })));
+    expect(count()).toBe(crossings);
+  });
+
+  it("serves turns that ask during a crossing with one crossing that starts after them", async () => {
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const count = contextReadyCalls(gate);
+    const early = runtime.admit({ fromGateway: true, turnId: "early" });
+    await vi.waitFor(() => expect(count()).toBe(1));
+    const late = Promise.all([
+      runtime.admit({ fromGateway: true, turnId: "late-1" }),
+      runtime.admit({ fromGateway: true, turnId: "late-2" }),
+    ]);
+    await sleep(20);
+    expect(count()).toBe(1);
+    open();
+    await expect(early).resolves.toBe(true);
+    await expect(late).resolves.toEqual([true, true]);
+    expect(count()).toBe(2);
+  });
+
+  it("does not fail a file read when a turn's publication fails", async () => {
+    gateway.put("resources/a.md", "hello");
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const original = gateway.request;
+    gateway.request = (async (
+      method: "GET" | "POST",
+      endpoint: string,
+      values?: Record<string, unknown>,
+    ) => {
+      if (endpoint === "/context-ready") {
+        await gate;
+        throw new LibraryHttpError(503, { detail: { code: "publication_pending" } });
+      }
+      return original(method, endpoint, values);
+    }) as typeof gateway.request;
+    const turn = runtime.admit({ fromGateway: true, turnId: "turn-1" });
+    const reading = read("resources/a.md");
+    await sleep(20);
+    open();
+    await expect(turn).rejects.toThrow();
+    const result = await reading;
+    expect(JSON.stringify(result.content)).toContain("hello");
+  });
+});
+
+describe("the burst fix, reviewed", () => {
+  function gatedContextReady(fail: () => boolean) {
+    let calls = 0;
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const original = gateway.request;
+    gateway.request = (async (
+      method: "GET" | "POST",
+      endpoint: string,
+      values?: Record<string, unknown>,
+    ) => {
+      if (endpoint === "/context-ready") {
+        calls += 1;
+        await gate;
+        if (fail()) {
+          throw new LibraryHttpError(503, { detail: { code: "publication_pending" } });
+        }
+      }
+      return original(method, endpoint, values);
+    }) as typeof gateway.request;
+    return { count: () => calls, open };
+  }
+
+  it("serves a run setup whose turn already crossed when another turn's crossing fails", async () => {
+    await runtime.admit({ fromGateway: true, turnId: "crossed" });
+    const crossing = gatedContextReady(() => true);
+    const running = runtime.admit({ fromGateway: true, turnId: "other" });
+    await vi.waitFor(() => expect(crossing.count()).toBe(1));
+    // Both join the next pass: one needs a crossing, the other already has its own.
+    const setup = runtime.admit({ turnId: "crossed" });
+    const later = runtime.admit({ fromGateway: true, turnId: "later" });
+    await sleep(20);
+    crossing.open();
+    await expect(running).rejects.toThrow();
+    await expect(later).rejects.toThrow();
+    await expect(setup).resolves.toBe(true);
+  });
+
+  it("runs a pass started inside a read hold outside that hold", async () => {
+    let inside!: Promise<boolean>;
+    await withLibraryLock(path.join(runtime.store.directory, "lock"), "shared", async () => {
+      inside = runtime.admit({ turnId: "started-under-a-read" });
+      await sleep(20);
+    });
+    await expect(inside).resolves.toBe(true);
+  });
+
+  it("stops a caller waiting after its own deadline, however long the pass ahead runs", async () => {
+    runtime.admissionWaitMs = 50;
+    const crossing = gatedContextReady(() => false);
+    const first = runtime.admit({ fromGateway: true, turnId: "slow" });
+    await vi.waitFor(() => expect(crossing.count()).toBe(1));
+    await expect(runtime.admit({ fromGateway: true, turnId: "patient" })).rejects.toThrow(
+      "Library lock timed out",
+    );
+    crossing.open();
+    await expect(first).resolves.toBe(true);
+  });
+
+  it("ends a hold only after nested work started under it", async () => {
+    const directory = path.join(workspace, "lock-drain");
+    const order: string[] = [];
+    await withLibraryLock(directory, "exclusive", async () => {
+      void withLibraryLock(directory, "exclusive", async () => {
+        order.push("nested-start");
+        await sleep(50);
+        order.push("nested-end");
+      });
+    });
+    await withLibraryLock(directory, "exclusive", async () => {
+      order.push("next");
+    });
+    expect(order).toEqual(["nested-start", "nested-end", "next"]);
+  });
+
+  it("frees its place in the queue when SQLite cannot roll back", async () => {
+    const directory = path.join(workspace, "lock-rollback");
+    const exec = DatabaseSync.prototype.exec;
+    let failed = false;
+    vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function (
+      this: DatabaseSync,
+      sql: string,
+    ) {
+      if (sql === "ROLLBACK" && !failed) {
+        failed = true;
+        throw new Error("disk I/O error");
+      }
+      return exec.call(this, sql);
+    });
+    await expect(withLibraryLock(directory, "exclusive", async () => "first")).rejects.toThrow(
+      "disk I/O error",
+    );
+    vi.restoreAllMocks();
+    await expect(withLibraryLock(directory, "exclusive", async () => "next", 200)).resolves.toBe(
+      "next",
+    );
+  });
+});
+
+describe("the burst fix, reviewed again", () => {
+  it("takes a pass out of the lock's queue once every caller stopped waiting", async () => {
+    runtime.admissionWaitMs = 50;
+    const lockDir = path.join(runtime.store.directory, "lock");
+    let states = 0;
+    const original = gateway.request;
+    gateway.request = (async (
+      method: "GET" | "POST",
+      endpoint: string,
+      values?: Record<string, unknown>,
+    ) => {
+      if (endpoint === "/state") {
+        states += 1;
+      }
+      return original(method, endpoint, values);
+    }) as typeof gateway.request;
+    let release!: () => void;
+    const releaseHolder = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered!: () => void;
+    const holderIn = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const holder = withLibraryLock(lockDir, "shared", async () => {
+      entered();
+      await releaseHolder;
+    });
+    await holderIn;
+    await expect(runtime.readSnapshot(async () => "read")).rejects.toThrow(
+      "Library lock timed out",
+    );
+    await sleep(20);
+    // Nobody waits for that pass: it no longer stands between a read and the holder.
+    let readerIn = false;
+    const reader = withLibraryLock(lockDir, "shared", async () => {
+      readerIn = true;
+    });
+    await sleep(20);
+    expect(readerIn).toBe(true);
+    release();
+    await Promise.all([holder, reader]);
+    await sleep(20);
+    expect(states).toBe(0);
+  });
+
+  it("does not serve a crossed run setup as active once its pass saw the Library leave active", async () => {
+    await runtime.admit({ fromGateway: true, turnId: "crossed" });
+    let calls = 0;
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const original = gateway.request;
+    gateway.request = (async (
+      method: "GET" | "POST",
+      endpoint: string,
+      values?: Record<string, unknown>,
+    ) => {
+      if (endpoint === "/context-ready") {
+        calls += 1;
+        const call = calls;
+        await gate;
+        const answer = await original(method, endpoint, values);
+        // The second crossing publishes as the brand goes into recovery.
+        if (call === 2) {
+          gateway.state.mode = "recovery";
+        }
+        return answer;
+      }
+      return original(method, endpoint, values);
+    }) as typeof gateway.request;
+    const running = runtime.admit({ fromGateway: true, turnId: "other" });
+    await vi.waitFor(() => expect(calls).toBe(1));
+    const setup = runtime.admit({ turnId: "crossed" });
+    const later = runtime.admit({ fromGateway: true, turnId: "later" });
+    await sleep(20);
+    open();
+    await expect(running).resolves.toBe(true);
+    await expect(later).rejects.toThrow("Library state changed");
+    await expect(setup).resolves.toBe(false);
+  });
+});
+
+describe("the burst fix, reviewed a third time", () => {
+  it("serves a crossed run setup when the read after another turn's crossing fails", async () => {
+    await runtime.admit({ fromGateway: true, turnId: "crossed" });
+    let crossings = 0;
+    let failNextState = false;
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const original = gateway.request;
+    gateway.request = (async (
+      method: "GET" | "POST",
+      endpoint: string,
+      values?: Record<string, unknown>,
+    ) => {
+      if (endpoint === "/context-ready") {
+        crossings += 1;
+        const call = crossings;
+        await gate;
+        const answer = await original(method, endpoint, values);
+        // The read right after the second crossing fails once.
+        if (call === 2) {
+          failNextState = true;
+        }
+        return answer;
+      }
+      if (endpoint === "/state" && failNextState) {
+        failNextState = false;
+        throw new LibraryHttpError(502, {});
+      }
+      return original(method, endpoint, values);
+    }) as typeof gateway.request;
+    const running = runtime.admit({ fromGateway: true, turnId: "other" });
+    await vi.waitFor(() => expect(crossings).toBe(1));
+    const setup = runtime.admit({ turnId: "crossed" });
+    const later = runtime.admit({ fromGateway: true, turnId: "later" });
+    await sleep(20);
+    open();
+    await expect(running).resolves.toBe(true);
+    await expect(later).rejects.toThrow();
+    await expect(setup).resolves.toBe(true);
   });
 });

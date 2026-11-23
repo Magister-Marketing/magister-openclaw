@@ -7,7 +7,7 @@ import type {
   WorkspacePatchPlan,
 } from "openclaw/plugin-sdk/core";
 import { LibraryHttpError } from "./library-bridge.js";
-import { withLibraryLock } from "./library-lock.js";
+import { outsideLibraryHold, withLibraryLock } from "./library-lock.js";
 import { promotionContentType } from "./library-mime.js";
 import {
   atomicWrite,
@@ -40,6 +40,67 @@ type Admission =
 /** Who is admitting the turn: the Gateway's reconcile call, or run setup of
  * the Gateway's turn `turnId`. */
 type TurnAdmission = { fromGateway?: boolean; turnId?: string };
+type AdmissionCaller = {
+  refresh: boolean;
+  turn: TurnAdmission;
+  readonly done: boolean;
+  /** When this caller stops waiting for its pass to take the lock. */
+  readonly deadline: number;
+  /** The pass holds the lock: this caller's wait is over. */
+  started(): void;
+  serve(admission: Admission | undefined): void;
+  fail(error: unknown): void;
+};
+type AdmissionPass = { callers: AdmissionCaller[] };
+/** Admissions of one kind: the pass not started yet, and the last started. */
+type AdmissionSlot = { queued?: AdmissionPass; last?: Promise<void> };
+/** A caller of a pass and its own result. It waits at most `waitMs` for its
+ * pass to take the lock, as the lock alone allowed, however long the pass
+ * ahead of it runs. */
+function admissionCaller(
+  refresh: boolean,
+  turn: TurnAdmission,
+  waitMs: number,
+): { caller: AdmissionCaller; result: Promise<Admission | undefined> } {
+  let resolve!: (admission: Admission | undefined) => void;
+  let reject!: (error: unknown) => void;
+  const result = new Promise<Admission | undefined>((done, failed) => {
+    resolve = done;
+    reject = failed;
+  });
+  let done = false;
+  const timer = setTimeout(
+    () => caller.fail(new Error("temporarily_unavailable: Library lock timed out")),
+    waitMs,
+  );
+  timer.unref?.();
+  const caller: AdmissionCaller = {
+    refresh,
+    turn,
+    deadline: performance.now() + waitMs,
+    get done() {
+      return done;
+    },
+    started: () => clearTimeout(timer),
+    serve: (admission) => {
+      if (!done) {
+        done = true;
+        clearTimeout(timer);
+        resolve(admission);
+      }
+    },
+    fail: (error) => {
+      if (!done) {
+        done = true;
+        clearTimeout(timer);
+        reject(error);
+      }
+    },
+  };
+  return { caller, result };
+}
+/** Turns whose Gateway barrier is remembered; far more than run concurrently. */
+const MAX_TURN_BARRIERS = 256;
 /** The Library barrier a turn admission crosses: this project, epoch and sequence. */
 const barrierKey = (state: LibraryState) => `${state.project_id}:${state.epoch}:${state.sequence}`;
 const recoveryError = () =>
@@ -147,9 +208,21 @@ export class LibraryRuntime {
   discoveryTimeoutMs = 3_000;
   discoveryBackoffMs = 60_000;
   private discoveryPausedUntil = 0;
-  /** The barrier the Gateway's admission crossed for its turn: run setup of the
-   * same turn reuses it while the Library is still at that epoch and sequence. */
-  private gatewayBarrier: { turnId: string; key: string } | undefined;
+  /** The barrier the Gateway's admission crossed for each turn: run setup of
+   * the same turn reuses it while the Library is still at that epoch and
+   * sequence. One entry per turn, so turns admitted together each keep theirs. */
+  private gatewayBarriers = new Map<string, string>();
+  /** Admissions waiting to start, by kind, and the last one started. Many
+   * turns starting at once each asked for the exclusive lock, and each held it
+   * across Gateway calls (state, /context-ready, manifest, downloads): sixteen
+   * tasks started together on 2026-11-22 left turns waiting past the lock's
+   * 30 s. A caller now joins the admission that has not started yet, which
+   * still begins after it asked, so a burst takes at most one running and one
+   * waiting pass of each kind. Turn admissions (which publish sources) and
+   * catch-ups are separate, so a publication failure never fails a read. */
+  private passes: Record<"refresh" | "plain", AdmissionSlot> = { refresh: {}, plain: {} };
+  /** How long a caller waits for its admission to take the lock. */
+  admissionWaitMs = 30_000;
   /** Recovery's cloud path list is reused this long; a failure is never cached. */
   recoveryListingTtlMs = 30_000;
   private recoveryListing:
@@ -166,8 +239,12 @@ export class LibraryRuntime {
   ) {
     this.store = new LibraryStore(workspace, bridge);
   }
-  private lock<T>(mode: "shared" | "exclusive", run: () => Promise<T>): Promise<T> {
-    return withLibraryLock(path.join(this.store.directory, "lock"), mode, run);
+  private lock<T>(
+    mode: "shared" | "exclusive",
+    run: () => Promise<T>,
+    timeoutMs?: number,
+  ): Promise<T> {
+    return withLibraryLock(path.join(this.store.directory, "lock"), mode, run, timeoutMs);
   }
   private marker(name: "activation" | "shadow"): string {
     return path.join(this.store.directory, `${name}.json`);
@@ -317,54 +394,184 @@ export class LibraryRuntime {
       return undefined;
     }
     await this.store.initialize();
-    return this.lock("exclusive", async (): Promise<Admission | undefined> => {
-      let state: LibraryState | undefined;
+    return this.joinAdmission(refreshSources, turn);
+  }
+  /** Join the admission of this kind that has not started yet, or queue one
+   * behind the last started. Its pass begins after every caller in it asked. */
+  private joinAdmission(refresh: boolean, turn: TurnAdmission): Promise<Admission | undefined> {
+    const slot = this.passes[refresh ? "refresh" : "plain"];
+    const { caller, result } = admissionCaller(refresh, turn, this.admissionWaitMs);
+    let pass = slot.queued;
+    if (!pass) {
+      const queued: AdmissionPass = { callers: [] };
+      const previous = slot.last ?? Promise.resolve();
+      // The pass serves every caller that joins it: it must not run inside a
+      // Library hold of the caller that happened to start it.
+      slot.last = outsideLibraryHold(() =>
+        previous.then(() => {
+          // Started: later callers queue the next pass.
+          if (slot.queued === queued) {
+            slot.queued = undefined;
+          }
+          return this.runPass(queued.callers);
+        }),
+      );
+      slot.queued = queued;
+      pass = queued;
+    }
+    pass.callers.push(caller);
+    return result;
+  }
+  /** Settles every caller; never rejects, so the next pass always starts. */
+  private async runPass(joined: AdmissionCaller[]): Promise<void> {
+    const callers = joined.filter((caller) => !caller.done);
+    if (callers.length === 0) {
+      return;
+    }
+    // The pass waits in the lock's queue only while one of its callers does:
+    // a pass nobody waits for would hold up every read queued behind it.
+    const waitMs = Math.max(...callers.map((caller) => caller.deadline)) - performance.now();
+    if (waitMs <= 0) {
+      return;
+    }
+    try {
+      await this.lock(
+        "exclusive",
+        async () => {
+          const waiting = callers.filter((caller) => !caller.done);
+          if (waiting.length === 0) {
+            return;
+          }
+          for (const caller of waiting) {
+            caller.started();
+          }
+          await this.crossBarrier(waiting);
+        },
+        waitMs,
+      );
+    } catch (error) {
+      for (const caller of callers) {
+        caller.fail(error);
+      }
+    }
+  }
+  /** One admission for every caller that joined it, under the exclusive lock.
+   * Settles each caller: a crossing that some of them needed and could not get
+   * fails only those. */
+  private async crossBarrier(callers: AdmissionCaller[]): Promise<void> {
+    const serveAll = (admission: Admission | undefined) => {
+      for (const caller of callers) {
+        caller.serve(admission);
+      }
+    };
+    let state: LibraryState | undefined;
+    try {
+      state = await this.state();
+    } catch (error) {
+      // Only an activated volume fails closed; a shadow brand's files are
+      // still legacy-authoritative, so its reads carry on locally.
+      if ((await this.enrollment()) === "active") {
+        throw error;
+      }
+      this.active = false;
+      serveAll(undefined);
+      return;
+    }
+    if (!state || state.mode !== "active") {
+      await this.serveInactive(callers, state);
+      return;
+    }
+    // Run setup of a turn the Gateway already admitted: that admission
+    // published the required context for this turn. Reused only for the same
+    // turn and while the Library has not moved; anything else crosses it again.
+    const current = barrierKey(state);
+    const crossed = ({ turn }: AdmissionCaller) =>
+      !turn.fromGateway && !!turn.turnId && this.gatewayBarriers.get(turn.turnId) === current;
+    const needing = callers.filter((caller) => caller.refresh && !crossed(caller));
+    let served = callers;
+    if (needing.length > 0) {
+      let next: LibraryState | undefined;
+      let published = false;
       try {
-        state = await this.state();
-      } catch (error) {
-        // Only an activated volume fails closed; a shadow brand's files are
-        // still legacy-authoritative, so its reads carry on locally.
-        if ((await this.enrollment()) === "active") throw error;
-        this.active = false;
-        return undefined;
-      }
-      if (state?.mode === "recovery") {
-        this.active = false;
-        return { mode: "recovery", state, cache: await this.store.cache() };
-      }
-      if (!state || state.mode !== "active") {
-        this.active = false;
-        return undefined;
-      }
-      // Run setup of a turn the Gateway already admitted: that admission
-      // published the required context for this turn. Reused only for the same
-      // turn and while the Library has not moved; anything else crosses it again.
-      const crossed =
-        !turn.fromGateway &&
-        !!turn.turnId &&
-        this.gatewayBarrier?.turnId === turn.turnId &&
-        this.gatewayBarrier.key === barrierKey(state);
-      if (refreshSources && !crossed) {
         await this.bridge.request("POST", "/context-ready", { project_id: state.project_id });
-        state = await this.state();
-        if (!state || state.mode !== "active")
-          throw new Error("Library state changed during context admission");
+        next = await this.state();
+        published = true;
+      } catch (error) {
+        // A run setup whose turn already crossed needs none of this: it is
+        // served from the state its barrier was checked against. A failed
+        // read after the crossing says nothing about where the Library went.
+        for (const caller of needing) {
+          caller.fail(error);
+        }
+        served = callers.filter((caller) => !needing.includes(caller));
+        if (served.length === 0) {
+          return;
+        }
       }
-      // /context-ready publishes the required context (audit, brand, plan,
-      // memory) or fails closed. Other views publish in the background and
-      // their last committed revision stays readable, so a pending results
-      // page or plan re-render must not fail every turn and tool call.
-      if (!state.coverage.complete)
-        throw new Error(
-          "publication_pending: Library context is not ready; retry after publication completes",
-        );
-      const cache = await this.store.reconcile(state.project_id, state.epoch, state.sequence);
-      // Recorded only once the whole admission succeeded, local catch-up included.
-      if (refreshSources && turn.fromGateway && turn.turnId)
-        this.gatewayBarrier = { turnId: turn.turnId, key: barrierKey(state) };
-      this.active = true;
-      return { mode: "active", state, cache };
-    });
+      if (published) {
+        if (!next || next.mode !== "active") {
+          // The Library left active: nobody is served from the state before.
+          const changed = new Error("Library state changed during context admission");
+          for (const caller of needing) {
+            caller.fail(changed);
+          }
+          await this.serveInactive(
+            callers.filter((caller) => !needing.includes(caller)),
+            next,
+          );
+          return;
+        }
+        state = next;
+      }
+    }
+    // /context-ready publishes the required context (audit, brand, plan,
+    // memory) or fails closed. Other views publish in the background and
+    // their last committed revision stays readable, so a pending results
+    // page or plan re-render must not fail every turn and tool call.
+    if (!state.coverage.complete) {
+      throw new Error(
+        "publication_pending: Library context is not ready; retry after publication completes",
+      );
+    }
+    const cache = await this.store.reconcile(state.project_id, state.epoch, state.sequence);
+    // Recorded only once the whole admission succeeded, local catch-up included.
+    for (const { refresh, turn } of served) {
+      if (refresh && turn.fromGateway && turn.turnId) {
+        this.recordBarrier(turn.turnId, barrierKey(state));
+      }
+    }
+    this.active = true;
+    const admission: Admission = { mode: "active", state, cache };
+    for (const caller of served) {
+      caller.serve(admission);
+    }
+  }
+  /** Callers admitted while the Library is not active: recovery admits the
+   * turn without Library authority; legacy or shadow storage answers none. */
+  private async serveInactive(
+    callers: AdmissionCaller[],
+    state: LibraryState | undefined,
+  ): Promise<void> {
+    this.active = false;
+    const admission: Admission | undefined =
+      state?.mode === "recovery"
+        ? { mode: "recovery", state, cache: await this.store.cache() }
+        : undefined;
+    for (const caller of callers) {
+      caller.serve(admission);
+    }
+  }
+  private recordBarrier(turnId: string, key: string): void {
+    this.gatewayBarriers.delete(turnId);
+    this.gatewayBarriers.set(turnId, key);
+    // Oldest first: a turn's run setup follows its admission within seconds.
+    while (this.gatewayBarriers.size > MAX_TURN_BARRIERS) {
+      const oldest = this.gatewayBarriers.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      this.gatewayBarriers.delete(oldest);
+    }
   }
   /** Turn admission. Recovery admits the turn without Library authority: only
    * Library file tools answer temporarily_unavailable. */
