@@ -40,8 +40,12 @@ describe("TurnBudget", () => {
     const nudge = budget.noteToolCall("run-1", "exec");
     expect(nudge).toBe(
       "You have worked 5 minutes (2 tool calls) without replying. " +
-        "Reply now with what you have, and ask one question if you are blocked.",
+        "Reply now with a short update on what you have done and what comes next, then carry on. " +
+        "Ask a question only if you cannot go on without the answer; a long task is no reason to stop or to mark it blocked.",
     );
+    // It never invites a block: 2026-11-23 a plan task read "ask one question
+    // if you are blocked" as one, mid-commit, and kept it after it shipped.
+    expect(nudge).not.toMatch(/if you are blocked/);
     // The re-issued call goes through; the next nudge is a window later.
     expect(budget.noteToolCall("run-1", "exec")).toBeUndefined();
     c.advanceMinutes(4);
@@ -206,7 +210,7 @@ describe("registration", () => {
     expect(before({ toolName: "read", params: {}, runId: "run-9" }, ctx)).toBeUndefined();
     expect(before({ toolName: "read", params: {}, runId: "run-9" }, ctx)).toEqual({
       block: true,
-      blockReason: expect.stringContaining("Reply now with what you have"),
+      blockReason: expect.stringContaining("Reply now with a short update"),
     });
     // agent_end forgets the run; the memory capture still runs after it.
     const end = handlers.get("agent_end")!;

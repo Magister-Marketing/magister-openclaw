@@ -70,12 +70,18 @@ function numberOr(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
+/** The nudge asks for an update and for the work to go on. 2026-11-23: its
+ *  earlier "ask one question if you are blocked" had a plan task mid-way
+ *  through a commit mark itself blocked; it then pushed, opened the pull
+ *  request and asked to merge, and the task kept a block that was no longer
+ *  true. */
 export function turnBudgetNudge(params: { minutes: number; toolCalls: number }): string {
   const minutes = Math.max(1, Math.round(params.minutes));
   return (
     `You have worked ${minutes} minute${minutes === 1 ? "" : "s"} ` +
     `(${params.toolCalls} tool calls) without replying. ` +
-    "Reply now with what you have, and ask one question if you are blocked."
+    "Reply now with a short update on what you have done and what comes next, then carry on. " +
+    "Ask a question only if you cannot go on without the answer; a long task is no reason to stop or to mark it blocked."
   );
 }
 

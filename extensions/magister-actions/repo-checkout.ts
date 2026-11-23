@@ -671,6 +671,9 @@ export type InstallRequest = {
   mutation_context?: unknown;
   /** As on `CheckoutRequest`. */
   session?: string;
+  /** A package project inside the checkout with its own lockfile, relative
+   *  to the root (`webapp`); empty for the root. */
+  path?: string;
 };
 
 export type InstallReceipt = {
@@ -684,6 +687,11 @@ export type InstallReceipt = {
   path: string;
   manager: "pnpm" | "npm" | "yarn" | "uv" | "pip";
   lockfile: string;
+  /** The package project installed, relative to the checkout: `.` for its root. */
+  project: string;
+  /** Other directories with their own lockfile, installed only when asked
+   *  for by `path`: a repository can hold several package projects. */
+  other_projects: string[];
   /** The offline second step that runs lifecycle scripts, for managers that
    *  have one. A non-zero exit is reported, not fatal: a package whose
    *  postinstall needs the network fails here by design. */
@@ -1131,6 +1139,9 @@ type CheckoutHolder = {
 export type InstalledDependencies = {
   manager: InstallReceipt["manager"];
   lockfile: string;
+  /** The package project, relative to the checkout; empty (or absent, from
+   *  before projects) for the root. */
+  project?: string;
   sha256: string;
   state: "running" | "installed" | "failed";
   started_at: string;
@@ -1145,8 +1156,12 @@ type CheckoutMarker = {
   last_used_at: string;
   repo: string;
   /** The lockfile the work layer's dependencies were installed from, so a
-   *  repeat install with the same lockfile is a no-op rather than a refetch. */
+   *  repeat install with the same lockfile is a no-op rather than a refetch.
+   *  The latest install of any project: what is running, or just ended. */
   deps?: InstalledDependencies;
+  /** Each project's last finished install, by project ("" for the root), so
+   *  installing one does not make the next call for another start over. */
+  installed_projects?: Record<string, InstalledDependencies>;
   /** The upstream commit this checkout started from. Every manifest is diffed
    *  against it, so a stack of prepared commits still describes one change set
    *  rather than the delta since the previous freeze. */
@@ -2254,7 +2269,7 @@ async function performCheckout(request: CheckoutRequest): Promise<CheckoutReceip
           );
         }
         await workLayerControl(repoDir, "reset-work-layer");
-        await stampMarker(repoDir, full, { deps: undefined });
+        await stampMarker(repoDir, full, { deps: undefined, installed_projects: undefined });
       }
       const before = await headSha(repoDir);
       await fetchRef(repoDir, request, ref, () => withinCheckoutBudget(repoDir));
@@ -3274,6 +3289,126 @@ export async function detectPackageManager(repoDir: string): Promise<PackageMana
   return null;
 }
 
+/** Lockfiles `detectPackageManager` installs from. */
+const LOCKFILES = new Set([
+  "pnpm-lock.yaml",
+  "package-lock.json",
+  "yarn.lock",
+  "uv.lock",
+  "requirements.txt",
+]);
+/** Directories never searched for a package project: installed trees,
+ *  caches and the repository's own metadata. */
+const PROJECT_SEARCH_SKIP = new Set([
+  ".git",
+  ".magister-cache",
+  "node_modules",
+  ".venv",
+  ".yarn",
+  "__pycache__",
+  ".next",
+  "dist",
+  "build",
+]);
+const PROJECT_SEARCH_DEPTH = 3;
+const PROJECT_SEARCH_MAX_DIRS = 2_000;
+const OTHER_PROJECTS_SHOWN = 12;
+/** A lockfile larger than this is not read: real ones are a few megabytes. */
+const LOCKFILE_MAX_BYTES = 64 * 1024 * 1024;
+
+/** Directories below the checkout's root that hold their own lockfile,
+ *  shallowest first, then by name, so a cut list keeps the top-level apps:
+ *  each is a package project installed separately, with `path`.
+ *  A monorepo whose root lockfile installs only its root (2026-11-23: our own
+ *  repository, whose web app has its own) left the agent with no test runner.
+ *  Bounded in depth and directories; a symbolic link is never followed. */
+export async function findPackageProjects(repoDir: string): Promise<string[]> {
+  const found: string[] = [];
+  const queue: Array<{ rel: string; depth: number }> = [{ rel: "", depth: 0 }];
+  let visited = 0;
+  while (queue.length > 0 && visited < PROJECT_SEARCH_MAX_DIRS) {
+    const { rel, depth } = queue.shift() as { rel: string; depth: number };
+    visited += 1;
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.promises.readdir(path.join(repoDir, rel), { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    if (
+      rel &&
+      entries.some(
+        // A lockfile that is a link counts: the install reads it where it
+        // points, when that is inside the checkout.
+        (entry) => (entry.isFile() || entry.isSymbolicLink()) && LOCKFILES.has(entry.name),
+      )
+    ) {
+      found.push(rel);
+    }
+    if (depth >= PROJECT_SEARCH_DEPTH) {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory() && !PROJECT_SEARCH_SKIP.has(entry.name)) {
+        queue.push({ rel: rel ? `${rel}/${entry.name}` : entry.name, depth: depth + 1 });
+      }
+    }
+  }
+  const depth = (rel: string) => rel.split("/").length;
+  return found.toSorted((a, b) => depth(a) - depth(b) || a.localeCompare(b));
+}
+
+/** `path` as the Gateway sends it: a directory inside the checkout, relative
+ *  to its root, case kept. Empty for the root. */
+export function parseProjectPath(value: unknown): string {
+  if (value === undefined || value === null || value === "" || value === ".") {
+    return "";
+  }
+  const hasControl =
+    typeof value === "string" && [...value].some((char) => char < " " || char === "\u007f");
+  if (typeof value !== "string" || value.length > 300 || hasControl || value.startsWith("/")) {
+    throw new CheckoutError("path must be a directory inside the repository", 400);
+  }
+  const segments = value
+    .replace(/\\/g, "/")
+    .split("/")
+    .filter((segment) => segment !== "" && segment !== ".");
+  if (segments.length > 8 || segments.includes("..")) {
+    throw new CheckoutError("path must be a directory inside the repository", 400);
+  }
+  return segments.join("/");
+}
+
+/** The project as the directory it really is inside the checkout, and that
+ *  directory on the host; refused unless it is one. A symbolic link out of
+ *  the checkout would have the host read a lockfile from elsewhere, and one
+ *  inside it is followed to where the sandbox writes: the overlay records the
+ *  install under the real path, which is the one the marker and the presence
+ *  check must name. */
+async function projectDirectory(
+  repoDir: string,
+  full: string,
+  requested: string,
+): Promise<{ project: string; projectDir: string }> {
+  if (!requested) {
+    return { project: "", projectDir: repoDir };
+  }
+  const [root, real] = await Promise.all([
+    fs.promises.realpath(repoDir),
+    fs.promises.realpath(path.join(repoDir, requested)).catch(() => null),
+  ]);
+  const stat = real ? await fs.promises.stat(real).catch(() => null) : null;
+  if (!real || !stat?.isDirectory() || !real.startsWith(root + path.sep)) {
+    throw new CheckoutError(
+      `${full} has no directory ${requested}.`,
+      404,
+      "Pass the directory of a package project inside the checkout, as listed in other_projects.",
+    );
+  }
+  const project = path.relative(root, real).split(path.sep).join("/");
+  return { project, projectDir: path.join(repoDir, project) };
+}
+
 /** The two sandbox steps, run to completion and recorded in the marker.
  *
  *  Runs detached from the request that started it: an install can take
@@ -3285,24 +3420,37 @@ async function runInstall(
   full: string,
   manager: PackageManager,
   sha256: string,
+  project: string,
 ): Promise<void> {
-  const record = (patch: Partial<InstalledDependencies>) =>
-    stampMarker(repoDir, full, {
-      deps: {
-        manager: manager.name,
-        lockfile: manager.lockfile,
-        sha256,
-        state: "running",
-        started_at: new Date().toISOString(),
-        ...patch,
-      },
+  // The sandbox runs in the project's directory: the supervisor finds the
+  // checkout above it, and records the rebuild with that directory as its cwd.
+  const workspace = project ? path.join(repoDir, project) : repoDir;
+  const record = async (patch: Partial<InstalledDependencies>) => {
+    const entry: InstalledDependencies = {
+      manager: manager.name,
+      lockfile: manager.lockfile,
+      project,
+      sha256,
+      state: "running",
+      started_at: new Date().toISOString(),
+      ...patch,
+    };
+    // A finished install is also kept by project, beside another project's.
+    const projects =
+      entry.state === "running"
+        ? undefined
+        : { ...(await readMarker(repoDir))?.installed_projects, [project]: entry };
+    await stampMarker(repoDir, full, {
+      deps: entry,
+      ...(projects ? { installed_projects: projects } : {}),
     });
+  };
   try {
     // Fetch without executing: the fetcher has the network and runs no
     // repository or package code.
     const fetched = await runInSandbox(
       "fetcher",
-      repoDir,
+      workspace,
       manager.install,
       INSTALL_TIMEOUT_SECONDS,
     );
@@ -3322,7 +3470,12 @@ async function runInstall(
     let rebuild: InstallReceipt["rebuild"] = { ran: false, exit_code: null };
     const warnings = [...manager.warnings];
     if (manager.rebuild) {
-      const rebuilt = await runInSandbox("tool", repoDir, manager.rebuild, INSTALL_TIMEOUT_SECONDS);
+      const rebuilt = await runInSandbox(
+        "tool",
+        workspace,
+        manager.rebuild,
+        INSTALL_TIMEOUT_SECONDS,
+      );
       rebuild = { ran: true, exit_code: rebuilt.code };
       if (rebuilt.code !== 0) {
         warnings.push(
@@ -3367,16 +3520,55 @@ async function performInstall(request: InstallRequest): Promise<InstallReceipt> 
       throw anotherChatsLeftWorkError(full, others.seen, "Installing dependencies");
     }
   }
-  const manager = await detectPackageManager(repoDir);
+  const { project, projectDir } = await projectDirectory(repoDir, full, request.path ?? "");
+  const others = (await findPackageProjects(repoDir)).filter((rel) => rel !== project);
+  const otherProjects = others.slice(0, OTHER_PROJECTS_SHOWN);
+  const listed =
+    otherProjects.join(", ") +
+    (others.length > otherProjects.length
+      ? ` and ${others.length - otherProjects.length} more deeper down`
+      : "");
+  const manager = await detectPackageManager(projectDir);
   if (!manager) {
+    const where = project ? `${full}/${project}` : full;
     throw new CheckoutError(
-      `${full} has no lockfile this machine can install from.`,
+      `${where} has no lockfile this machine can install from.`,
       409,
-      "Supported: pnpm-lock.yaml, package-lock.json, yarn.lock, uv.lock, requirements.txt. Unpinned dependencies are never resolved here.",
+      otherProjects.length > 0
+        ? `These directories have their own lockfile: ${listed}. Call again with path set to the one your change is in.`
+        : "Supported: pnpm-lock.yaml, package-lock.json, yarn.lock, uv.lock, requirements.txt. Unpinned dependencies are never resolved here.",
+    );
+  }
+  // Said on every answer at the root: its install does not reach them.
+  const otherProjectsNote =
+    !project && otherProjects.length > 0
+      ? [
+          `Only the repository root's dependencies are installed here. These directories have their own lockfile and install separately: ${listed}. Call again with path set to the one your change is in.`,
+        ]
+      : [];
+  // Read only as the regular file a lockfile is, inside the checkout: a
+  // committed link to a device, out of the checkout, or a huge file would
+  // otherwise have the host read without end. A link to a file inside it
+  // (requirements.txt -> requirements/base.txt) is read where it points.
+  const lockPath = await fs.promises
+    .realpath(path.join(projectDir, manager.lockfile))
+    .catch(() => null);
+  const realRoot = await fs.promises.realpath(repoDir);
+  const lockStat = lockPath ? await fs.promises.stat(lockPath).catch(() => null) : null;
+  if (
+    !lockPath ||
+    !lockPath.startsWith(realRoot + path.sep) ||
+    !lockStat?.isFile() ||
+    lockStat.size > LOCKFILE_MAX_BYTES
+  ) {
+    throw new CheckoutError(
+      `${manager.lockfile} in ${project || full} is not a lockfile this machine will read.`,
+      409,
+      `A lockfile must be a file inside the checkout of at most ${LOCKFILE_MAX_BYTES / 1024 / 1024} MB.`,
     );
   }
   const sha256 = createHash("sha256")
-    .update(await fs.promises.readFile(path.join(repoDir, manager.lockfile)))
+    .update(await fs.promises.readFile(lockPath))
     .digest("hex");
   const layer = workLayer(repoDir);
   const receipt = async (
@@ -3390,6 +3582,8 @@ async function performInstall(request: InstallRequest): Promise<InstallReceipt> 
     path: repoDir,
     manager: manager.name,
     lockfile: manager.lockfile,
+    project: project || ".",
+    other_projects: otherProjects,
     rebuild,
     // Not while installing: walking a tree mid-install, on a shared CPU the
     // install is using, made a poll take over 30 seconds to say "still going".
@@ -3402,50 +3596,70 @@ async function performInstall(request: InstallRequest): Promise<InstallReceipt> 
               maxBytes: Number.POSITIVE_INFINITY,
             })
           ).bytes,
-    warnings,
+    warnings: [...warnings, ...otherProjectsNote],
     ...(status === "installing" ? { poll_after_seconds: INSTALL_POLL_SECONDS } : {}),
   });
 
-  const deps = (await readMarker(repoDir))?.deps;
-  const sameLockfile = deps?.sha256 === sha256 && deps.manager === manager.name;
+  const current = await readMarker(repoDir);
+  const deps = current?.deps;
+  // This project's last install: the latest one when it was this project's,
+  // else the one kept for it (a marker from before projects is the root's).
+  const mine =
+    deps && (deps.project ?? "") === project ? deps : current?.installed_projects?.[project];
+  const sameLockfile = mine?.sha256 === sha256 && mine.manager === manager.name;
   if (deps?.state === "running" && !installIsStale(deps)) {
+    const running = deps.project ?? "";
     return receipt("installing", { ran: false, exit_code: null }, [
-      `Dependencies are still installing; call again in about ${INSTALL_POLL_SECONDS} seconds.`,
+      running === project
+        ? `Dependencies are still installing; call again in about ${INSTALL_POLL_SECONDS} seconds.`
+        : `The dependencies of ${running || "the repository root"} are still installing; call again in about ${INSTALL_POLL_SECONDS} seconds to install these.`,
     ]);
   }
-  if (deps?.state === "failed" && sameLockfile) {
+  if (mine?.state === "failed" && sameLockfile) {
     // Reported once. The marker forgets the failure so the next call retries
     // rather than repeating the same refusal forever.
-    await stampMarker(repoDir, full, { deps: undefined });
+    const { [project]: _forgotten, ...kept } = current?.installed_projects ?? {};
+    await stampMarker(repoDir, full, {
+      ...(mine === deps ? { deps: undefined } : {}),
+      installed_projects: kept,
+    });
     throw new CheckoutError(
       `Installing dependencies with ${manager.name} failed.`,
       422,
-      deps.error ?? "The install produced no output.",
+      mine.error ?? "The install produced no output.",
     );
   }
   const installedRoot = manager.name === "uv" || manager.name === "pip" ? ".venv" : "node_modules";
   const present = await fs.promises
-    .stat(path.join(layer.upper, installedRoot))
+    .stat(path.join(layer.upper, project, installedRoot))
     .then(() => true)
     .catch(() => false);
-  if (deps?.state === "installed" && sameLockfile && present) {
+  if (mine?.state === "installed" && sameLockfile && present) {
     return {
-      ...(await receipt("installed", deps.rebuild ?? { ran: false, exit_code: null }, [
-        ...(deps.warnings ?? []),
+      ...(await receipt("installed", mine.rebuild ?? { ran: false, exit_code: null }, [
+        ...(mine.warnings ?? []),
       ])),
-      installed_at: deps.finished_at,
+      installed_at: mine.finished_at,
     };
   }
 
   const startedAt = new Date().toISOString();
+  // The latest install, once finished, stays as its project's: a marker
+  // written before projects keeps the root's install only there.
+  const keep =
+    deps && deps.state !== "running"
+      ? { installed_projects: { ...current?.installed_projects, [deps.project ?? ""]: deps } }
+      : {};
   await stampMarker(repoDir, full, {
     deps: {
       manager: manager.name,
       lockfile: manager.lockfile,
+      project,
       sha256,
       state: "running",
       started_at: startedAt,
     },
+    ...keep,
     ...(session ? { holder: { session, at: startedAt, op: "install" as const } } : {}),
   });
   // Detached on purpose — see runInstall. The in-process repository lock is
@@ -3456,10 +3670,30 @@ async function performInstall(request: InstallRequest): Promise<InstallReceipt> 
     request.provider,
     request.repo,
     `An operation on ${request.repo} is already running.`,
-    () => runInstall(repoDir, full, manager, sha256),
-  ).catch(() => undefined);
+    () => runInstall(repoDir, full, manager, sha256, project),
+  ).catch(async (error: unknown) => {
+    // Another operation took the lock between this call's check and here:
+    // without this the marker would say "running" with nothing running until
+    // it went stale. Only the lock's own refusal: anything else is runInstall
+    // failing to record its own end, which this must not overwrite.
+    if (!(error instanceof CheckoutError) || error.statusCode !== 409) {
+      return;
+    }
+    await stampMarker(repoDir, full, {
+      deps: {
+        manager: manager.name,
+        lockfile: manager.lockfile,
+        project,
+        sha256,
+        state: "failed",
+        started_at: startedAt,
+        finished_at: new Date().toISOString(),
+        error: "Another repository operation started at the same moment; call again once it ends.",
+      },
+    }).catch(() => undefined);
+  });
   return receipt("installing", { ran: false, exit_code: null }, [
-    `Installing with ${manager.name} from ${manager.lockfile}; call again in about ${INSTALL_POLL_SECONDS} seconds.`,
+    `Installing with ${manager.name} from ${project ? `${project}/` : ""}${manager.lockfile}; call again in about ${INSTALL_POLL_SECONDS} seconds.`,
     ...manager.warnings,
   ]);
 }
@@ -3577,10 +3811,15 @@ export function parsePrepareRequest(value: unknown): PrepareRequest {
 }
 
 export function parseInstallRequest(value: unknown): InstallRequest {
-  const row = requireFields(value, ["repo"], "install");
+  const row = requireFields(value, ["repo", "path"], "install");
   const provider = parseProvider(row.provider);
   const { full } = parseRepo(row.repo, provider);
-  return { repo: full, provider, mutation_context: row.mutation_context };
+  return {
+    repo: full,
+    provider,
+    mutation_context: row.mutation_context,
+    path: parseProjectPath(row.path),
+  };
 }
 
 /** A GitLab project's custom pipeline file, normalised; undefined when the
