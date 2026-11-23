@@ -3539,15 +3539,25 @@ async function performInstall(request: InstallRequest): Promise<InstallReceipt> 
           `Only the repository root's dependencies are installed here. These directories have their own lockfile and install separately: ${listed}. Call again with path set to the one your change is in.`,
         ]
       : [];
-  // Read only as the regular file a lockfile is: a committed link to a device
-  // or a huge file would otherwise have the host read without end.
-  const lockPath = path.join(projectDir, manager.lockfile);
-  const lockStat = await fs.promises.lstat(lockPath);
-  if (!lockStat.isFile() || lockStat.size > LOCKFILE_MAX_BYTES) {
+  // Read only as the regular file a lockfile is, inside the checkout: a
+  // committed link to a device, out of the checkout, or a huge file would
+  // otherwise have the host read without end. A link to a file inside it
+  // (requirements.txt -> requirements/base.txt) is read where it points.
+  const lockPath = await fs.promises
+    .realpath(path.join(projectDir, manager.lockfile))
+    .catch(() => null);
+  const realRoot = await fs.promises.realpath(repoDir);
+  const lockStat = lockPath ? await fs.promises.stat(lockPath).catch(() => null) : null;
+  if (
+    !lockPath ||
+    !lockPath.startsWith(realRoot + path.sep) ||
+    !lockStat?.isFile() ||
+    lockStat.size > LOCKFILE_MAX_BYTES
+  ) {
     throw new CheckoutError(
       `${manager.lockfile} in ${project || full} is not a lockfile this machine will read.`,
       409,
-      `A lockfile must be a regular file of at most ${LOCKFILE_MAX_BYTES / 1024 / 1024} MB, not a link.`,
+      `A lockfile must be a file inside the checkout of at most ${LOCKFILE_MAX_BYTES / 1024 / 1024} MB.`,
     );
   }
   const sha256 = createHash("sha256")
@@ -3627,6 +3637,12 @@ async function performInstall(request: InstallRequest): Promise<InstallReceipt> 
   }
 
   const startedAt = new Date().toISOString();
+  // The latest install, once finished, stays as its project's: a marker
+  // written before projects keeps the root's install only there.
+  const keep =
+    deps && deps.state !== "running"
+      ? { installed_projects: { ...current?.installed_projects, [deps.project ?? ""]: deps } }
+      : {};
   await stampMarker(repoDir, full, {
     deps: {
       manager: manager.name,
@@ -3636,6 +3652,7 @@ async function performInstall(request: InstallRequest): Promise<InstallReceipt> 
       state: "running",
       started_at: startedAt,
     },
+    ...keep,
     ...(session ? { holder: { session, at: startedAt, op: "install" as const } } : {}),
   });
   // Detached on purpose — see runInstall. The in-process repository lock is
@@ -3647,10 +3664,14 @@ async function performInstall(request: InstallRequest): Promise<InstallReceipt> 
     request.repo,
     `An operation on ${request.repo} is already running.`,
     () => runInstall(repoDir, full, manager, sha256, project),
-  ).catch(async () => {
-    // Another operation took the lock between this call's check and here
-    // (runInstall itself never throws): without this the marker would say
-    // "running" with nothing running until it went stale.
+  ).catch(async (error: unknown) => {
+    // Another operation took the lock between this call's check and here:
+    // without this the marker would say "running" with nothing running until
+    // it went stale. Only the lock's own refusal: anything else is runInstall
+    // failing to record its own end, which this must not overwrite.
+    if (!(error instanceof CheckoutError) || error.statusCode !== 409) {
+      return;
+    }
     await stampMarker(repoDir, full, {
       deps: {
         manager: manager.name,

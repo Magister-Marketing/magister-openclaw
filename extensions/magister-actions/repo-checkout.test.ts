@@ -2624,6 +2624,45 @@ describe("installing dependencies", () => {
     await awaitRepositoryIdle("github", "acme/site");
   });
 
+  it("keeps the root's install from a marker written before projects", async () => {
+    // Review of #2774: the first project install replaced the only record.
+    const { repoDir, root } = upstreamAndCheckout();
+    fs.writeFileSync(path.join(repoDir, "package-lock.json"), "{}");
+    fs.mkdirSync(path.join(repoDir, "webapp"));
+    fs.writeFileSync(path.join(repoDir, "webapp", "package-lock.json"), "{}");
+    const log = fakeLauncher(root);
+    await settled(
+      () => installRepoDependencies(install()),
+      (r) => r.status !== "installing",
+    );
+    // As the old code left it: one record, no project, no map.
+    const marker = readMarkerFile(repoDir);
+    const { project: _dropped, ...legacy } = marker.deps as Record<string, unknown>;
+    delete marker.installed_projects;
+    writeMarkerFile(repoDir, { ...marker, deps: legacy });
+
+    await settled(
+      () => installRepoDependencies({ ...install(), path: "webapp" }),
+      (r) => r.status !== "installing",
+    );
+    expect((await installRepoDependencies(install())).status).toBe("installed");
+    expect(fs.readFileSync(log, "utf8").trim().split("\n")).toHaveLength(4);
+    await awaitRepositoryIdle("github", "acme/site");
+  });
+
+  it("reads a lockfile linked inside the checkout, never one linked out of it", async () => {
+    const { repoDir, root } = upstreamAndCheckout();
+    fs.mkdirSync(path.join(repoDir, "requirements"));
+    fs.writeFileSync(path.join(repoDir, "requirements", "base.txt"), "pytest\n");
+    fs.symlinkSync(
+      path.join(repoDir, "requirements", "base.txt"),
+      path.join(repoDir, "requirements.txt"),
+    );
+    fakeLauncher(root);
+    expect((await installRepoDependencies(install())).manager).toBe("pip");
+    await awaitRepositoryIdle("github", "acme/site");
+  });
+
   it("refuses a lockfile that is a link rather than read where it points", async () => {
     const { repoDir, root } = upstreamAndCheckout();
     const elsewhere = path.join(scratch("magister-lock-"), "package-lock.json");
