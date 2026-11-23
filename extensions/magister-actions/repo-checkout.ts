@@ -1568,6 +1568,22 @@ function since(seen: number): string {
   return minutes < 1 ? "less than a minute ago" : `${minutes} minute(s) ago`;
 }
 
+/** A refresh refused over uncommitted edits in a checkout this chat holds:
+ *  no other chat has checked it out, prepared, pushed or installed in it
+ *  since this one did, so the edits are this chat's own from an earlier
+ *  turn. Telling it to ask the person whether to keep them stopped a plan
+ *  task that had just been approved: its own new page read as somebody
+ *  else's work (2026-11-23). */
+function ownEditsError(full: string, holder: CheckoutHolder, changed: string[]): CheckoutError {
+  const shown = changed.slice(0, 5).join(", ");
+  const more = changed.length > 5 ? ` and ${changed.length - 5} more` : "";
+  return new CheckoutError(
+    `The existing checkout of ${full} has uncommitted changes (${shown}${more}), and this chat holds it: no other chat has taken it since this one did, ${since(Date.parse(holder.at))}.`,
+    409,
+    "These are this chat's own edits from an earlier turn. Keep them and carry on from them: do not ask the user whether to keep them, and do not check out again before they are pushed. Commit them with magister_prepare_repo_commit and push them with magister_push_repo_branch as the task needs. Retry with discard_local_changes=true only to throw this chat's own edits away.",
+  );
+}
+
 /** How a chat takes over a checkout that has changes nobody can attribute.
  *  Never "commit or discard them from the other chat": they may be this
  *  chat's own, and that is the cross-chat sweep this module exists to stop. */
@@ -2247,11 +2263,13 @@ async function performCheckout(request: CheckoutRequest): Promise<CheckoutReceip
       }
       if (changed.length > 0) {
         if (!request.discard_local_changes) {
-          throw new CheckoutError(
-            `The existing checkout of ${full} has uncommitted changes.`,
-            409,
-            "Ask the user whether to keep or discard that work; retry with discard_local_changes=true only if they choose to discard it.",
-          );
+          throw session !== undefined && marker?.holder?.session === session
+            ? ownEditsError(full, marker.holder, changed)
+            : new CheckoutError(
+                `The existing checkout of ${full} has uncommitted changes.`,
+                409,
+                "Ask the user whether to keep or discard that work; retry with discard_local_changes=true only if they choose to discard it.",
+              );
         }
         await runGit(["reset", "--hard"], { cwd: repoDir, timeoutMs: GIT_COMMAND_TIMEOUT_MS });
         await runGit(["clean", "-fdx"], { cwd: repoDir, timeoutMs: GIT_COMMAND_TIMEOUT_MS });

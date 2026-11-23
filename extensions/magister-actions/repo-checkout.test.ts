@@ -438,6 +438,34 @@ describe("brokered checkout against a real repository", () => {
     expect(fs.readFileSync(path.join(repoDir, "README.md"), "utf8")).toBe("local edit\n");
   });
 
+  it("tells the chat holding the checkout that its uncommitted edits are its own", async () => {
+    const { repoDir } = upstreamAndCheckout();
+    await checkoutRepository(request({ session: "chat-a" }));
+    const page = path.join(repoDir, "pages", "automation");
+    fs.mkdirSync(page, { recursive: true });
+    fs.writeFileSync(path.join(page, "page.tsx"), "export default 1;\n");
+
+    // A later turn of the same chat (an approved plan task) checks out again.
+    // The edits are its own: carry on from them, never ask the person.
+    const refusal = await checkoutRepository(request({ session: "chat-a" })).then(
+      () => null,
+      (err: unknown) => err as CheckoutError,
+    );
+    expect(refusal).toMatchObject({
+      statusCode: 409,
+      message: expect.stringMatching(/uncommitted changes \(pages\/.*this chat holds it/s),
+    });
+    expect(refusal?.userAction).toMatch(/this chat's own edits.*magister_prepare_repo_commit/s);
+    expect(refusal?.userAction).not.toMatch(/Ask the user whether/);
+    expect(fs.readFileSync(path.join(page, "page.tsx"), "utf8")).toBe("export default 1;\n");
+
+    // A call that names no chat cannot be placed: the person decides.
+    await expect(checkoutRepository(request())).rejects.toMatchObject({
+      statusCode: 409,
+      userAction: expect.stringMatching(/^Ask the user whether to keep or discard/),
+    });
+  });
+
   it("discards dirty work only when the caller asks explicitly", async () => {
     const { repoDir } = upstreamAndCheckout();
     fs.writeFileSync(path.join(repoDir, "README.md"), "local edit\n");
