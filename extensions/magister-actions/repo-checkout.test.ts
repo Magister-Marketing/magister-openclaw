@@ -2386,10 +2386,13 @@ function fakeLauncher(
       "  --) shift; break;;",
       "  *) shift;;",
       "esac; done",
-      String.raw`printf '%s %s\n' "$P" "$*" >> "$LOG"`,
-      'REL="${W#$ROOT/}"; LAYER="$ROOT/.work/$REL"',
-      // A project's install runs as `sh -c 'cd -- "$1" ...' sh <project> <argv>`.
-      'PROJ=""; if [ "$1" = "sh" ] && [ "$4" = "sh" ]; then PROJ="$5/"; fi',
+      // A project's install runs with its directory as the workspace: the
+      // checkout is the nearest directory above it with a .git, as the
+      // supervisor finds it.
+      'C="$W"; while [ ! -d "$C/.git" ] && [ "$C" != "$ROOT" ]; do C="$(dirname "$C")"; done',
+      'PROJ="${W#"$C"}"; PROJ="${PROJ#/}"; [ -n "$PROJ" ] && PROJ="$PROJ/"',
+      'printf "%s %s%s\\n" "$P" "${PROJ:+[$PROJ] }" "$*" >> "$LOG"',
+      'REL="${C#$ROOT/}"; LAYER="$ROOT/.work/$REL"',
       'case "$P" in',
       `  fetcher) ${options.fetchOutput ? `printf '%s' '${options.fetchOutput}';` : ""} mkdir -p "$LAYER/upper/\${PROJ}node_modules"; echo x > "$LAYER/upper/\${PROJ}node_modules/.installed"; exit ${options.fetchExit ?? 0};;`,
       `  tool) mkdir -p "$LAYER"; ${record}; exit 0;;`,
@@ -2490,7 +2493,8 @@ describe("choosing the package manager", () => {
     touch("docs/README.md");
     fs.symlinkSync(path.join(dir, "webapp"), path.join(dir, "linked"));
 
-    expect(await findPackageProjects(dir)).toEqual(["gateway", "tools/a/b", "webapp"]);
+    // Shallowest first, so a cut list keeps the top-level apps.
+    expect(await findPackageProjects(dir)).toEqual(["gateway", "webapp", "tools/a/b"]);
   });
 });
 
@@ -2561,16 +2565,77 @@ describe("installing dependencies", () => {
     expect(
       fs.existsSync(path.join(workLayer(repoDir).upper, "webapp", "node_modules", ".installed")),
     ).toBe(true);
-    // Run in the project's directory, both steps.
+    // Both steps run with the project's directory as the sandbox workspace,
+    // so the rebuild's record names that directory and the plain command.
     const calls = fs.readFileSync(log, "utf8").trim().split("\n").slice(2);
     expect(calls).toEqual([
-      'fetcher sh -c cd -- "$1" && shift && exec "$@" sh webapp npm ci --no-audit --no-fund',
-      'tool sh -c cd -- "$1" && shift && exec "$@" sh webapp npm rebuild',
+      "fetcher [webapp/] npm ci --no-audit --no-fund",
+      "tool [webapp/] npm rebuild",
     ]);
-    // The same project again is a no-op.
-    expect((await installRepoDependencies(webapp())).status).toBe("installed");
+    // Each project keeps its own install: the root, then the project, then
+    // both again, start nothing (review of #2774: one record made them
+    // reinstall each other).
+    for (const call of [install(), webapp(), install(), webapp()]) {
+      expect((await installRepoDependencies(call)).status).toBe("installed");
+    }
     expect(fs.readFileSync(log, "utf8").trim().split("\n")).toHaveLength(4);
     await awaitRepositoryIdle("github", "acme/site");
+  });
+
+  it("installs a project named through a link inside the checkout at its real directory", async () => {
+    // The overlay records the install under the real path; named by the link
+    // it never looked installed and started again on every call.
+    const { repoDir, root } = upstreamAndCheckout();
+    fs.writeFileSync(path.join(repoDir, "package-lock.json"), "{}");
+    fs.mkdirSync(path.join(repoDir, "packages", "app"), { recursive: true });
+    fs.writeFileSync(path.join(repoDir, "packages", "app", "package-lock.json"), "{}");
+    fs.symlinkSync(path.join(repoDir, "packages", "app"), path.join(repoDir, "app"));
+    const log = fakeLauncher(root);
+    const app = () => ({ ...install(), path: "app" });
+
+    const first = await installRepoDependencies(app());
+    expect(first.project).toBe("packages/app");
+    const done = await settled(
+      () => installRepoDependencies(app()),
+      (r) => r.status !== "installing",
+    );
+    expect(done.status).toBe("installed");
+    expect((await installRepoDependencies(app())).status).toBe("installed");
+    expect(fs.readFileSync(log, "utf8").trim().split("\n")).toHaveLength(2);
+    await awaitRepositoryIdle("github", "acme/site");
+  });
+
+  it("keeps the top-level projects when the list is cut, and says how many more", async () => {
+    const { repoDir, root } = upstreamAndCheckout();
+    fs.writeFileSync(path.join(repoDir, "package-lock.json"), "{}");
+    for (let i = 0; i < 14; i += 1) {
+      const dir = path.join(repoDir, "examples", `ex${String(i).padStart(2, "0")}`);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "package-lock.json"), "{}");
+    }
+    fs.mkdirSync(path.join(repoDir, "webapp"));
+    fs.writeFileSync(path.join(repoDir, "webapp", "package-lock.json"), "{}");
+    fakeLauncher(root);
+
+    const receipt = await installRepoDependencies(install());
+    expect(receipt.other_projects[0]).toBe("webapp");
+    expect(receipt.other_projects).toHaveLength(12);
+    expect(receipt.warnings.join(" ")).toMatch(/and 3 more deeper down/);
+    await awaitRepositoryIdle("github", "acme/site");
+  });
+
+  it("refuses a lockfile that is a link rather than read where it points", async () => {
+    const { repoDir, root } = upstreamAndCheckout();
+    const elsewhere = path.join(scratch("magister-lock-"), "package-lock.json");
+    fs.writeFileSync(elsewhere, "{}");
+    fs.symlinkSync(elsewhere, path.join(repoDir, "package-lock.json"));
+    const log = fakeLauncher(root);
+
+    await expect(installRepoDependencies(install())).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining("not a lockfile this machine will read"),
+    });
+    expect(fs.existsSync(log) ? fs.readFileSync(log, "utf8") : "").toBe("");
   });
 
   it("refuses a project directory that is missing or leads out of the checkout", async () => {
