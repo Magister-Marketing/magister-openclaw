@@ -20,6 +20,7 @@ import {
   checkoutRepository,
   CI_DEFINITION_PATHS,
   detectPackageManager,
+  findPackageProjects,
   ensureRepoRoot,
   handleRepoCheckout,
   INSTALL_POLL_SECONDS,
@@ -2387,8 +2388,10 @@ function fakeLauncher(
       "esac; done",
       String.raw`printf '%s %s\n' "$P" "$*" >> "$LOG"`,
       'REL="${W#$ROOT/}"; LAYER="$ROOT/.work/$REL"',
+      // A project's install runs as `sh -c 'cd -- "$1" ...' sh <project> <argv>`.
+      'PROJ=""; if [ "$1" = "sh" ] && [ "$4" = "sh" ]; then PROJ="$5/"; fi',
       'case "$P" in',
-      `  fetcher) ${options.fetchOutput ? `printf '%s' '${options.fetchOutput}';` : ""} mkdir -p "$LAYER/upper/node_modules"; echo x > "$LAYER/upper/node_modules/.installed"; exit ${options.fetchExit ?? 0};;`,
+      `  fetcher) ${options.fetchOutput ? `printf '%s' '${options.fetchOutput}';` : ""} mkdir -p "$LAYER/upper/\${PROJ}node_modules"; echo x > "$LAYER/upper/\${PROJ}node_modules/.installed"; exit ${options.fetchExit ?? 0};;`,
       `  tool) mkdir -p "$LAYER"; ${record}; exit 0;;`,
       // The real supervisor is root; this stand-in runs as the test user, so
       // it lifts the read-only owner directory a root-owned one stands for.
@@ -2455,9 +2458,39 @@ describe("choosing the package manager", () => {
       repo: "acme/site",
       provider: "github",
       mutation_context: undefined,
+      path: "",
     });
     expect(parseInstallRequest({ repo: "g/s/p", provider: "gitlab" }).provider).toBe("gitlab");
     expect(() => parseInstallRequest({ repo: "acme/site", token: "t" })).toThrow(/unknown fields/);
+  });
+
+  it("takes a package project's directory, case kept, and nothing outside the checkout", () => {
+    const parsed = (value: unknown) => parseInstallRequest({ repo: "acme/site", path: value }).path;
+    expect(parsed("webapp")).toBe("webapp");
+    expect(parsed("./Apps//Web/")).toBe("Apps/Web");
+    expect(parsed(".")).toBe("");
+    expect(parsed(undefined)).toBe("");
+    for (const bad of ["../other", "/etc", "apps/../../x", "a\nb", 7, "a/".repeat(10)]) {
+      expect(() => parsed(bad), String(bad)).toThrow(/inside the repository/);
+    }
+  });
+
+  it("finds the directories below the root that have their own lockfile", async () => {
+    const dir = scratch("magister-projects-");
+    const touch = (rel: string) => {
+      fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+      fs.writeFileSync(path.join(dir, rel), "");
+    };
+    touch("pnpm-lock.yaml");
+    touch("webapp/pnpm-lock.yaml");
+    touch("gateway/requirements.txt");
+    touch("tools/a/b/yarn.lock"); // depth 3: found
+    touch("tools/a/b/c/package-lock.json"); // depth 4: past the search
+    touch("webapp/node_modules/dep/package-lock.json"); // an installed tree
+    touch("docs/README.md");
+    fs.symlinkSync(path.join(dir, "webapp"), path.join(dir, "linked"));
+
+    expect(await findPackageProjects(dir)).toEqual(["gateway", "tools/a/b", "webapp"]);
   });
 });
 
@@ -2492,6 +2525,69 @@ describe("installing dependencies", () => {
     expect(again.status).toBe("installed");
     expect(fs.readFileSync(log, "utf8").trim().split("\n")).toHaveLength(2);
     await awaitRepositoryIdle("github", "acme/site");
+  });
+
+  it("installs a package project below the root when asked, and says which others exist", async () => {
+    // 2026-11-23: our own repository's root lockfile installs only its root;
+    // the web app has its own, so the agent's web tests had no runner.
+    const { repoDir, root } = upstreamAndCheckout();
+    fs.writeFileSync(path.join(repoDir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    fs.mkdirSync(path.join(repoDir, "webapp"));
+    fs.writeFileSync(path.join(repoDir, "webapp", "package-lock.json"), '{"lockfileVersion":3}');
+    const log = fakeLauncher(root);
+
+    const atRoot = await settled(
+      () => installRepoDependencies(install()),
+      (r) => r.status !== "installing",
+    );
+    expect(atRoot.project).toBe(".");
+    expect(atRoot.other_projects).toEqual(["webapp"]);
+    expect(atRoot.warnings.join(" ")).toMatch(
+      /own lockfile and install separately: webapp\. Call again with path/,
+    );
+
+    const webapp = () => ({ ...install(), path: "webapp" });
+    const first = await installRepoDependencies(webapp());
+    expect(first.status).toBe("installing");
+    expect(first.manager).toBe("npm");
+    expect(first.project).toBe("webapp");
+    const done = await settled(
+      () => installRepoDependencies(webapp()),
+      (r) => r.status !== "installing",
+    );
+    expect(done.status).toBe("installed");
+    expect(done.other_projects).toEqual([]);
+    expect(done.warnings.join(" ")).not.toMatch(/install separately/);
+    expect(
+      fs.existsSync(path.join(workLayer(repoDir).upper, "webapp", "node_modules", ".installed")),
+    ).toBe(true);
+    // Run in the project's directory, both steps.
+    const calls = fs.readFileSync(log, "utf8").trim().split("\n").slice(2);
+    expect(calls).toEqual([
+      'fetcher sh -c cd -- "$1" && shift && exec "$@" sh webapp npm ci --no-audit --no-fund',
+      'tool sh -c cd -- "$1" && shift && exec "$@" sh webapp npm rebuild',
+    ]);
+    // The same project again is a no-op.
+    expect((await installRepoDependencies(webapp())).status).toBe("installed");
+    expect(fs.readFileSync(log, "utf8").trim().split("\n")).toHaveLength(4);
+    await awaitRepositoryIdle("github", "acme/site");
+  });
+
+  it("refuses a project directory that is missing or leads out of the checkout", async () => {
+    const { repoDir, root } = upstreamAndCheckout();
+    fs.writeFileSync(path.join(repoDir, "package-lock.json"), "{}");
+    const outside = scratch("magister-outside-");
+    fs.writeFileSync(path.join(outside, "package-lock.json"), "{}");
+    fs.symlinkSync(outside, path.join(repoDir, "escape"));
+    const log = fakeLauncher(root);
+
+    for (const where of ["missing", "escape", "package-lock.json"]) {
+      await expect(
+        installRepoDependencies({ ...install(), path: where }),
+        where,
+      ).rejects.toMatchObject({ statusCode: 404 });
+    }
+    expect(fs.existsSync(log) ? fs.readFileSync(log, "utf8") : "").toBe("");
   });
 
   it("reports a failed install once, then lets the next call retry", async () => {
