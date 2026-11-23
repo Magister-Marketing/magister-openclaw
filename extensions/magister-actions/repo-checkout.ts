@@ -3335,7 +3335,14 @@ export async function findPackageProjects(repoDir: string): Promise<string[]> {
     } catch {
       continue;
     }
-    if (rel && entries.some((entry) => entry.isFile() && LOCKFILES.has(entry.name))) {
+    if (
+      rel &&
+      entries.some(
+        // A lockfile that is a link counts: the install reads it where it
+        // points, when that is inside the checkout.
+        (entry) => (entry.isFile() || entry.isSymbolicLink()) && LOCKFILES.has(entry.name),
+      )
+    ) {
       found.push(rel);
     }
     if (depth >= PROJECT_SEARCH_DEPTH) {

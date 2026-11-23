@@ -2492,9 +2492,22 @@ describe("choosing the package manager", () => {
     touch("webapp/node_modules/dep/package-lock.json"); // an installed tree
     touch("docs/README.md");
     fs.symlinkSync(path.join(dir, "webapp"), path.join(dir, "linked"));
+    // A project whose only lockfile is a link to a shared one.
+    touch("shared/requirements.txt");
+    fs.mkdirSync(path.join(dir, "worker"));
+    fs.symlinkSync(
+      path.join(dir, "shared", "requirements.txt"),
+      path.join(dir, "worker", "requirements.txt"),
+    );
 
     // Shallowest first, so a cut list keeps the top-level apps.
-    expect(await findPackageProjects(dir)).toEqual(["gateway", "webapp", "tools/a/b"]);
+    expect(await findPackageProjects(dir)).toEqual([
+      "gateway",
+      "shared",
+      "webapp",
+      "worker",
+      "tools/a/b",
+    ]);
   });
 });
 
