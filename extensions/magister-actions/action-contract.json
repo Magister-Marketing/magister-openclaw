@@ -5803,7 +5803,7 @@
       "action": "delete_social_post",
       "approval_policy": "exact_payload",
       "async_status_adapter": "synchronous",
-      "description": "Request approval to delete one draft, scheduled or failed post, naming the version magister_list_social_posts gave. A published post cannot be deleted here.",
+      "description": "Request approval to delete one draft, scheduled, failed or cancelled post, naming the version magister_list_social_posts gave. A published post cannot be deleted here.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "idempotency_key",
       "input_schema": {
@@ -6769,6 +6769,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "c92cd4669f25a7066087e5841ba925b26de7446241ea498a63ccbd32aadaa247",
+  "registry_revision": "af135108464bff7c120fe819bdd8aefe6e64456a2bcbb5a140fff228d4e5f8c9",
   "schema_version": 1
 }
