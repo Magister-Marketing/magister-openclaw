@@ -3876,12 +3876,25 @@
       "action": "list_social_posts",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
-      "description": "List project social posts, optionally filtered by status.",
+      "description": "List project social posts, optionally filtered by status, a page at a time, or read one by post_id. Each post carries the version a change to it must name.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "safe_retry",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
+          "page": {
+            "description": "Ten posts a profile per page; ask for the next while has_more is true.",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "post_id": {
+            "description": "Read just this post.",
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
           "status": {
             "maxLength": 50,
             "minLength": 1,
@@ -5686,6 +5699,147 @@
       "tool_name": "magister_publish_social_post"
     },
     {
+      "action": "update_social_post",
+      "approval_policy": "exact_payload",
+      "async_status_adapter": "synchronous",
+      "description": "Change one existing post's caption, media or time, naming the version magister_list_social_posts gave; media and time go in two calls. A draft changes at once; a scheduled or live post asks the user first. A live post takes a new caption only, and only on X, Facebook, LinkedIn, Pinterest, Google Business and YouTube.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "idempotency_key",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "description": "The new caption.",
+            "maxLength": 20000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "idempotency_key": {
+            "description": "Use one fresh key for each new logical operation. Reuse that key only when retrying the exact same arguments; a later user request, even with identical content, needs a new key.",
+            "maxLength": 256,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "type": "string"
+          },
+          "media_urls": {
+            "description": "New media, as create_social_draft takes it; a draft or scheduled post only.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "type": "array"
+          },
+          "post_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          "scheduled_for": {
+            "description": "A new time: ISO 8601 with its offset, at least 5 minutes ahead.",
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "version": {
+            "description": "The post's version, as magister_list_social_posts gave it.",
+            "maxLength": 16,
+            "minLength": 16,
+            "pattern": "^[0-9a-f]{16}$",
+            "type": "string"
+          }
+        },
+        "required": ["idempotency_key", "post_id", "version"],
+        "type": "object"
+      },
+      "retry_policy": "read_after_timeout",
+      "schema_delivery": "deferred",
+      "side_effect": "external_write",
+      "spend_limited": false,
+      "tool_name": "magister_update_social_post"
+    },
+    {
+      "action": "unschedule_social_post",
+      "approval_policy": "exact_payload",
+      "async_status_adapter": "synchronous",
+      "description": "Take one scheduled post off the schedule, naming the version magister_list_social_posts gave: it becomes a draft and keeps its caption, media and accounts. When more than one post could be the one meant, ask which first. Tell the user it will not publish until it is scheduled again.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "idempotency_key",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "description": "Use one fresh key for each new logical operation. Reuse that key only when retrying the exact same arguments; a later user request, even with identical content, needs a new key.",
+            "maxLength": 256,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "type": "string"
+          },
+          "post_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          "version": {
+            "description": "The post's version, as magister_list_social_posts gave it.",
+            "maxLength": 16,
+            "minLength": 16,
+            "pattern": "^[0-9a-f]{16}$",
+            "type": "string"
+          }
+        },
+        "required": ["idempotency_key", "post_id", "version"],
+        "type": "object"
+      },
+      "retry_policy": "read_after_timeout",
+      "schema_delivery": "deferred",
+      "side_effect": "external_write",
+      "spend_limited": false,
+      "tool_name": "magister_unschedule_social_post"
+    },
+    {
+      "action": "delete_social_post",
+      "approval_policy": "exact_payload",
+      "async_status_adapter": "synchronous",
+      "description": "Request approval to delete one draft, scheduled, failed or cancelled post, naming the version magister_list_social_posts gave. A published post cannot be deleted here.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "idempotency_key",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "description": "Use one fresh key for each new logical operation. Reuse that key only when retrying the exact same arguments; a later user request, even with identical content, needs a new key.",
+            "maxLength": 256,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "type": "string"
+          },
+          "post_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          "version": {
+            "description": "The post's version, as magister_list_social_posts gave it.",
+            "maxLength": 16,
+            "minLength": 16,
+            "pattern": "^[0-9a-f]{16}$",
+            "type": "string"
+          }
+        },
+        "required": ["idempotency_key", "post_id", "version"],
+        "type": "object"
+      },
+      "retry_policy": "read_after_timeout",
+      "schema_delivery": "deferred",
+      "side_effect": "delete",
+      "spend_limited": false,
+      "tool_name": "magister_delete_social_post"
+    },
+    {
       "action": "create_ad_campaign",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
@@ -6615,6 +6769,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "4ae03aa6e6ae504649f3c119ddd380529f1cfc644c3a992c6e3b4bb57f5c7abd",
+  "registry_revision": "af135108464bff7c120fe819bdd8aefe6e64456a2bcbb5a140fff228d4e5f8c9",
   "schema_version": 1
 }
