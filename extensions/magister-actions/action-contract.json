@@ -170,6 +170,71 @@
       "tool_name": "magister_read_chat_history"
     },
     {
+      "action": "edit_phase_draft",
+      "approval_policy": "none",
+      "async_status_adapter": "synchronous",
+      "description": "In a next phase's chat only: change that phase's waiting draft in place, at once and at no cost. ops: remove_task / rename_task (title) / direct_task (direction added to what the task's agent is told), each with task_id; remove_goal / rename_goal (title), each with goal_key. All apply or none. undo: true puts back the draft before its last change. Ids and keys are in this chat's context. A new direction for the whole phase is the person's Revise the direction button; starting the phase is theirs too.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "safe_retry",
+      "input_schema": {
+        "$defs": {
+          "PhaseDraftEditOp": {
+            "additionalProperties": false,
+            "properties": {
+              "direction": {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              "goal_key": {
+                "maxLength": 64,
+                "type": "string"
+              },
+              "op": {
+                "enum": ["remove_task", "rename_task", "direct_task", "remove_goal", "rename_goal"],
+                "type": "string"
+              },
+              "task_id": {
+                "maxLength": 64,
+                "type": "string"
+              },
+              "title": {
+                "maxLength": 160,
+                "type": "string"
+              }
+            },
+            "required": ["op"],
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "ops": {
+            "items": {
+              "$ref": "#/$defs/PhaseDraftEditOp"
+            },
+            "maxItems": 20,
+            "type": "array"
+          },
+          "phase_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "undo": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": ["phase_id"],
+        "type": "object"
+      },
+      "retry_policy": "backoff",
+      "schema_delivery": "deferred",
+      "side_effect": "internal_write",
+      "spend_limited": false,
+      "tool_name": "magister_edit_phase_draft"
+    },
+    {
       "action": "record_marketing_feedback",
       "approval_policy": "none",
       "async_status_adapter": "synchronous",
@@ -6550,6 +6615,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "40fb50aed335ee48a43c8d3c2218ddd5a999d794a6b9ee90100b8ddff9951210",
+  "registry_revision": "4ae03aa6e6ae504649f3c119ddd380529f1cfc644c3a992c6e3b4bb57f5c7abd",
   "schema_version": 1
 }
