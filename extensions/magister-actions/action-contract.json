@@ -5695,6 +5695,46 @@
       "tool_name": "magister_update_social_post"
     },
     {
+      "action": "unschedule_social_post",
+      "approval_policy": "exact_payload",
+      "async_status_adapter": "synchronous",
+      "description": "Take one scheduled post off the schedule, naming the version magister_list_social_posts gave: it becomes a draft and keeps its caption, media and accounts. Tell the user it will not publish until it is scheduled again.",
+      "idempotency_enforcement": "registry",
+      "idempotency_policy": "idempotency_key",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "description": "Use one fresh key for each new logical operation. Reuse that key only when retrying the exact same arguments; a later user request, even with identical content, needs a new key.",
+            "maxLength": 256,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "type": "string"
+          },
+          "post_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          "version": {
+            "description": "The post's version, as magister_list_social_posts gave it.",
+            "maxLength": 16,
+            "minLength": 16,
+            "pattern": "^[0-9a-f]{16}$",
+            "type": "string"
+          }
+        },
+        "required": ["idempotency_key", "post_id", "version"],
+        "type": "object"
+      },
+      "retry_policy": "read_after_timeout",
+      "schema_delivery": "deferred",
+      "side_effect": "external_write",
+      "spend_limited": false,
+      "tool_name": "magister_unschedule_social_post"
+    },
+    {
       "action": "delete_social_post",
       "approval_policy": "exact_payload",
       "async_status_adapter": "synchronous",
@@ -6664,6 +6704,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "21e9248d54daf650e5e5b1c7fd4e5d63495e4b10f3dc791d3b49c70b9e6af984",
+  "registry_revision": "005bc49e4d9efa73cc519436c515b3d924909ef1ed4542d35efcbd407b8c667b",
   "schema_version": 1
 }
