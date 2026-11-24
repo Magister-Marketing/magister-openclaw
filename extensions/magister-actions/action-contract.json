@@ -5763,7 +5763,7 @@
       "action": "unschedule_social_post",
       "approval_policy": "exact_payload",
       "async_status_adapter": "synchronous",
-      "description": "Take one scheduled post off the schedule, naming the version magister_list_social_posts gave: it becomes a draft and keeps its caption, media and accounts. Tell the user it will not publish until it is scheduled again.",
+      "description": "Take one scheduled post off the schedule, naming the version magister_list_social_posts gave: it becomes a draft and keeps its caption, media and accounts. When more than one post could be the one meant, ask which first. Tell the user it will not publish until it is scheduled again.",
       "idempotency_enforcement": "registry",
       "idempotency_policy": "idempotency_key",
       "input_schema": {
@@ -6769,6 +6769,6 @@
       "tool_name": "magister_promote_artifact"
     }
   ],
-  "registry_revision": "345b42b0e6850115487ffb208e6b34ed1a9ab990c4ff8a189ee7fa267dc5dcda",
+  "registry_revision": "c92cd4669f25a7066087e5841ba925b26de7446241ea498a63ccbd32aadaa247",
   "schema_version": 1
 }
