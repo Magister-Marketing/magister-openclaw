@@ -3281,6 +3281,35 @@
       "transport_modes": ["json_v1"]
     },
     {
+      "capability_id": "magento",
+      "connection_slug": "magento",
+      "delegation_safe_tools": [],
+      "hosted_agent_tools": [
+        {
+          "action": "integration_read",
+          "approval_policy": "none",
+          "idempotency_policy": "safe_retry",
+          "side_effect": "none",
+          "tool_name": "magister_integration_read"
+        },
+        {
+          "action": "integration_change",
+          "approval_policy": "exact_payload",
+          "idempotency_policy": "idempotency_key",
+          "side_effect": "external_write",
+          "tool_name": "magister_integration_change"
+        }
+      ],
+      "mcp_tool_actions": ["proxy:magento"],
+      "minimum_native_action_registry_revision": "4ae03aa6e6ae504649f3c119ddd380529f1cfc644c3a992c6e3b4bb57f5c7abd",
+      "proxy_services": ["magento"],
+      "remediation": null,
+      "rollout_service": null,
+      "skill_name": "magister-magento",
+      "status": "typed",
+      "transport_modes": ["json_v1"]
+    },
+    {
       "capability_id": "mailchimp",
       "connection_slug": "mailchimp",
       "delegation_safe_tools": [],
@@ -4621,6 +4650,6 @@
     }
   ],
   "native_action_registry_revision": "4ae03aa6e6ae504649f3c119ddd380529f1cfc644c3a992c6e3b4bb57f5c7abd",
-  "registry_revision": "a82d2834ab477aa1069c1b09c3771d0c6cb2b0278642c54b35eda34c2115fb8f",
+  "registry_revision": "833e8ed364ddd1d6b28df3665b58f0c7ea77b9340b1f205d5c9d85b6a73daf05",
   "schema_version": 1
 }
